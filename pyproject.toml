@@ -1,0 +1,54 @@
+[project]
+name = "ai-workbench"
+version = "0.1.0"
+description = "Long-term AI engineering lab for LLM apps, agents, RAG, MCP, and workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "workbench-core",
+  "llm-core",
+  "code-agent",
+  "python-dotenv>=1.0.1",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.3.0",
+  "httpx>=0.27.0",
+  "openai>=1.40.0",
+  "rich>=13.7.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.2.0",
+  "ruff>=0.5.0",
+]
+
+[tool.uv.workspace]
+members = [
+  "packages/workbench_core",
+  "projects/01-llm-core",
+  "projects/02-code-agent",
+]
+
+[tool.uv.sources]
+workbench-core = { workspace = true }
+llm-core = { workspace = true }
+code-agent = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = [
+  "packages/workbench_core/tests",
+  "projects/01-llm-core/tests",
+  "projects/02-code-agent/tests",
+]
+pythonpath = [
+  "packages/workbench_core/src",
+  "projects/01-llm-core/src",
+  "projects/02-code-agent/src",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
