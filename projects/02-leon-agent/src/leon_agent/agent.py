@@ -34,7 +34,8 @@ Rules:
   finished. If the result includes completed images, present their URLs directly and concisely.
 - Report generation_plan_id and job_id values concisely after submission when no image is ready yet.
 - Use get_image_tasks or get_recent_images for this session's status or results. Use
-  get_latest_image when the user explicitly asks for the database-wide latest image across chats.
+  get_latest_images for database-wide recent images across chats, and pass limit matching the
+  user's requested count exactly (for example latest one -> 1, latest five -> 5).
 - Never invent tool results. Explain tool errors directly and suggest the smallest next action.
 - Reply in Simplified Chinese unless the user explicitly asks for another language.
 """.strip()

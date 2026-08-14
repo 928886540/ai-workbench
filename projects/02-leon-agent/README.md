@@ -10,7 +10,7 @@
 - `leon-server`：FastAPI Gateway + SSE + 手机 PWA Web Client
 - 普通问题直接聊天，不调用工具
 - 明确生图请求优先路由工具，用户原话作为 `source_text` 透传，不由 Agent 扩写 Prompt
-- 6 个 Leon 生图工具：模式、环境、自助生成、任务、会话图库、全局最新图片
+- 6 个 Leon 生图工具：模式、环境、自助生成、任务、会话图库、全局最近图片（数量可调）
 - SQLite 持久化会话、消息、tool call、`generationPlanId` 和 `jobId`
 - 复用 `leon-image` 的 `executor-core.js + executor-assets.js`
 - 调用现有 `/ios/*` HTTP 接口，不复制 Prompt、Workflow 或 LoRA 配置

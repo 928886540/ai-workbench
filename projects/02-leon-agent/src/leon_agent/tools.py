@@ -213,13 +213,26 @@ def create_leon_tools(
                 handler=lambda limit=20: client.get_recent_images(chat_id=chat_id, limit=limit),
             ),
             AgentTool(
-                name="get_latest_image",
+                name="get_latest_images",
                 description=(
-                    "Get the newest completed image in the global Leon image database, across "
-                    "all chats and Leon Agent sessions."
+                    "Get the newest completed images in the global Leon image database, across "
+                    "all chats and Leon Agent sessions. Set limit to the exact count requested "
+                    "by the user, for example 1 for the latest image or 5 for the latest five."
                 ),
-                parameters={"type": "object", "properties": {}, "additionalProperties": False},
-                handler=client.get_latest_image,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100,
+                            "description": "Exact number of recent global images requested.",
+                        }
+                    },
+                    "required": ["limit"],
+                    "additionalProperties": False,
+                },
+                handler=lambda limit: client.get_latest_images(limit=limit),
             ),
         ]
     )

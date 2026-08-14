@@ -108,9 +108,15 @@ class LeonImageClient:
         path: str,
         *,
         payload: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> Any:
         try:
-            response = self._http.request(method, self._url(path), json=payload)
+            response = self._http.request(
+                method,
+                self._url(path),
+                json=payload,
+                params=params,
+            )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             try:
@@ -225,8 +231,24 @@ class LeonImageClient:
         response = self._sync("/ios/image_gallery/sync", chat_id=chat_id, limit=limit)
         return {"ok": True, "items": [self._image_summary(item) for item in response]}
 
+    def get_latest_images(self, *, limit: int) -> dict[str, Any]:
+        """Return the requested number of newest images across the Leon database."""
+        safe_limit = max(1, min(int(limit), 100))
+        response = self._json_request(
+            "GET",
+            "/ios/image_gallery/recent",
+            params={"limit": safe_limit},
+        )
+        items = response.get("items", []) if isinstance(response, dict) else []
+        return {
+            "ok": True,
+            "items": [self._image_summary(item) for item in items if isinstance(item, dict)][
+                :safe_limit
+            ],
+        }
+
     def get_latest_image(self) -> dict[str, Any]:
-        """Return the newest completed image across the Leon image database."""
+        """Compatibility helper for callers that still need exactly one image."""
         response = self._json_request("GET", "/ios/image_gallery/latest")
         item = response.get("item") if isinstance(response, dict) else None
         return {

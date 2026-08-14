@@ -7,6 +7,7 @@ from leon_agent.tools import create_leon_tools
 class FakeImageClient:
     def __init__(self) -> None:
         self.generate_calls: list[dict[str, Any]] = []
+        self.latest_limits: list[int] = []
 
     def list_modes(self) -> dict[str, Any]:
         return {"ok": True, "modes": []}
@@ -24,8 +25,9 @@ class FakeImageClient:
     def get_recent_images(self, **kwargs: Any) -> dict[str, Any]:
         return {"ok": True, "items": []}
 
-    def get_latest_image(self) -> dict[str, Any]:
-        return {"ok": True, "item": None}
+    def get_latest_images(self, *, limit: int) -> dict[str, Any]:
+        self.latest_limits.append(limit)
+        return {"ok": True, "items": []}
 
 
 def test_generate_tool_passes_source_text_verbatim() -> None:
@@ -64,6 +66,25 @@ def test_generate_tool_schema_is_gemini_compatible() -> None:
     assert "enum" not in batch_schema
     assert batch_schema["minimum"] == 1
     assert batch_schema["maximum"] == 10
+
+
+def test_latest_images_tool_forwards_requested_count() -> None:
+    client = FakeImageClient()
+    tools = create_leon_tools(
+        client,  # type: ignore[arg-type]
+        session_id="session-1",
+        default_mode_ids=["k2_tifa_plus"],
+    )
+
+    result = tools.execute("get_latest_images", {"limit": 7})
+
+    assert result == {"ok": True, "items": []}
+    assert client.latest_limits == [7]
+    latest_schema = next(
+        item for item in tools.schemas if item["function"]["name"] == "get_latest_images"
+    )["function"]["parameters"]
+    assert latest_schema["required"] == ["limit"]
+    assert "default" not in latest_schema["properties"]["limit"]
 
 
 def test_agent_prompt_forbids_image_prompt_rewriting() -> None:

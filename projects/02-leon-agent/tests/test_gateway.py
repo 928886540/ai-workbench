@@ -322,8 +322,8 @@ def test_nsfw_message_bypasses_llm_and_uses_fixed_workflow(client, monkeypatch):
         def get_recent_images(self, **kwargs):  # noqa: ANN003
             return {"ok": True, "items": []}
 
-        def get_latest_image(self):
-            return {"ok": True, "item": None}
+        def get_latest_images(self, *, limit):  # noqa: ANN001
+            return {"ok": True, "items": []}
 
     class ExplodingLLMClient:
         def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003

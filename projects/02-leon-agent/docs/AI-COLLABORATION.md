@@ -33,7 +33,8 @@ The read-only global latest-image backend lives in the separate ComfyUI reposito
 
 - Query implementation: `app/ios/backend/gallery.py`
 - Route registration: `app/ios/backend/routes.py`
-- HTTP API: `GET /ios/image_gallery/latest`
+- HTTP API: `GET /ios/image_gallery/recent?limit=<count>`
+- Compatibility API: `GET /ios/image_gallery/latest`
 
 There must be only one Web client source. Do not recreate `projects/02-leon-agent/web/`; the
 FastAPI server only serves `src/leon_agent/web/`.
@@ -86,10 +87,13 @@ Web refresh state is not reconstructed from SSE memory. The client loads
 gallery sync results. Completed task `image_url` values are used as a fallback when the gallery sync
 lags behind the task endpoint.
 
-`get_latest_image` is intentionally global and read-only. It returns the newest completed image
-with a non-empty `final_image_url` across the whole Leon image database, without a `chat_id` filter.
-Do not replace it with a broad global gallery/search/delete API. The Agent client must normalize
-the backend's `final_image_url` into an absolute public `image_url` before returning it to the LLM.
+`get_latest_images(limit)` is intentionally global and read-only. The LLM must extract the requested
+count from the user's wording and pass it as `limit`; examples: latest one -> `1`, latest five ->
+`5`, latest twelve -> `12`. `limit` is required; there is no fixed or default count in the Agent
+tool. The backend clamps the count to `1..100` and returns completed images with a
+non-empty `final_image_url` across the whole Leon image database, without a `chat_id` filter. Do not
+expand it into global search/delete APIs. Normalize every `final_image_url` into an absolute public
+`image_url` before returning it to the LLM.
 
 ## UX State
 

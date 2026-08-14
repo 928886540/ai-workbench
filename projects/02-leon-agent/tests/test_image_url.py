@@ -126,18 +126,26 @@ def test_gallery_image_urls_are_absolute() -> None:
     ]
 
 
-def test_latest_image_url_is_absolute() -> None:
+def test_latest_images_use_requested_limit_and_absolute_urls() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
-        assert request.url.path == "/ios/image_gallery/latest"
+        assert request.url.path == "/ios/image_gallery/recent"
+        assert request.url.params["limit"] == "3"
         return httpx.Response(
             200,
             json={
-                "item": {
-                    "job_id": "job-latest",
-                    "final_image_url": "/view?filename=latest.png",
-                    "finalized_at_ms": 123456,
-                }
+                "items": [
+                    {
+                        "job_id": "job-latest",
+                        "final_image_url": "/view?filename=latest.png",
+                        "finalized_at_ms": 123456,
+                    },
+                    {
+                        "job_id": "job-previous",
+                        "final_image_url": "/view?filename=previous.png",
+                        "finalized_at_ms": 123455,
+                    },
+                ]
             },
         )
 
@@ -149,17 +157,26 @@ def test_latest_image_url_is_absolute() -> None:
         bridge=FakeBridge(),
     )
 
-    result = client.get_latest_image()
+    result = client.get_latest_images(limit=3)
 
     assert result == {
         "ok": True,
-        "item": {
-            "job_id": "job-latest",
-            "workflow_name": None,
-            "source_text": None,
-            "image_url": f"{PUBLIC_URL}/view?filename=latest.png",
-            "created_at": 123456,
-        },
+        "items": [
+            {
+                "job_id": "job-latest",
+                "workflow_name": None,
+                "source_text": None,
+                "image_url": f"{PUBLIC_URL}/view?filename=latest.png",
+                "created_at": 123456,
+            },
+            {
+                "job_id": "job-previous",
+                "workflow_name": None,
+                "source_text": None,
+                "image_url": f"{PUBLIC_URL}/view?filename=previous.png",
+                "created_at": 123455,
+            },
+        ],
     }
 
 
