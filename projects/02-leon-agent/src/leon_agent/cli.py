@@ -8,8 +8,10 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
+from rich.text import Text
 from workbench_core.agent import AgentEvent
 from workbench_core.config import get_settings, reset_settings_cache
 from workbench_core.llm import LLMClient
@@ -99,13 +101,43 @@ class LeonConsole:
             on_event=self._on_event,
         )
 
+    def _print_startup(self) -> None:
+        title = Text("LEON AGENT", style="bold cyan")
+        title.append("  /  interactive runtime", style="dim")
+
+        body = Text()
+        body.append("会话  ", style="dim")
+        body.append(f"{self.session_id}\n", style="bold")
+        body.append("后端  ", style="dim")
+        body.append(f"{self.config.backend_url}\n")
+        body.append("生图  ", style="dim")
+        body.append(", ".join(self.config.default_mode_ids) or "未配置", style="green")
+        body.append("\n\n")
+        body.append("直接聊天，或用自然语言让 Agent 调用工具。\n", style="white")
+        body.append("例如：", style="dim")
+        body.append("“检查生图环境，然后生成一张雨夜东京街景”\n", style="italic")
+        body.append("提示：", style="yellow")
+        body.append(" 生图任务可能需要一些时间；Agent 会显示工具调用和任务状态。", style="dim")
+
+        self.console.print(
+            Panel(
+                body,
+                title=title,
+                subtitle="/help 命令  ·  /new 新会话  ·  /history 历史  ·  /exit 退出",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+
     def _on_event(self, event: AgentEvent) -> None:
         if event.kind == "tool_started":
-            self.console.print(f"[cyan]调用工具[/cyan] {event.tool_name}")
+            self.console.print(f"[cyan]●[/cyan] [bold]调用工具[/bold] [cyan]{event.tool_name}[/cyan]")
         elif event.kind == "tool_finished":
             ok = bool(event.result and event.result.get("ok"))
-            state = "完成" if ok else "失败"
-            self.console.print(f"[dim]{event.tool_name}: {state}[/dim]")
+            if ok:
+                self.console.print(f"[green]✓[/green] [dim]{event.tool_name} 完成[/dim]")
+            else:
+                self.console.print(f"[red]✗[/red] [dim]{event.tool_name} 失败[/dim]")
 
     def process(self, message: str) -> bool:
         history = self.store.load_messages(self.session_id)
@@ -135,21 +167,20 @@ class LeonConsole:
     def new_session(self) -> None:
         self.session_id = self.store.create_session()
         self.agent = self._create_agent()
-        self.console.print(f"[green]新会话[/green] {self.session_id}")
+        self.console.print(f"[green]✓[/green] 新会话 [bold]{self.session_id}[/bold]")
 
     def interactive(self) -> None:
-        self.console.print("[bold]Leon Agent[/bold]")
-        self.console.print(f"session={self.session_id}")
-        self.console.print("输入 /help 查看命令，/exit 退出。")
+        self._print_startup()
         while True:
             try:
                 message = Prompt.ask("\n[bold cyan]你[/bold cyan]").strip()
             except (EOFError, KeyboardInterrupt):
-                self.console.print("\n已退出。")
+                self.console.print("\n[dim]Leon Agent 已退出。[/dim]")
                 return
             if not message:
                 continue
             if message in {"/exit", "/quit"}:
+                self.console.print("[dim]Leon Agent 已退出。[/dim]")
                 return
             if message == "/new":
                 self.new_session()
@@ -158,7 +189,16 @@ class LeonConsole:
                 self.show_history()
                 continue
             if message == "/help":
-                self.console.print("/new 新会话  /history 会话列表  /exit 退出")
+                self.console.print(
+                    Panel(
+                        "[bold]/new[/bold] 新会话\n"
+                        "[bold]/history[/bold] 会话列表\n"
+                        "[bold]/exit[/bold] 退出\n\n"
+                        "[dim]你也可以直接说：检查环境、生成图片、查询任务、查看最近图片。[/dim]",
+                        title="Leon 命令",
+                        border_style="dim",
+                    )
+                )
                 continue
             self.process(message)
 
