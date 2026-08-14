@@ -28,6 +28,13 @@ Never commit `.env`, API tokens, SQLite databases, generated images, caches, or 
 - Model helpers: `src/leon_agent/models.py`
 - Tests: `tests/` and `packages/workbench_core/tests/`
 
+The read-only global latest-image backend lives in the separate ComfyUI repository at
+`D:\apiWorkSpace\ComfyUI-aki\ComfyUI-aki-v3\ComfyUI`:
+
+- Query implementation: `app/ios/backend/gallery.py`
+- Route registration: `app/ios/backend/routes.py`
+- HTTP API: `GET /ios/image_gallery/latest`
+
 There must be only one Web client source. Do not recreate `projects/02-leon-agent/web/`; the
 FastAPI server only serves `src/leon_agent/web/`.
 
@@ -78,6 +85,11 @@ Web refresh state is not reconstructed from SSE memory. The client loads
 `GET /api/agent/sessions/{session_id}/image-state`, which merges the current Leon task sync and
 gallery sync results. Completed task `image_url` values are used as a fallback when the gallery sync
 lags behind the task endpoint.
+
+`get_latest_image` is intentionally global and read-only. It returns the newest completed image
+with a non-empty `final_image_url` across the whole Leon image database, without a `chat_id` filter.
+Do not replace it with a broad global gallery/search/delete API. The Agent client must normalize
+the backend's `final_image_url` into an absolute public `image_url` before returning it to the LLM.
 
 ## UX State
 
