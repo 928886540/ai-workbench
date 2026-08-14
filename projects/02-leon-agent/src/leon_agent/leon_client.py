@@ -7,8 +7,11 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urljoin
 
 import httpx
+
+ABSOLUTE_URL_PREFIXES = ("http://", "https://", "data:", "blob:")
 
 
 class LeonImageError(RuntimeError):
@@ -62,12 +65,16 @@ class LeonImageClient:
         *,
         backend_url: str,
         plugin_dir: Path,
+        public_base_url: str | None = None,
         timeout_seconds: float = 30.0,
         bridge_timeout_seconds: float = 20.0,
         http_client: httpx.Client | None = None,
         bridge: Bridge | None = None,
     ) -> None:
         self.backend_url = backend_url.rstrip("/")
+        # Image URLs shown to the user must be openable outside this process, so a public
+        # base URL wins over the internal backend address when both are configured.
+        self.public_base_url = (public_base_url or self.backend_url).rstrip("/")
         self._http = http_client or httpx.Client(timeout=timeout_seconds)
         self.bridge = bridge or LeonNodeBridge(
             plugin_dir,
@@ -76,6 +83,24 @@ class LeonImageClient:
 
     def _url(self, path: str) -> str:
         return f"{self.backend_url}/{path.lstrip('/')}"
+
+    def _absolute_media_url(self, value: Any) -> str | None:
+        """Turn a backend media reference into an absolute, openable URL.
+
+        The Leon/ComfyUI sync endpoints may return relative paths such as
+        ``/view?filename=a.png``. Returning those unchanged leaves the model and CLI
+        printing hostless paths, so resolve them against the public base URL.
+        """
+        if not isinstance(value, str):
+            return None
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if candidate.startswith(ABSOLUTE_URL_PREFIXES):
+            return candidate
+        if candidate.startswith("//"):
+            return urljoin(f"{self.public_base_url}/", candidate)
+        return f"{self.public_base_url}/{candidate.lstrip('/')}"
 
     def _json_request(
         self,
@@ -132,12 +157,14 @@ class LeonImageClient:
             return {
                 "ok": False,
                 "backend_url": self.backend_url,
+                "public_base_url": self.public_base_url,
                 "checks": checks,
                 "error": str(exc),
             }
         return {
             "ok": all(bool(item.get("ok")) for item in checks.values()),
             "backend_url": self.backend_url,
+            "public_base_url": self.public_base_url,
             "checks": checks,
         }
 
@@ -212,24 +239,29 @@ class LeonImageClient:
         items = result.get("items", [])
         return [item for item in items if isinstance(item, dict)][: payload["limit"]]
 
-    @staticmethod
-    def _task_summary(item: dict[str, Any]) -> dict[str, Any]:
+    def _task_summary(self, item: dict[str, Any]) -> dict[str, Any]:
         return {
             "job_id": item.get("jobId") or item.get("job_id"),
             "status": item.get("status"),
             "progress": item.get("progress") or item.get("progress_pct"),
             "workflow_name": item.get("workflowName") or item.get("workflow_name"),
             "source_text": item.get("sourceText") or item.get("source_text"),
-            "image_url": item.get("imageUrl") or item.get("final_image_url"),
+            "image_url": self._absolute_media_url(
+                item.get("imageUrl")
+                or item.get("image_url")
+                or item.get("finalImageUrl")
+                or item.get("final_image_url")
+            ),
             "error": item.get("error"),
         }
 
-    @staticmethod
-    def _image_summary(item: dict[str, Any]) -> dict[str, Any]:
+    def _image_summary(self, item: dict[str, Any]) -> dict[str, Any]:
         return {
             "job_id": item.get("jobId") or item.get("job_id"),
             "workflow_name": item.get("workflowName") or item.get("workflow_name"),
             "source_text": item.get("sourceText") or item.get("source_text"),
-            "image_url": item.get("imageUrl") or item.get("image_url"),
+            "image_url": self._absolute_media_url(
+                item.get("imageUrl") or item.get("image_url")
+            ),
             "created_at": item.get("createdAt") or item.get("created_at"),
         }
