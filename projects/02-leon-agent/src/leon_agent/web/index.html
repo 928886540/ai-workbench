@@ -17,84 +17,55 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
   --green:#46A171;--green-soft:#E8F1EC;
   --orange:#D5803B;--orange-soft:#FBEBDE;
   --red:#E56458;--red-soft:#FCE9E7;
+  --purple:#7B5EA7;--purple-soft:#EDE8F5;
   --surface:#F9F8F7;--surface2:#F0EFED;
   --border:#E6E5E3;--text:#2C2C2B;--text2:#7D7A75;
   --nav-h:56px;--header-h:52px;
 }
-#app{display:flex;flex-direction:column;height:100%;height:100dvh;transition:opacity .2s}
+#app{display:flex;flex-direction:column;height:100%;height:100dvh}
 
-/* ── Login screen ─────────────────────────────────────── */
-#login-screen{
-  position:fixed;inset:0;background:#fff;z-index:200;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:32px 24px calc(32px + env(safe-area-inset-bottom));
-  gap:0;
-}
+/* Login */
+#login-screen{position:fixed;inset:0;background:#fff;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px calc(32px + env(safe-area-inset-bottom));gap:0}
 #login-screen.hidden{display:none}
 .login-logo{font-size:56px;margin-bottom:8px;line-height:1}
 .login-title{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-bottom:6px}
 .login-sub{font-size:14px;color:var(--text2);margin-bottom:40px;text-align:center}
 .login-field{width:100%;max-width:320px;margin-bottom:12px}
 .login-field label{display:block;font-size:13px;font-weight:500;color:var(--text2);margin-bottom:6px}
-.login-field input{
-  width:100%;border:1.5px solid var(--border);border-radius:12px;
-  padding:13px 16px;font-size:16px;outline:none;font-family:inherit;
-  letter-spacing:.05em;transition:border-color .15s;
-}
+.login-field input{width:100%;border:1.5px solid var(--border);border-radius:12px;padding:13px 16px;font-size:16px;outline:none;font-family:inherit;transition:border-color .15s}
 .login-field input:focus{border-color:var(--blue)}
 #login-error{color:var(--red);font-size:13px;min-height:18px;margin-bottom:4px;text-align:center;max-width:320px}
-#login-btn{
-  width:100%;max-width:320px;padding:15px;background:var(--blue);color:#fff;
-  border:none;border-radius:14px;font-size:16px;font-weight:600;
-  cursor:pointer;letter-spacing:.01em;transition:opacity .15s;
-  margin-top:4px;
-}
+#login-btn{width:100%;max-width:320px;padding:15px;background:var(--blue);color:#fff;border:none;border-radius:14px;font-size:16px;font-weight:600;cursor:pointer;margin-top:4px;transition:opacity .15s}
 #login-btn:disabled{opacity:.5;cursor:default}
 .login-hint{margin-top:20px;font-size:12px;color:var(--text2);text-align:center;max-width:300px}
 
-/* ── Header ───────────────────────────────────────────── */
-#header{
-  height:var(--header-h);display:flex;align-items:center;
-  justify-content:space-between;padding:0 16px;
-  border-bottom:1px solid var(--border);background:#fff;
-  position:sticky;top:0;z-index:20;
-}
+/* Header */
+#header{height:var(--header-h);display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--border);background:#fff;position:sticky;top:0;z-index:20}
 #header h1{font-size:17px;font-weight:600;letter-spacing:-.3px}
-#status-wrap{display:flex;align-items:center;gap:6px;cursor:pointer}
+#header-right{display:flex;align-items:center;gap:10px}
+#status-wrap{display:flex;align-items:center;gap:6px}
 #status-dot{width:8px;height:8px;border-radius:50%;background:var(--border);transition:background .3s}
 #status-dot.online{background:var(--green)}
 #status-dot.error{background:var(--red)}
 #status-dot.connecting{background:var(--orange)}
 #status-label{font-size:12px;color:var(--text2)}
+#interview-toggle{border:none;background:var(--surface2);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;color:var(--text2);transition:all .15s;white-space:nowrap}
+#interview-toggle.active{background:var(--purple);color:#fff}
 
-/* ── Pages ────────────────────────────────────────────── */
+/* Pages */
 #pages{flex:1;overflow:hidden;position:relative}
 .page{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none;flex-direction:column}
 .page.active{display:flex}
 
-/* ── Chat ─────────────────────────────────────────────── */
+/* Chat */
 #chat-messages{flex:1;padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;-webkit-overflow-scrolling:touch}
-#chat-input-wrap{
-  padding:8px 12px calc(8px + env(safe-area-inset-bottom));
-  border-top:1px solid var(--border);background:#fff;
-  display:flex;align-items:flex-end;gap:8px;
-}
-#chat-input{
-  flex:1;border:1.5px solid var(--border);border-radius:20px;
-  padding:9px 14px;font-size:15px;outline:none;resize:none;
-  max-height:120px;line-height:1.4;font-family:inherit;
-  transition:border-color .15s;
-}
+#chat-input-wrap{padding:8px 12px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:#fff;display:flex;align-items:flex-end;gap:8px}
+#chat-input{flex:1;border:1.5px solid var(--border);border-radius:20px;padding:9px 14px;font-size:15px;outline:none;resize:none;max-height:120px;line-height:1.4;font-family:inherit;transition:border-color .15s}
 #chat-input:focus{border-color:var(--blue)}
-#send-btn{
-  width:40px;height:40px;border-radius:50%;background:var(--blue);
-  color:#fff;border:none;cursor:pointer;flex-shrink:0;
-  display:flex;align-items:center;justify-content:center;
-  transition:opacity .15s;
-}
+#send-btn{width:40px;height:40px;border-radius:50%;background:var(--blue);color:#fff;border:none;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:opacity .15s}
 #send-btn:disabled{opacity:.4;cursor:default}
 
-/* ── Bubbles ──────────────────────────────────────────── */
+/* Bubbles */
 .bubble-wrap{display:flex;flex-direction:column;max-width:85%;gap:2px}
 .bubble-wrap.user{align-self:flex-end;align-items:flex-end}
 .bubble-wrap.agent{align-self:flex-start;align-items:flex-start}
@@ -104,11 +75,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .bubble.agent.streaming::after{content:'▋';animation:blink .7s step-start infinite}
 @keyframes blink{50%{opacity:0}}
 
-/* ── Tool cards ───────────────────────────────────────── */
-.tool-card{
-  align-self:flex-start;background:#fff;border:1.5px solid var(--border);
-  border-radius:12px;padding:10px 13px;font-size:13px;max-width:92%;
-}
+/* Tool cards */
+.tool-card{align-self:flex-start;background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:10px 13px;font-size:13px;max-width:92%}
 .tool-header{display:flex;align-items:center;gap:7px;font-weight:600;font-size:14px}
 .tool-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0}
 .tool-icon.running{background:var(--blue-soft);color:var(--blue)}
@@ -116,34 +84,34 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .tool-icon.failed{background:var(--red-soft);color:var(--red)}
 .tool-meta{margin-top:6px;color:var(--text2);font-size:12px;display:flex;flex-direction:column;gap:3px}
 
-/* ── Status badges ────────────────────────────────────── */
+/* Status badges */
 .status-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500}
 .status-badge.queued{background:var(--surface2);color:var(--text2)}
 .status-badge.running{background:var(--blue-soft);color:var(--blue)}
 .status-badge.completed{background:var(--green-soft);color:var(--green)}
 .status-badge.failed{background:var(--red-soft);color:var(--red)}
 
-/* ── Image card ───────────────────────────────────────── */
+/* Image card */
 .image-card{align-self:flex-start;border-radius:14px;overflow:hidden;border:1px solid var(--border);max-width:min(280px,85%)}
 .image-card img{width:100%;display:block;object-fit:cover}
 .image-card .image-meta{padding:8px 10px;font-size:11px;color:var(--text2);background:#fff}
 .image-card .image-meta a{color:var(--blue);text-decoration:none}
 
-/* ── Tasks page ───────────────────────────────────────── */
+/* Tasks page */
 #page-tasks{padding:12px;gap:8px}
 .task-item{background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:5px}
 .task-top{display:flex;align-items:center;justify-content:space-between}
 .task-id{font-size:12px;color:var(--text2);font-family:Menlo,monospace;word-break:break-all}
 .task-plan{font-size:11px;color:var(--text2)}
 
-/* ── Gallery page ─────────────────────────────────────── */
+/* Gallery */
 #page-gallery{padding:12px;display:flex;flex-direction:column;gap:8px}
 #gallery-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .gallery-img-wrap{border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--surface)}
 .gallery-img-wrap img{width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:pointer}
 .gallery-meta{padding:6px 8px;font-size:11px;color:var(--text2)}
 
-/* ── Debug page ───────────────────────────────────────── */
+/* Debug */
 #page-debug{padding:12px;gap:8px}
 .debug-section{background:var(--surface);border-radius:10px;padding:12px}
 .debug-section h3{font-size:13px;font-weight:600;margin-bottom:8px}
@@ -154,25 +122,140 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .ev-type{color:var(--blue);font-weight:600}
 .debug-btn{margin-top:8px;padding:8px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;width:100%}
 
-/* ── Bottom nav ───────────────────────────────────────── */
+/* ============================================================
+   INTERVIEW MODE OVERLAY
+   ============================================================ */
+#interview-overlay{
+  position:fixed;inset:0;z-index:100;
+  background:#0f1117;
+  display:flex;flex-direction:column;
+  opacity:0;pointer-events:none;
+  transition:opacity .25s;
+}
+#interview-overlay.open{opacity:1;pointer-events:all}
+
+/* Interview header */
+#iv-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px 12px;
+  padding-top:calc(16px + env(safe-area-inset-top));
+  border-bottom:1px solid rgba(255,255,255,.08);
+  flex-shrink:0;
+}
+#iv-title{color:#fff;font-size:18px;font-weight:700;letter-spacing:-.3px}
+#iv-subtitle{color:rgba(255,255,255,.45);font-size:12px;margin-top:1px}
+#iv-close{border:none;background:rgba(255,255,255,.1);color:#fff;border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer}
+
+/* Runtime status row */
+#iv-status-bar{
+  display:flex;gap:8px;padding:10px 20px;
+  border-bottom:1px solid rgba(255,255,255,.06);
+  overflow-x:auto;flex-shrink:0;
+}
+.iv-stat{
+  display:flex;align-items:center;gap:6px;
+  background:rgba(255,255,255,.06);border-radius:8px;
+  padding:5px 10px;white-space:nowrap;
+}
+.iv-stat-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.iv-stat-dot.green{background:#46A171}
+.iv-stat-dot.blue{background:#2783DE;animation:pulse 1.5s ease-in-out infinite}
+.iv-stat-dot.gray{background:#555}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.iv-stat-label{font-size:11px;color:rgba(255,255,255,.5)}
+.iv-stat-value{font-size:12px;color:#fff;font-weight:600}
+
+/* Timeline */
+#iv-timeline{
+  flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:16px 20px calc(20px + env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;gap:0;
+}
+.tl-entry{
+  display:flex;gap:12px;
+  padding-bottom:0;
+}
+.tl-line-col{
+  display:flex;flex-direction:column;align-items:center;
+  flex-shrink:0;width:24px;
+}
+.tl-dot{
+  width:24px;height:24px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;flex-shrink:0;
+}
+.tl-connector{
+  width:2px;flex:1;min-height:12px;
+  background:rgba(255,255,255,.08);
+  margin:2px 0;
+}
+.tl-body{
+  flex:1;padding-bottom:16px;
+}
+.tl-label{
+  font-size:11px;font-weight:600;letter-spacing:.04em;
+  text-transform:uppercase;margin-bottom:4px;
+}
+.tl-content{
+  border-radius:10px;padding:10px 12px;
+  font-size:13px;line-height:1.5;
+}
+.tl-content code{
+  font-family:Menlo,monospace;font-size:12px;
+  background:rgba(255,255,255,.08);border-radius:4px;padding:1px 4px;
+}
+.tl-time{font-size:10px;color:rgba(255,255,255,.3);margin-top:4px}
+
+/* Timeline entry themes */
+.tl-user .tl-dot{background:#2783DE}
+.tl-user .tl-label{color:#5E9FE8}
+.tl-user .tl-content{background:rgba(39,131,222,.12);color:#C8E0FF}
+
+.tl-agent .tl-dot{background:#46A171}
+.tl-agent .tl-label{color:#72BC8F}
+.tl-agent .tl-content{background:rgba(70,161,113,.1);color:#B8DDCA;white-space:pre-wrap}
+
+.tl-tool .tl-dot{background:#D5803B}
+.tl-tool .tl-label{color:#DE9255}
+.tl-tool .tl-content{background:rgba(213,128,59,.1);color:#F5C79A}
+
+.tl-image .tl-dot{background:#7B5EA7}
+.tl-image .tl-label{color:#B09FCC}
+.tl-image .tl-content{background:rgba(123,94,167,.1)}
+.tl-image img{width:100%;max-width:240px;border-radius:8px;display:block;margin-top:6px;cursor:pointer}
+
+.tl-error .tl-dot{background:#E56458}
+.tl-error .tl-label{color:#E97366}
+.tl-error .tl-content{background:rgba(229,100,88,.1);color:#FFBBB6}
+
+/* Badge in timeline */
+.tl-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:2px 7px;border-radius:20px;font-size:10px;font-weight:600;
+  margin-left:6px;
+}
+.tl-badge.queued{background:rgba(255,255,255,.1);color:rgba(255,255,255,.5)}
+.tl-badge.running{background:rgba(39,131,222,.25);color:#5E9FE8}
+.tl-badge.completed{background:rgba(70,161,113,.25);color:#72BC8F}
+.tl-badge.failed{background:rgba(229,100,88,.25);color:#E97366}
+
+/* Bottom nav */
 #nav{height:var(--nav-h);display:flex;border-top:1px solid var(--border);background:#fff;padding-bottom:env(safe-area-inset-bottom)}
 .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:none;background:none;cursor:pointer;color:var(--text2);font-size:10px;font-weight:500;padding:6px 0;transition:color .15s}
 .nav-icon{font-size:22px;line-height:1}
 .nav-item.active{color:var(--blue)}
 
-/* ── Empty state ──────────────────────────────────────── */
+/* Empty / spinner */
 .empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text2);padding:32px}
 .empty-icon{font-size:40px}
 .empty-state p{font-size:14px;text-align:center}
-
-/* ── Spinner ──────────────────────────────────────────── */
 @keyframes spin{to{transform:rotate(360deg)}}
 .spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
 </style>
 </head>
 <body>
 
-<!-- ── Login screen ───────────────────────────────────── -->
+<!-- Login -->
 <div id="login-screen">
   <div class="login-logo">⚡</div>
   <div class="login-title">Leon Agent</div>
@@ -186,13 +269,16 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
   <p class="login-hint">首次使用请输入服务端配置的 LEON_API_TOKEN。<br>未设置 Token 时直接点击连接即可。</p>
 </div>
 
-<!-- ── Main app ────────────────────────────────────────── -->
+<!-- Main app -->
 <div id="app">
   <div id="header">
     <h1>⚡ Leon Agent</h1>
-    <div id="status-wrap">
-      <div id="status-dot"></div>
-      <span id="status-label">未连接</span>
+    <div id="header-right">
+      <button id="interview-toggle">🎤 面试模式</button>
+      <div id="status-wrap">
+        <div id="status-dot"></div>
+        <span id="status-label">未连接</span>
+      </div>
     </div>
   </div>
 
@@ -209,19 +295,14 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
       </div>
     </div>
 
-    <div class="page" id="page-tasks">
-      <div id="tasks-list"></div>
-    </div>
-
-    <div class="page" id="page-gallery">
-      <div id="gallery-grid"></div>
-    </div>
+    <div class="page" id="page-tasks"><div id="tasks-list"></div></div>
+    <div class="page" id="page-gallery"><div id="gallery-grid"></div></div>
 
     <div class="page" id="page-debug">
       <div class="debug-section">
         <h3>连接信息</h3>
         <pre id="debug-info">加载中…</pre>
-        <button class="debug-btn" id="logout-btn">🔒 退出登录（清除 Token）</button>
+        <button class="debug-btn" id="logout-btn">🔒 退出登录</button>
       </div>
       <div class="debug-section">
         <h3>SSE 事件流</h3>
@@ -231,320 +312,382 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
   </div>
 
   <nav id="nav">
-    <button class="nav-item active" data-page="chat">
-      <span class="nav-icon">💬</span>聊天
-    </button>
-    <button class="nav-item" data-page="tasks">
-      <span class="nav-icon">📋</span>任务
-    </button>
-    <button class="nav-item" data-page="gallery">
-      <span class="nav-icon">🖼️</span>图库
-    </button>
-    <button class="nav-item" data-page="debug">
-      <span class="nav-icon">🔧</span>调试
-    </button>
+    <button class="nav-item active" data-page="chat"><span class="nav-icon">💬</span>聊天</button>
+    <button class="nav-item" data-page="tasks"><span class="nav-icon">📋</span>任务</button>
+    <button class="nav-item" data-page="gallery"><span class="nav-icon">🖼️</span>图库</button>
+    <button class="nav-item" data-page="debug"><span class="nav-icon">🔧</span>调试</button>
   </nav>
+</div>
+
+<!-- ============================================================
+     INTERVIEW MODE OVERLAY
+     ============================================================ -->
+<div id="interview-overlay">
+  <div id="iv-header">
+    <div>
+      <div id="iv-title">⚡ Leon Agent — 面试模式</div>
+      <div id="iv-subtitle">Agent 决策链路实时展示</div>
+    </div>
+    <button id="iv-close">退出</button>
+  </div>
+
+  <div id="iv-status-bar">
+    <div class="iv-stat">
+      <div class="iv-stat-dot gray" id="iv-dot-sse"></div>
+      <span class="iv-stat-label">SSE</span>
+      <span class="iv-stat-value" id="iv-val-sse">断线</span>
+    </div>
+    <div class="iv-stat">
+      <div class="iv-stat-dot gray" id="iv-dot-session"></div>
+      <span class="iv-stat-label">Session</span>
+      <span class="iv-stat-value" id="iv-val-session">—</span>
+    </div>
+    <div class="iv-stat">
+      <div class="iv-stat-dot gray" id="iv-dot-turns"></div>
+      <span class="iv-stat-label">Turns</span>
+      <span class="iv-stat-value" id="iv-val-turns">0</span>
+    </div>
+    <div class="iv-stat">
+      <div class="iv-stat-dot gray" id="iv-dot-tools"></div>
+      <span class="iv-stat-label">Tool Calls</span>
+      <span class="iv-stat-value" id="iv-val-tools">0</span>
+    </div>
+    <div class="iv-stat">
+      <div class="iv-stat-dot gray" id="iv-dot-images"></div>
+      <span class="iv-stat-label">Images</span>
+      <span class="iv-stat-value" id="iv-val-images">0</span>
+    </div>
+  </div>
+
+  <div id="iv-timeline"></div>
 </div>
 
 <script>
 'use strict';
-
-// ── Helpers ────────────────────────────────────────────────────────────────
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function fmtTime(iso){try{return new Date(iso).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return iso}}
 
-// ── Config / token storage ─────────────────────────────────────────────────
-// Gateway URL is always same-origin (the server serves this page).
+// Config
 const BASE_URL = location.origin;
-const TOKEN_KEY = 'leon_token';
-const SESSION_KEY = 'leon_session';
-
+const TOKEN_KEY = 'leon_token', SESSION_KEY = 'leon_session';
 let token = localStorage.getItem(TOKEN_KEY) || '';
 let sessionId = localStorage.getItem(SESSION_KEY) || '';
 
-// ── Login screen ───────────────────────────────────────────────────────────
+// Login
 const $loginScreen = document.getElementById('login-screen');
 const $loginToken  = document.getElementById('login-token');
 const $loginBtn    = document.getElementById('login-btn');
 const $loginError  = document.getElementById('login-error');
-
-function showLogin(err) {
-  $loginError.textContent = err || '';
-  $loginScreen.classList.remove('hidden');
-  $loginToken.value = '';
-  setTimeout(() => $loginToken.focus(), 100);
+function showLogin(err){$loginError.textContent=err||'';$loginScreen.classList.remove('hidden');setTimeout(()=>$loginToken.focus(),100)}
+function hideLogin(){$loginScreen.classList.add('hidden')}
+$loginToken.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doLogin()}})
+$loginBtn.addEventListener('click',doLogin);
+async function doLogin(){
+  const t=$loginToken.value.trim();
+  $loginBtn.disabled=true;$loginError.textContent='';
+  try{
+    const r=await fetch(BASE_URL+'/api/health',{headers:t?{Authorization:'Bearer '+t}:{}});
+    if(!r.ok)throw new Error('验证失败 ('+r.status+')');
+    token=t;localStorage.setItem(TOKEN_KEY,token);hideLogin();await init();
+  }catch(err){$loginError.textContent='❌ '+err.message}
+  finally{$loginBtn.disabled=false}
 }
+document.getElementById('logout-btn').addEventListener('click',()=>{localStorage.removeItem(TOKEN_KEY);localStorage.removeItem(SESSION_KEY);location.reload()});
 
-function hideLogin() {
-  $loginScreen.classList.add('hidden');
-}
-
-$loginToken.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); doLogin(); }
-});
-
-$loginBtn.addEventListener('click', doLogin);
-
-async function doLogin() {
-  const t = $loginToken.value.trim();
-  $loginBtn.disabled = true;
-  $loginError.textContent = '';
-  try {
-    // Verify token by hitting health endpoint
-    const r = await fetch(BASE_URL + '/api/health', {
-      headers: t ? { Authorization: 'Bearer ' + t } : {}
-    });
-    if (!r.ok) throw new Error('验证失败 (' + r.status + ')');
-    token = t;
-    localStorage.setItem(TOKEN_KEY, token);
-    hideLogin();
-    await init();
-  } catch (err) {
-    $loginError.textContent = '❌ ' + err.message;
-  } finally {
-    $loginBtn.disabled = false;
-  }
-}
-
-document.getElementById('logout-btn').addEventListener('click', () => {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(SESSION_KEY);
-  location.reload();
-});
-
-// ── Navigation ─────────────────────────────────────────────────────────────
-document.querySelectorAll('.nav-item').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const t = btn.dataset.page;
-    document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === t));
-    document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + t));
-    if (t === 'tasks') renderTasks();
-    if (t === 'gallery') renderGallery();
-    if (t === 'debug') updateDebugInfo();
+// Nav
+document.querySelectorAll('.nav-item').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const t=btn.dataset.page;
+    document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===t));
+    document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+t));
+    if(t==='tasks')renderTasks();
+    if(t==='gallery')renderGallery();
+    if(t==='debug')updateDebugInfo();
   });
 });
 
-// ── Status indicator ────────────────────────────────────────────────────────
-const $dot = document.getElementById('status-dot');
-const $lbl = document.getElementById('status-label');
-function setStatus(cls, label) {
-  $dot.className = cls;
-  $lbl.textContent = label;
-}
+// Status
+const $dot=document.getElementById('status-dot'),$lbl=document.getElementById('status-label');
+function setStatus(cls,label){$dot.className=cls;$lbl.textContent=label}
 
-// ── API ─────────────────────────────────────────────────────────────────────
-async function api(method, path, body) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = 'Bearer ' + token;
-  const r = await fetch(BASE_URL + path, {
-    method, headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (r.status === 401) { showLogin('认证失效，请重新输入 Token'); throw new Error('401'); }
-  if (!r.ok) throw new Error(r.status + ' ' + await r.text());
+// API
+async function api(method,path,body){
+  const headers={'Content-Type':'application/json'};
+  if(token)headers['Authorization']='Bearer '+token;
+  const r=await fetch(BASE_URL+path,{method,headers,body:body?JSON.stringify(body):undefined});
+  if(r.status===401){showLogin('认证失效，请重新输入 Token');throw new Error('401')}
+  if(!r.ok)throw new Error(r.status+' '+await r.text());
   return r.json();
 }
 
-// ── SSE ─────────────────────────────────────────────────────────────────────
-let sse = null, sseTimer = null;
+// SSE
+let sse=null,sseTimer=null;
+function connectSSE(){
+  if(!sessionId)return;
+  if(sse){sse.close();sse=null}
+  clearTimeout(sseTimer);setStatus('connecting','连接中…');
+  const url=BASE_URL+'/api/agent/sessions/'+sessionId+'/events'+(token?'?token='+encodeURIComponent(token):'');
+  sse=new EventSource(url);
+  sse.onopen=()=>setStatus('online','已连接');
+  sse.onerror=()=>{sse.close();sse=null;setStatus('error','断线');sseTimer=setTimeout(connectSSE,3000)}
+  sse.onmessage=e=>{try{handleEvent(JSON.parse(e.data))}catch{}}
+}
+window.addEventListener('online',()=>{clearTimeout(sseTimer);sseTimer=setTimeout(connectSSE,500)})
 
-function connectSSE() {
-  if (!sessionId) return;
-  if (sse) { sse.close(); sse = null; }
-  clearTimeout(sseTimer);
-  setStatus('connecting', '连接中…');
-  const url = BASE_URL + '/api/agent/sessions/' + sessionId + '/events'
-    + (token ? '?token=' + encodeURIComponent(token) : '');
-  sse = new EventSource(url);
-  sse.onopen  = () => setStatus('online', '已连接');
-  sse.onerror = () => { sse.close(); sse = null; setStatus('error', '断线'); sseTimer = setTimeout(connectSSE, 3000); };
-  sse.onmessage = e => { try { handleEvent(JSON.parse(e.data)); } catch {} };
+// State
+const tasks={},images={};
+let currentToolCard=null,currentBubble=null,sending=false;
+let ivTurns=0,ivTools=0;
+
+// ============================================================
+// Interview Mode
+// ============================================================
+const $ivOverlay  = document.getElementById('interview-overlay');
+const $ivTimeline = document.getElementById('iv-timeline');
+const $ivToggle   = document.getElementById('interview-toggle');
+let ivMode = false;
+let currentIvToolEntry = null;
+
+$ivToggle.addEventListener('click',()=>{ ivMode=!ivMode; $ivToggle.classList.toggle('active',ivMode); $ivOverlay.classList.toggle('open',ivMode); updateIvStats(); });
+document.getElementById('iv-close').addEventListener('click',()=>{ ivMode=false; $ivToggle.classList.remove('active'); $ivOverlay.classList.remove('open'); });
+
+function updateIvStats(){
+  // SSE
+  const sseOk=sse&&sse.readyState===1;
+  document.getElementById('iv-dot-sse').className='iv-stat-dot '+(sseOk?'green':'gray');
+  document.getElementById('iv-val-sse').textContent=sseOk?'已连接':'断线';
+  // Session (show first 8 chars only)
+  document.getElementById('iv-dot-session').className='iv-stat-dot '+(sessionId?'green':'gray');
+  document.getElementById('iv-val-session').textContent=sessionId?sessionId.slice(0,8)+'…':'—';
+  // Counters
+  document.getElementById('iv-dot-turns').className='iv-stat-dot '+(ivTurns?'green':'gray');
+  document.getElementById('iv-val-turns').textContent=ivTurns;
+  document.getElementById('iv-dot-tools').className='iv-stat-dot '+(ivTools?'green':'gray');
+  document.getElementById('iv-val-tools').textContent=ivTools;
+  document.getElementById('iv-dot-images').className='iv-stat-dot '+(Object.keys(images).length?'green':'gray');
+  document.getElementById('iv-val-images').textContent=Object.keys(images).length;
 }
 
-window.addEventListener('online', () => { clearTimeout(sseTimer); sseTimer = setTimeout(connectSSE, 500); });
+function addTlEntry(type, label, html, ts){
+  const icons={user:'👤',agent:'🤖',tool:'🔧',image:'🖼️',error:'⚠️'};
+  // Add connector to previous entry if exists
+  const prev=$ivTimeline.lastElementChild;
+  if(prev){
+    const col=prev.querySelector('.tl-line-col');
+    if(col&&!col.querySelector('.tl-connector')){
+      const line=document.createElement('div');line.className='tl-connector';col.appendChild(line);
+    }
+  }
+  const entry=document.createElement('div');
+  entry.className='tl-entry tl-'+type;
+  entry.innerHTML=`
+    <div class="tl-line-col">
+      <div class="tl-dot">${icons[type]||'●'}</div>
+    </div>
+    <div class="tl-body">
+      <div class="tl-label">${esc(label)}</div>
+      <div class="tl-content">${html}</div>
+      <div class="tl-time">${fmtTime(ts||new Date().toISOString())}</div>
+    </div>`;
+  $ivTimeline.appendChild(entry);
+  requestAnimationFrame(()=>{$ivTimeline.scrollTop=$ivTimeline.scrollHeight});
+  return entry;
+}
 
-// ── State ────────────────────────────────────────────────────────────────────
-const tasks  = {};
-const images = {};
-let currentToolCard = null;
-let currentBubble   = null;
-let sending         = false;
-
-// ── Event handler ─────────────────────────────────────────────────────────
-function handleEvent(ev) {
+// ============================================================
+// Event handler
+// ============================================================
+function handleEvent(ev){
   logDebug(ev);
-  switch (ev.event) {
-    case 'session.connected': setStatus('online', '已连接'); break;
+  updateIvStats();
+  switch(ev.event){
+    case 'session.connected': setStatus('online','已连接'); break;
+
+    case 'user.message':
+      ivTurns++;
+      addTlEntry('user','用户输入',esc(ev.data.content||''),ev.timestamp);
+      updateIvStats();
+      break;
+
     case 'assistant.started':
-      currentBubble = addBubble('agent', '', true);
-      currentToolCard = null;
+      currentBubble=addBubble('agent','',true);
+      currentToolCard=null;
+      currentIvToolEntry=null;
       break;
+
     case 'assistant.delta':
-      if (currentBubble) { currentBubble.querySelector('.bubble').textContent += ev.data.delta || ''; scrollBottom(); }
+      if(currentBubble){currentBubble.querySelector('.bubble').textContent+=ev.data.delta||'';scrollBottom()}
       break;
-    case 'assistant.completed':
-      if (currentBubble) {
-        currentBubble.querySelector('.bubble').textContent = ev.data.content || currentBubble.querySelector('.bubble').textContent;
-        currentBubble.querySelector('.bubble').classList.remove('streaming');
-        scrollBottom();
+
+    case 'assistant.completed':{
+      const content=ev.data.content||'';
+      if(currentBubble){
+        const b=currentBubble.querySelector('.bubble');b.textContent=content||b.textContent;b.classList.remove('streaming');scrollBottom();
       }
-      currentBubble = null;
+      currentBubble=null;
+      if(content) addTlEntry('agent','Agent 回复',esc(content),ev.timestamp);
       break;
+    }
+
     case 'tool.started':
-      currentToolCard = addToolCard(ev.data.tool_name, 'running');
-      scrollBottom();
+      ivTools++;
+      currentToolCard=addToolCard(ev.data.tool_name,'running');scrollBottom();
+      currentIvToolEntry=addTlEntry('tool','Tool Call',`调用 <code>${esc(ev.data.tool_name)}</code> …<span class="tl-badge running">运行中</span>`,ev.timestamp);
+      updateIvStats();
       break;
-    case 'tool.finished':
-      if (currentToolCard) updateToolCard(currentToolCard, ev.data.ok !== false ? 'done' : 'failed');
+
+    case 'tool.finished':{
+      const ok=ev.data.ok!==false;
+      if(currentToolCard)updateToolCard(currentToolCard,ok?'done':'failed');
+      if(currentIvToolEntry){
+        const badge=currentIvToolEntry.querySelector('.tl-badge');
+        if(badge){badge.className='tl-badge '+(ok?'completed':'failed');badge.textContent=ok?'完成':'失败'}
+      }
       break;
+    }
+
     case 'image.task.created':
-      tasks[ev.data.job_id] = { status: ev.data.status || 'queued', planId: ev.data.generation_plan_id };
-      if (currentToolCard) addTaskMeta(currentToolCard, ev.data);
+      tasks[ev.data.job_id]={status:ev.data.status||'queued',planId:ev.data.generation_plan_id};
+      if(currentToolCard)addTaskMeta(currentToolCard,ev.data);
+      if(currentIvToolEntry){
+        const c=currentIvToolEntry.querySelector('.tl-content');
+        const row=document.createElement('div');row.style.marginTop='4px';
+        row.id='iv-task-'+ev.data.job_id;
+        row.innerHTML=`job: <code>${esc(String(ev.data.job_id))}</code><span class="tl-badge queued" id="iv-badge-${esc(ev.data.job_id)}">${ev.data.status||'queued'}</span>`;
+        c.appendChild(row);
+      }
       break;
+
     case 'image.task.updated':
-      if (tasks[ev.data.job_id]) tasks[ev.data.job_id].status = ev.data.status;
-      if (currentToolCard) updateBadge(currentToolCard, ev.data.job_id, ev.data.status);
+      if(tasks[ev.data.job_id])tasks[ev.data.job_id].status=ev.data.status;
+      if(currentToolCard)updateBadge(currentToolCard,ev.data.job_id,ev.data.status);
+      // Update iv badge
+      const ivb=document.getElementById('iv-badge-'+ev.data.job_id);
+      if(ivb){ivb.className='tl-badge '+ev.data.status;ivb.textContent=ev.data.status}
       break;
+
     case 'image.completed':
-      tasks[ev.data.job_id] = { ...(tasks[ev.data.job_id] || {}), status: 'completed' };
-      images[ev.data.job_id] = { url: ev.data.image_url, planId: ev.data.generation_plan_id };
-      addImageCard(ev.data.image_url, ev.data.job_id);
+      tasks[ev.data.job_id]={...(tasks[ev.data.job_id]||{}),status:'completed'};
+      images[ev.data.job_id]={url:ev.data.image_url,planId:ev.data.generation_plan_id};
+      addImageCard(ev.data.image_url,ev.data.job_id);
+      addTlEntry('image','生图完成',`<a href="${esc(ev.data.image_url)}" target="_blank" style="color:#B09FCC">查看图片 →</a><br><img src="${esc(ev.data.image_url)}" alt="生成图片" onclick="window.open('${esc(ev.data.image_url)}','_blank')">`,ev.timestamp);
+      updateIvStats();
       break;
-    case 'agent.error': {
-      const msg = '❌ ' + ev.data.error;
-      if (currentBubble) { const b = currentBubble.querySelector('.bubble'); b.textContent = msg; b.classList.remove('streaming'); currentBubble = null; }
-      else addBubble('agent', msg, false);
+
+    case 'agent.error':{
+      const msg='❌ '+ev.data.error;
+      if(currentBubble){const b=currentBubble.querySelector('.bubble');b.textContent=msg;b.classList.remove('streaming');currentBubble=null}
+      else addBubble('agent',msg,false);
+      addTlEntry('error','Agent 错误',esc(ev.data.error),ev.timestamp);
       break;
     }
   }
 }
 
-// ── Chat DOM ───────────────────────────────────────────────────────────────
-const $msgs = document.getElementById('chat-messages');
-function addBubble(role, text, streaming) {
-  const w = document.createElement('div'); w.className = 'bubble-wrap ' + role;
-  const b = document.createElement('div'); b.className = 'bubble ' + role + (streaming ? ' streaming' : '');
-  b.textContent = text; w.appendChild(b); $msgs.appendChild(w); scrollBottom(); return w;
+// Chat DOM
+const $msgs=document.getElementById('chat-messages');
+function addBubble(role,text,streaming){
+  const w=document.createElement('div');w.className='bubble-wrap '+role;
+  const b=document.createElement('div');b.className='bubble '+role+(streaming?' streaming':'');
+  b.textContent=text;w.appendChild(b);$msgs.appendChild(w);scrollBottom();return w;
 }
-function addToolCard(name, state) {
-  const c = document.createElement('div'); c.className = 'tool-card';
-  c.innerHTML = `<div class="tool-header"><div class="tool-icon ${state}">${iconFor(state)}</div><span>${esc(name)}</span></div><div class="tool-meta"></div>`;
-  $msgs.appendChild(c); return c;
+function addToolCard(name,state){
+  const c=document.createElement('div');c.className='tool-card';
+  c.innerHTML=`<div class="tool-header"><div class="tool-icon ${state}">${iconFor(state)}</div><span>${esc(name)}</span></div><div class="tool-meta"></div>`;
+  $msgs.appendChild(c);return c;
 }
-function updateToolCard(c, state) {
-  const i = c.querySelector('.tool-icon'); i.className = 'tool-icon ' + state; i.innerHTML = iconFor(state);
-}
-function iconFor(s) {
-  return s === 'running' ? '<div class="spinner"></div>' : s === 'done' ? '✓' : '✗';
-}
-function addTaskMeta(card, data) {
-  const m = card.querySelector('.tool-meta');
-  const r = document.createElement('span');
-  r.innerHTML = `job: <code>${esc(String(data.job_id || ''))}</code> &nbsp;<span class="status-badge ${data.status || 'queued'}" id="badge-${esc(data.job_id)}">${data.status || 'queued'}</span>`;
+function updateToolCard(c,state){const i=c.querySelector('.tool-icon');i.className='tool-icon '+state;i.innerHTML=iconFor(state)}
+function iconFor(s){return s==='running'?'<div class="spinner"></div>':s==='done'?'✓':'✗'}
+function addTaskMeta(card,data){
+  const m=card.querySelector('.tool-meta');
+  const r=document.createElement('span');
+  r.innerHTML=`job: <code>${esc(String(data.job_id||''))}</code> &nbsp;<span class="status-badge ${data.status||'queued'}" id="badge-${esc(data.job_id)}">${data.status||'queued'}</span>`;
   m.appendChild(r);
 }
-function updateBadge(card, jobId, status) {
-  const b = card.querySelector('#badge-' + jobId);
-  if (b) { b.className = 'status-badge ' + status; b.textContent = status; }
+function updateBadge(card,jobId,status){
+  const b=card.querySelector('#badge-'+jobId);
+  if(b){b.className='status-badge '+status;b.textContent=status}
 }
-function addImageCard(url, jobId) {
-  const c = document.createElement('div'); c.className = 'image-card';
-  c.innerHTML = `<img src="${esc(url)}" alt="生成图片" loading="lazy" onclick="window.open('${esc(url)}','_blank')"><div class="image-meta"><a href="${esc(url)}" target="_blank">查看原图 →</a></div>`;
-  $msgs.appendChild(c); scrollBottom();
+function addImageCard(url,jobId){
+  const c=document.createElement('div');c.className='image-card';
+  c.innerHTML=`<img src="${esc(url)}" alt="生成图片" loading="lazy" onclick="window.open('${esc(url)}','_blank')"><div class="image-meta"><a href="${esc(url)}" target="_blank">查看原图 →</a></div>`;
+  $msgs.appendChild(c);scrollBottom();
 }
-function scrollBottom() { requestAnimationFrame(() => { $msgs.scrollTop = $msgs.scrollHeight; }); }
+function scrollBottom(){requestAnimationFrame(()=>{$msgs.scrollTop=$msgs.scrollHeight})}
 
-// ── Tasks ──────────────────────────────────────────────────────────────────
-function renderTasks() {
-  const $l = document.getElementById('tasks-list'); $l.innerHTML = '';
-  const entries = Object.entries(tasks).reverse();
-  if (!entries.length) { $l.innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div><p>暂无生图任务</p></div>'; return; }
-  entries.forEach(([jobId, t]) => {
-    const el = document.createElement('div'); el.className = 'task-item';
-    el.innerHTML = `<div class="task-top"><span class="task-id">${esc(jobId)}</span><span class="status-badge ${t.status}">${t.status}</span></div>${t.planId ? `<div class="task-plan">plan: ${esc(t.planId)}</div>` : ''}`;
+// Tasks
+function renderTasks(){
+  const $l=document.getElementById('tasks-list');$l.innerHTML='';
+  const entries=Object.entries(tasks).reverse();
+  if(!entries.length){$l.innerHTML='<div class="empty-state"><div class="empty-icon">📋</div><p>暂无生图任务</p></div>';return}
+  entries.forEach(([jobId,t])=>{
+    const el=document.createElement('div');el.className='task-item';
+    el.innerHTML=`<div class="task-top"><span class="task-id">${esc(jobId)}</span><span class="status-badge ${t.status}">${t.status}</span></div>${t.planId?`<div class="task-plan">plan: ${esc(t.planId)}</div>`:''}`;
     $l.appendChild(el);
   });
 }
 
-// ── Gallery ────────────────────────────────────────────────────────────────
-function renderGallery() {
-  const $g = document.getElementById('gallery-grid'); $g.innerHTML = '';
-  const entries = Object.entries(images).reverse();
-  if (!entries.length) { $g.innerHTML = '<div class="empty-state"><div class="empty-icon">🖼️</div><p>暂无已完成图片</p></div>'; return; }
-  entries.forEach(([jobId, img]) => {
-    const el = document.createElement('div'); el.className = 'gallery-img-wrap';
-    el.innerHTML = `<img src="${esc(img.url)}" alt="图片" loading="lazy" onclick="window.open('${esc(img.url)}','_blank')"><div class="gallery-meta">${esc(jobId.slice(0,12))}…</div>`;
+// Gallery
+function renderGallery(){
+  const $g=document.getElementById('gallery-grid');$g.innerHTML='';
+  const entries=Object.entries(images).reverse();
+  if(!entries.length){$g.innerHTML='<div class="empty-state"><div class="empty-icon">🖼️</div><p>暂无已完成图片</p></div>';return}
+  entries.forEach(([jobId,img])=>{
+    const el=document.createElement('div');el.className='gallery-img-wrap';
+    el.innerHTML=`<img src="${esc(img.url)}" alt="图片" loading="lazy" onclick="window.open('${esc(img.url)}','_blank')"><div class="gallery-meta">${esc(jobId.slice(0,12))}…</div>`;
     $g.appendChild(el);
   });
 }
 
-// ── Debug ──────────────────────────────────────────────────────────────────
-function updateDebugInfo() {
-  document.getElementById('debug-info').textContent = JSON.stringify({
-    session_id: sessionId,
-    gateway: BASE_URL,
-    sse: sse ? ['CONNECTING','OPEN','CLOSED'][sse.readyState] : 'none',
-    tasks: Object.keys(tasks).length,
-    images: Object.keys(images).length,
-  }, null, 2);
+// Debug
+function updateDebugInfo(){
+  document.getElementById('debug-info').textContent=JSON.stringify({
+    session_id:sessionId,
+    gateway:BASE_URL,
+    sse:sse?['CONNECTING','OPEN','CLOSED'][sse.readyState]:'none',
+    tasks:Object.keys(tasks).length,
+    images:Object.keys(images).length,
+  },null,2);
 }
-function logDebug(ev) {
-  const $de = document.getElementById('debug-events');
-  const el = document.createElement('div'); el.className = 'debug-event';
-  el.innerHTML = `<span class="ev-type">${esc(ev.event)}</span> ${esc(JSON.stringify(ev.data||{}))}`.slice(0,240);
-  $de.prepend(el);
-  if ($de.children.length > 100) $de.lastChild.remove();
-}
-
-// ── Send ───────────────────────────────────────────────────────────────────
-const $input   = document.getElementById('chat-input');
-const $sendBtn = document.getElementById('send-btn');
-async function sendMessage() {
-  const text = $input.value.trim();
-  if (!text || sending) return;
-  sending = true; $sendBtn.disabled = true;
-  $input.value = ''; $input.style.height = '';
-  addBubble('user', text, false);
-  try {
-    await api('POST', '/api/agent/sessions/' + sessionId + '/messages', { content: text });
-  } catch (err) {
-    if (!err.message.startsWith('401'))
-      addBubble('agent', '❌ ' + err.message, false);
-  } finally {
-    sending = false; $sendBtn.disabled = false; $input.focus();
-  }
-}
-$sendBtn.addEventListener('click', sendMessage);
-$input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-$input.addEventListener('input', () => { $input.style.height = 'auto'; $input.style.height = Math.min($input.scrollHeight, 120) + 'px'; });
-
-// ── Init ───────────────────────────────────────────────────────────────────
-async function ensureSession() {
-  if (sessionId) {
-    try { await api('GET', '/api/agent/sessions/' + sessionId); return; } catch {}
-  }
-  const d = await api('POST', '/api/agent/sessions');
-  sessionId = d.session_id;
-  localStorage.setItem(SESSION_KEY, sessionId);
+function logDebug(ev){
+  const $de=document.getElementById('debug-events');
+  const el=document.createElement('div');el.className='debug-event';
+  el.innerHTML=`<span class="ev-type">${esc(ev.event)}</span> ${esc(JSON.stringify(ev.data||{}))}`.slice(0,240);
+  $de.prepend(el);if($de.children.length>100)$de.lastChild.remove();
 }
 
-async function init() {
-  setStatus('connecting', '初始化…');
-  try {
-    await ensureSession();
-    connectSSE();
-    updateDebugInfo();
-  } catch (err) {
-    if (!err.message.startsWith('401')) setStatus('error', '连接失败');
-  }
+// Send
+const $input=document.getElementById('chat-input'),$sendBtn=document.getElementById('send-btn');
+async function sendMessage(){
+  const text=$input.value.trim();if(!text||sending)return;
+  sending=true;$sendBtn.disabled=true;
+  $input.value='';$input.style.height='';
+  addBubble('user',text,false);
+  try{await api('POST','/api/agent/sessions/'+sessionId+'/messages',{content:text})}
+  catch(err){if(!err.message.startsWith('401'))addBubble('agent','❌ '+err.message,false)}
+  finally{sending=false;$sendBtn.disabled=false;$input.focus()}
+}
+$sendBtn.addEventListener('click',sendMessage);
+$input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}})
+$input.addEventListener('input',()=>{$input.style.height='auto';$input.style.height=Math.min($input.scrollHeight,120)+'px'})
+
+// Init
+async function ensureSession(){
+  if(sessionId){try{await api('GET','/api/agent/sessions/'+sessionId);return}catch{}}
+  const d=await api('POST','/api/agent/sessions');
+  sessionId=d.session_id;localStorage.setItem(SESSION_KEY,sessionId);
+}
+async function init(){
+  setStatus('connecting','初始化…');
+  try{await ensureSession();connectSSE();updateDebugInfo();}
+  catch(err){if(!err.message.startsWith('401'))setStatus('error','连接失败')}
 }
 
-// ── PWA ────────────────────────────────────────────────────────────────────
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+// PWA
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 
-// ── Bootstrap ──────────────────────────────────────────────────────────────
-// If token already saved, skip login screen directly
-if (token) { hideLogin(); init(); }
-// else login screen is already visible
+// Bootstrap
+if(token){hideLogin();init()}
 </script>
 </body>
 </html>
