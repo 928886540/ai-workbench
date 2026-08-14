@@ -49,8 +49,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 #status-dot.error{background:var(--red)}
 #status-dot.connecting{background:var(--orange)}
 #status-label{font-size:12px;color:var(--text2)}
-#interview-toggle{border:none;background:var(--surface2);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;color:var(--text2);transition:all .15s;white-space:nowrap}
-#interview-toggle.active{background:var(--purple);color:#fff}
+#timeline-toggle{border:none;background:var(--surface2);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;color:var(--text2);transition:all .15s;white-space:nowrap}
+#timeline-toggle.active{background:#1a1a2e;color:#fff}
 
 /* Pages */
 #pages{flex:1;overflow:hidden;position:relative}
@@ -123,18 +123,18 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .debug-btn{margin-top:8px;padding:8px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;width:100%}
 
 /* ============================================================
-   INTERVIEW MODE OVERLAY
+   TIMELINE OVERLAY
    ============================================================ */
-#interview-overlay{
+#timeline-overlay{
   position:fixed;inset:0;z-index:100;
   background:#0f1117;
   display:flex;flex-direction:column;
   opacity:0;pointer-events:none;
   transition:opacity .25s;
 }
-#interview-overlay.open{opacity:1;pointer-events:all}
+#timeline-overlay.open{opacity:1;pointer-events:all}
 
-/* Interview header */
+/* Timeline header */
 #iv-header{
   display:flex;align-items:center;justify-content:space-between;
   padding:16px 20px 12px;
@@ -165,7 +165,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .iv-stat-label{font-size:11px;color:rgba(255,255,255,.5)}
 .iv-stat-value{font-size:12px;color:#fff;font-weight:600}
 
-/* Timeline */
+/* Timeline scroll area */
 #iv-timeline{
   flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
   padding:16px 20px calc(20px + env(safe-area-inset-bottom));
@@ -173,7 +173,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 }
 .tl-entry{
   display:flex;gap:12px;
-  padding-bottom:0;
 }
 .tl-line-col{
   display:flex;flex-direction:column;align-items:center;
@@ -189,9 +188,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
   background:rgba(255,255,255,.08);
   margin:2px 0;
 }
-.tl-body{
-  flex:1;padding-bottom:16px;
-}
+.tl-body{flex:1;padding-bottom:16px}
 .tl-label{
   font-size:11px;font-weight:600;letter-spacing:.04em;
   text-transform:uppercase;margin-bottom:4px;
@@ -206,7 +203,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 }
 .tl-time{font-size:10px;color:rgba(255,255,255,.3);margin-top:4px}
 
-/* Timeline entry themes */
+/* Entry themes */
 .tl-user .tl-dot{background:#2783DE}
 .tl-user .tl-label{color:#5E9FE8}
 .tl-user .tl-content{background:rgba(39,131,222,.12);color:#C8E0FF}
@@ -228,7 +225,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .tl-error .tl-label{color:#E97366}
 .tl-error .tl-content{background:rgba(229,100,88,.1);color:#FFBBB6}
 
-/* Badge in timeline */
 .tl-badge{
   display:inline-flex;align-items:center;gap:4px;
   padding:2px 7px;border-radius:20px;font-size:10px;font-weight:600;
@@ -245,7 +241,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .nav-icon{font-size:22px;line-height:1}
 .nav-item.active{color:var(--blue)}
 
-/* Empty / spinner */
+/* Misc */
 .empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text2);padding:32px}
 .empty-icon{font-size:40px}
 .empty-state p{font-size:14px;text-align:center}
@@ -274,7 +270,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
   <div id="header">
     <h1>⚡ Leon Agent</h1>
     <div id="header-right">
-      <button id="interview-toggle">🎤 面试模式</button>
+      <button id="timeline-toggle">Timeline</button>
       <div id="status-wrap">
         <div id="status-dot"></div>
         <span id="status-label">未连接</span>
@@ -300,12 +296,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 
     <div class="page" id="page-debug">
       <div class="debug-section">
-        <h3>连接信息</h3>
+        <h3>Runtime Info</h3>
         <pre id="debug-info">加载中…</pre>
         <button class="debug-btn" id="logout-btn">🔒 退出登录</button>
       </div>
       <div class="debug-section">
-        <h3>SSE 事件流</h3>
+        <h3>SSE Event Stream</h3>
         <div id="debug-events"></div>
       </div>
     </div>
@@ -319,23 +315,21 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
   </nav>
 </div>
 
-<!-- ============================================================
-     INTERVIEW MODE OVERLAY
-     ============================================================ -->
-<div id="interview-overlay">
+<!-- TIMELINE OVERLAY -->
+<div id="timeline-overlay">
   <div id="iv-header">
     <div>
-      <div id="iv-title">⚡ Leon Agent — 面试模式</div>
-      <div id="iv-subtitle">Agent 决策链路实时展示</div>
+      <div id="iv-title">⚡ Leon Agent &mdash; Agent Timeline</div>
+      <div id="iv-subtitle">Real-time decision trace</div>
     </div>
-    <button id="iv-close">退出</button>
+    <button id="iv-close">Close</button>
   </div>
 
   <div id="iv-status-bar">
     <div class="iv-stat">
       <div class="iv-stat-dot gray" id="iv-dot-sse"></div>
       <span class="iv-stat-label">SSE</span>
-      <span class="iv-stat-value" id="iv-val-sse">断线</span>
+      <span class="iv-stat-value" id="iv-val-sse">--</span>
     </div>
     <div class="iv-stat">
       <div class="iv-stat-dot gray" id="iv-dot-session"></div>
@@ -367,7 +361,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 function fmtTime(iso){try{return new Date(iso).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return iso}}
 
-// Config
 const BASE_URL = location.origin;
 const TOKEN_KEY = 'leon_token', SESSION_KEY = 'leon_session';
 let token = localStorage.getItem(TOKEN_KEY) || '';
@@ -387,7 +380,7 @@ async function doLogin(){
   $loginBtn.disabled=true;$loginError.textContent='';
   try{
     const r=await fetch(BASE_URL+'/api/health',{headers:t?{Authorization:'Bearer '+t}:{}});
-    if(!r.ok)throw new Error('验证失败 ('+r.status+')');
+    if(!r.ok)throw new Error('Auth failed ('+r.status+')');
     token=t;localStorage.setItem(TOKEN_KEY,token);hideLogin();await init();
   }catch(err){$loginError.textContent='❌ '+err.message}
   finally{$loginBtn.disabled=false}
@@ -415,7 +408,7 @@ async function api(method,path,body){
   const headers={'Content-Type':'application/json'};
   if(token)headers['Authorization']='Bearer '+token;
   const r=await fetch(BASE_URL+path,{method,headers,body:body?JSON.stringify(body):undefined});
-  if(r.status===401){showLogin('认证失效，请重新输入 Token');throw new Error('401')}
+  if(r.status===401){showLogin('Token expired, please re-enter');throw new Error('401')}
   if(!r.ok)throw new Error(r.status+' '+await r.text());
   return r.json();
 }
@@ -425,11 +418,11 @@ let sse=null,sseTimer=null;
 function connectSSE(){
   if(!sessionId)return;
   if(sse){sse.close();sse=null}
-  clearTimeout(sseTimer);setStatus('connecting','连接中…');
+  clearTimeout(sseTimer);setStatus('connecting','Connecting...');
   const url=BASE_URL+'/api/agent/sessions/'+sessionId+'/events'+(token?'?token='+encodeURIComponent(token):'');
   sse=new EventSource(url);
-  sse.onopen=()=>setStatus('online','已连接');
-  sse.onerror=()=>{sse.close();sse=null;setStatus('error','断线');sseTimer=setTimeout(connectSSE,3000)}
+  sse.onopen=()=>setStatus('online','Connected');
+  sse.onerror=()=>{sse.close();sse=null;setStatus('error','Disconnected');sseTimer=setTimeout(connectSSE,3000)}
   sse.onmessage=e=>{try{handleEvent(JSON.parse(e.data))}catch{}}
 }
 window.addEventListener('online',()=>{clearTimeout(sseTimer);sseTimer=setTimeout(connectSSE,500)})
@@ -440,37 +433,33 @@ let currentToolCard=null,currentBubble=null,sending=false;
 let ivTurns=0,ivTools=0;
 
 // ============================================================
-// Interview Mode
+// Timeline overlay
 // ============================================================
-const $ivOverlay  = document.getElementById('interview-overlay');
+const $tlOverlay  = document.getElementById('timeline-overlay');
 const $ivTimeline = document.getElementById('iv-timeline');
-const $ivToggle   = document.getElementById('interview-toggle');
-let ivMode = false;
+const $tlToggle   = document.getElementById('timeline-toggle');
+let tlMode = false;
 let currentIvToolEntry = null;
 
-$ivToggle.addEventListener('click',()=>{ ivMode=!ivMode; $ivToggle.classList.toggle('active',ivMode); $ivOverlay.classList.toggle('open',ivMode); updateIvStats(); });
-document.getElementById('iv-close').addEventListener('click',()=>{ ivMode=false; $ivToggle.classList.remove('active'); $ivOverlay.classList.remove('open'); });
+$tlToggle.addEventListener('click',()=>{ tlMode=!tlMode; $tlToggle.classList.toggle('active',tlMode); $tlOverlay.classList.toggle('open',tlMode); updateIvStats(); });
+document.getElementById('iv-close').addEventListener('click',()=>{ tlMode=false; $tlToggle.classList.remove('active'); $tlOverlay.classList.remove('open'); });
 
 function updateIvStats(){
-  // SSE
   const sseOk=sse&&sse.readyState===1;
   document.getElementById('iv-dot-sse').className='iv-stat-dot '+(sseOk?'green':'gray');
-  document.getElementById('iv-val-sse').textContent=sseOk?'已连接':'断线';
-  // Session (show first 8 chars only)
+  document.getElementById('iv-val-sse').textContent=sseOk?'Live':'--';
   document.getElementById('iv-dot-session').className='iv-stat-dot '+(sessionId?'green':'gray');
   document.getElementById('iv-val-session').textContent=sessionId?sessionId.slice(0,8)+'…':'—';
-  // Counters
-  document.getElementById('iv-dot-turns').className='iv-stat-dot '+(ivTurns?'green':'gray');
+  document.getElementById('iv-dot-turns').className='iv-stat-dot '+(ivTurns?'blue':'gray');
   document.getElementById('iv-val-turns').textContent=ivTurns;
-  document.getElementById('iv-dot-tools').className='iv-stat-dot '+(ivTools?'green':'gray');
+  document.getElementById('iv-dot-tools').className='iv-stat-dot '+(ivTools?'blue':'gray');
   document.getElementById('iv-val-tools').textContent=ivTools;
   document.getElementById('iv-dot-images').className='iv-stat-dot '+(Object.keys(images).length?'green':'gray');
   document.getElementById('iv-val-images').textContent=Object.keys(images).length;
 }
 
-function addTlEntry(type, label, html, ts){
+function addTlEntry(type,label,html,ts){
   const icons={user:'👤',agent:'🤖',tool:'🔧',image:'🖼️',error:'⚠️'};
-  // Add connector to previous entry if exists
   const prev=$ivTimeline.lastElementChild;
   if(prev){
     const col=prev.querySelector('.tl-line-col');
@@ -481,9 +470,7 @@ function addTlEntry(type, label, html, ts){
   const entry=document.createElement('div');
   entry.className='tl-entry tl-'+type;
   entry.innerHTML=`
-    <div class="tl-line-col">
-      <div class="tl-dot">${icons[type]||'●'}</div>
-    </div>
+    <div class="tl-line-col"><div class="tl-dot">${icons[type]||'●'}</div></div>
     <div class="tl-body">
       <div class="tl-label">${esc(label)}</div>
       <div class="tl-content">${html}</div>
@@ -498,51 +485,36 @@ function addTlEntry(type, label, html, ts){
 // Event handler
 // ============================================================
 function handleEvent(ev){
-  logDebug(ev);
-  updateIvStats();
+  logDebug(ev);updateIvStats();
   switch(ev.event){
-    case 'session.connected': setStatus('online','已连接'); break;
+    case 'session.connected':setStatus('online','Connected');break;
 
     case 'user.message':
-      ivTurns++;
-      addTlEntry('user','用户输入',esc(ev.data.content||''),ev.timestamp);
-      updateIvStats();
-      break;
+      ivTurns++;addTlEntry('user','User Input',esc(ev.data.content||''),ev.timestamp);updateIvStats();break;
 
     case 'assistant.started':
-      currentBubble=addBubble('agent','',true);
-      currentToolCard=null;
-      currentIvToolEntry=null;
-      break;
+      currentBubble=addBubble('agent','',true);currentToolCard=null;currentIvToolEntry=null;break;
 
     case 'assistant.delta':
-      if(currentBubble){currentBubble.querySelector('.bubble').textContent+=ev.data.delta||'';scrollBottom()}
-      break;
+      if(currentBubble){currentBubble.querySelector('.bubble').textContent+=ev.data.delta||'';scrollBottom()}break;
 
     case 'assistant.completed':{
       const content=ev.data.content||'';
-      if(currentBubble){
-        const b=currentBubble.querySelector('.bubble');b.textContent=content||b.textContent;b.classList.remove('streaming');scrollBottom();
-      }
+      if(currentBubble){const b=currentBubble.querySelector('.bubble');b.textContent=content||b.textContent;b.classList.remove('streaming');scrollBottom()}
       currentBubble=null;
-      if(content) addTlEntry('agent','Agent 回复',esc(content),ev.timestamp);
+      if(content)addTlEntry('agent','Agent Response',esc(content),ev.timestamp);
       break;
     }
 
     case 'tool.started':
-      ivTools++;
-      currentToolCard=addToolCard(ev.data.tool_name,'running');scrollBottom();
-      currentIvToolEntry=addTlEntry('tool','Tool Call',`调用 <code>${esc(ev.data.tool_name)}</code> …<span class="tl-badge running">运行中</span>`,ev.timestamp);
-      updateIvStats();
-      break;
+      ivTools++;currentToolCard=addToolCard(ev.data.tool_name,'running');scrollBottom();
+      currentIvToolEntry=addTlEntry('tool','Tool Call',`Calling <code>${esc(ev.data.tool_name)}</code><span class="tl-badge running">running</span>`,ev.timestamp);
+      updateIvStats();break;
 
     case 'tool.finished':{
       const ok=ev.data.ok!==false;
       if(currentToolCard)updateToolCard(currentToolCard,ok?'done':'failed');
-      if(currentIvToolEntry){
-        const badge=currentIvToolEntry.querySelector('.tl-badge');
-        if(badge){badge.className='tl-badge '+(ok?'completed':'failed');badge.textContent=ok?'完成':'失败'}
-      }
+      if(currentIvToolEntry){const b=currentIvToolEntry.querySelector('.tl-badge');if(b){b.className='tl-badge '+(ok?'completed':'failed');b.textContent=ok?'done':'failed'}}
       break;
     }
 
@@ -552,7 +524,6 @@ function handleEvent(ev){
       if(currentIvToolEntry){
         const c=currentIvToolEntry.querySelector('.tl-content');
         const row=document.createElement('div');row.style.marginTop='4px';
-        row.id='iv-task-'+ev.data.job_id;
         row.innerHTML=`job: <code>${esc(String(ev.data.job_id))}</code><span class="tl-badge queued" id="iv-badge-${esc(ev.data.job_id)}">${ev.data.status||'queued'}</span>`;
         c.appendChild(row);
       }
@@ -561,24 +532,21 @@ function handleEvent(ev){
     case 'image.task.updated':
       if(tasks[ev.data.job_id])tasks[ev.data.job_id].status=ev.data.status;
       if(currentToolCard)updateBadge(currentToolCard,ev.data.job_id,ev.data.status);
-      // Update iv badge
-      const ivb=document.getElementById('iv-badge-'+ev.data.job_id);
-      if(ivb){ivb.className='tl-badge '+ev.data.status;ivb.textContent=ev.data.status}
+      {const ivb=document.getElementById('iv-badge-'+ev.data.job_id);if(ivb){ivb.className='tl-badge '+ev.data.status;ivb.textContent=ev.data.status}}
       break;
 
     case 'image.completed':
       tasks[ev.data.job_id]={...(tasks[ev.data.job_id]||{}),status:'completed'};
-      images[ev.data.job_id]={url:ev.data.image_url,planId:ev.data.generation_plan_id};
+      images[ev.data.job_id]={url:ev.data.image_url};
       addImageCard(ev.data.image_url,ev.data.job_id);
-      addTlEntry('image','生图完成',`<a href="${esc(ev.data.image_url)}" target="_blank" style="color:#B09FCC">查看图片 →</a><br><img src="${esc(ev.data.image_url)}" alt="生成图片" onclick="window.open('${esc(ev.data.image_url)}','_blank')">`,ev.timestamp);
-      updateIvStats();
-      break;
+      addTlEntry('image','Image Ready',`<a href="${esc(ev.data.image_url)}" target="_blank" style="color:#B09FCC">Open full image →</a><br><img src="${esc(ev.data.image_url)}" alt="generated" onclick="window.open('${esc(ev.data.image_url)}','_blank')">`,ev.timestamp);
+      updateIvStats();break;
 
     case 'agent.error':{
       const msg='❌ '+ev.data.error;
       if(currentBubble){const b=currentBubble.querySelector('.bubble');b.textContent=msg;b.classList.remove('streaming');currentBubble=null}
       else addBubble('agent',msg,false);
-      addTlEntry('error','Agent 错误',esc(ev.data.error),ev.timestamp);
+      addTlEntry('error','Error',esc(ev.data.error),ev.timestamp);
       break;
     }
   }
@@ -608,9 +576,9 @@ function updateBadge(card,jobId,status){
   const b=card.querySelector('#badge-'+jobId);
   if(b){b.className='status-badge '+status;b.textContent=status}
 }
-function addImageCard(url,jobId){
+function addImageCard(url){
   const c=document.createElement('div');c.className='image-card';
-  c.innerHTML=`<img src="${esc(url)}" alt="生成图片" loading="lazy" onclick="window.open('${esc(url)}','_blank')"><div class="image-meta"><a href="${esc(url)}" target="_blank">查看原图 →</a></div>`;
+  c.innerHTML=`<img src="${esc(url)}" alt="generated" loading="lazy" onclick="window.open('${esc(url)}','_blank')"><div class="image-meta"><a href="${esc(url)}" target="_blank">Open full image →</a></div>`;
   $msgs.appendChild(c);scrollBottom();
 }
 function scrollBottom(){requestAnimationFrame(()=>{$msgs.scrollTop=$msgs.scrollHeight})}
@@ -619,7 +587,7 @@ function scrollBottom(){requestAnimationFrame(()=>{$msgs.scrollTop=$msgs.scrollH
 function renderTasks(){
   const $l=document.getElementById('tasks-list');$l.innerHTML='';
   const entries=Object.entries(tasks).reverse();
-  if(!entries.length){$l.innerHTML='<div class="empty-state"><div class="empty-icon">📋</div><p>暂无生图任务</p></div>';return}
+  if(!entries.length){$l.innerHTML='<div class="empty-state"><div class="empty-icon">📋</div><p>No tasks yet</p></div>';return}
   entries.forEach(([jobId,t])=>{
     const el=document.createElement('div');el.className='task-item';
     el.innerHTML=`<div class="task-top"><span class="task-id">${esc(jobId)}</span><span class="status-badge ${t.status}">${t.status}</span></div>${t.planId?`<div class="task-plan">plan: ${esc(t.planId)}</div>`:''}`;
@@ -631,10 +599,10 @@ function renderTasks(){
 function renderGallery(){
   const $g=document.getElementById('gallery-grid');$g.innerHTML='';
   const entries=Object.entries(images).reverse();
-  if(!entries.length){$g.innerHTML='<div class="empty-state"><div class="empty-icon">🖼️</div><p>暂无已完成图片</p></div>';return}
+  if(!entries.length){$g.innerHTML='<div class="empty-state"><div class="empty-icon">🖼️</div><p>No images yet</p></div>';return}
   entries.forEach(([jobId,img])=>{
     const el=document.createElement('div');el.className='gallery-img-wrap';
-    el.innerHTML=`<img src="${esc(img.url)}" alt="图片" loading="lazy" onclick="window.open('${esc(img.url)}','_blank')"><div class="gallery-meta">${esc(jobId.slice(0,12))}…</div>`;
+    el.innerHTML=`<img src="${esc(img.url)}" alt="image" loading="lazy" onclick="window.open('${esc(img.url)}','_blank')"><div class="gallery-meta">${esc(jobId.slice(0,12))}…</div>`;
     $g.appendChild(el);
   });
 }
@@ -642,11 +610,9 @@ function renderGallery(){
 // Debug
 function updateDebugInfo(){
   document.getElementById('debug-info').textContent=JSON.stringify({
-    session_id:sessionId,
-    gateway:BASE_URL,
+    session_id:sessionId,gateway:BASE_URL,
     sse:sse?['CONNECTING','OPEN','CLOSED'][sse.readyState]:'none',
-    tasks:Object.keys(tasks).length,
-    images:Object.keys(images).length,
+    tasks:Object.keys(tasks).length,images:Object.keys(images).length,
   },null,2);
 }
 function logDebug(ev){
@@ -678,15 +644,12 @@ async function ensureSession(){
   sessionId=d.session_id;localStorage.setItem(SESSION_KEY,sessionId);
 }
 async function init(){
-  setStatus('connecting','初始化…');
+  setStatus('connecting','Initializing...');
   try{await ensureSession();connectSSE();updateDebugInfo();}
-  catch(err){if(!err.message.startsWith('401'))setStatus('error','连接失败')}
+  catch(err){if(!err.message.startsWith('401'))setStatus('error','Connection failed')}
 }
 
-// PWA
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
-
-// Bootstrap
 if(token){hideLogin();init()}
 </script>
 </body>
