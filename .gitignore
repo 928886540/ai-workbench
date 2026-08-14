@@ -28,6 +28,7 @@ Thumbs.db
 # Local data / runtime
 data/local/
 data/cache/
+data/*.db
 *.log
 .tmp/
 .temp/

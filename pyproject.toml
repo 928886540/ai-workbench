@@ -8,6 +8,7 @@ dependencies = [
   "workbench-core",
   "llm-core",
   "code-agent",
+  "leon-agent",
   "python-dotenv>=1.0.1",
   "pydantic>=2.7.0",
   "pydantic-settings>=2.3.0",
@@ -27,23 +28,27 @@ members = [
   "packages/workbench_core",
   "projects/01-llm-core",
   "projects/02-code-agent",
+  "projects/02-leon-agent",
 ]
 
 [tool.uv.sources]
 workbench-core = { workspace = true }
 llm-core = { workspace = true }
 code-agent = { workspace = true }
+leon-agent = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [
   "packages/workbench_core/tests",
   "projects/01-llm-core/tests",
   "projects/02-code-agent/tests",
+  "projects/02-leon-agent/tests",
 ]
 pythonpath = [
   "packages/workbench_core/src",
   "projects/01-llm-core/src",
   "projects/02-code-agent/src",
+  "projects/02-leon-agent/src",
 ]
 
 [tool.ruff]

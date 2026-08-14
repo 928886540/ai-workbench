@@ -1,0 +1,21 @@
+[project]
+name = "leon-agent"
+version = "0.1.0"
+description = "Independent conversational agent with Leon image-generation tools."
+requires-python = ">=3.10"
+dependencies = [
+  "workbench-core",
+]
+
+[project.scripts]
+leon = "leon_agent.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/leon_agent"]
+
+[tool.uv.sources]
+workbench-core = { workspace = true }

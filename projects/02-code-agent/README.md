@@ -1,70 +1,64 @@
 # 02-code-agent
 
-Phase 01 主项目：会使用工具的代码分析 Agent。
+Phase 02 主项目：会使用工具的代码分析 Agent。
 
-## 目标用户故事
+## 你在学什么
+
+这就是 **Agent 主流程**：
 
 ```text
-用户：帮我分析这个项目
-Agent：
-1. 查看目录
-2. 读取关键文件
-3. 总结结构
-4. 给建议
-5. 输出结构化报告
+用户问题
+  -> 模型思考并选择工具
+  -> 运行时真正执行工具
+  -> 把观察结果塞回对话
+  -> 循环
+  -> 输出最终报告
 ```
 
-## 为什么这是第一阶段主项目
+不是聊天机器人，是 tool-using agent。
 
-一次覆盖 AI 工程核心肌肉：
-- LLM
-- tool calling
-- agent loop
-- context 控制
-- 安全边界
-- 结构化输出
-
-比“做一个聊天机器人”更接近真实 Agent 工程。
-
-## 当前进度
+## 当前能力
 
 - [x] workspace 路径沙箱
-- [x] `list_dir` / `read_file` 只读工具
-- [x] 确定性 seed analysis（不依赖模型）
-- [ ] tool schema + model function calling
-- [ ] 最小 ReAct / tool loop
-- [ ] 分析报告 schema
-- [ ] CLI：`analyze <path> --question "..."` 
+- [x] `list_dir` / `read_file` / `search_text`
+- [x] tool schema
+- [x] tool-calling loop
+- [x] CLI 分析入口
+- [ ] 更强的报告 schema 校验
+- [ ] 记忆/摘要压缩
+- [ ] 写入类工具（暂不做）
 
-## 运行（当前骨架）
+## 运行
 
 ```bash
-uv sync
+# 确定性预览（不调模型）
+uv run python -m code_agent.analyze --seed
+
+# 真正的 Agent loop（默认读 CCS 配置）
 uv run python -m code_agent.analyze
-uv run pytest projects/02-code-agent/tests -q
+
+# 自定义问题
+uv run python -m code_agent.analyze --question "这个仓库第一阶段在学什么？"
 ```
 
-## 架构草图
+## 架构
 
 ```text
-CLI / entry
-   |
-   v
-Agent Loop
-   |-- LLM (plan / tool calls / final answer)
-   |-- Tool Runtime
-   |     |-- list_dir
-   |     |-- read_file
-   |     |-- search_text (next)
-   |-- Workspace Guard
-   |
-   v
-Structured Report
+analyze CLI
+   -> CodeAgent.run
+        -> workbench_core.AgentRuntime
+        -> LLMClient.chat_turn(tools=...)
+        -> ToolRegistry / ToolRuntime.execute(...)
+        -> messages append observation
+        -> loop until final answer
 ```
+
+通用 loop 已抽到 `packages/workbench_core/src/workbench_core/agent/`，Leon Agent 复用同一运行时；
+本项目只保留代码分析 Prompt、工作区沙箱和文件工具。
 
 ## 设计原则
 
 1. 先只读，后写入
-2. 所有路径必须限制在 workspace root 内
-3. 工具输出要机器可读，方便 loop 消化
+2. 所有路径限制在 workspace root
+3. 工具输出机器可读
 4. 先自研最小 loop，再考虑框架

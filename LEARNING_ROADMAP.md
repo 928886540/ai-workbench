@@ -25,6 +25,12 @@
    项目分析报告
         |
         v
+02-leon-agent          <--- 当前实战
+   独立 CLI / Session
+   通用 Agent Runtime
+   Leon 生图工具适配
+        |
+        v
 03-rag-lab
    文档切分 / 检索 / 引用
         |
@@ -103,6 +109,26 @@ Agent 的本质是：
 - 权限边界
 - 多步推理
 - 结果可验证
+
+## Phase 1.5：`02-leon-agent`
+
+### 目标
+把最小 Agent loop 变成真正日用的个人 Agent，而不是另做一套聊天壳子。
+
+### 已完成
+- 共享 `AgentRuntime + ToolRegistry`
+- `leon` 交互式 CLI
+- SQLite session / message / tool call
+- 复用原 Leon 插件资产的生图工具
+- 任务与图库查询
+
+### 下一步
+- 面试可演示的 Leon MCP Server（最高优先级）
+- Telegram Bot channel adapter
+- Leon Agent 连接 Tavo MCP Server
+- 流式模型输出与生成任务完成通知
+- 上下文摘要压缩
+- 核心闭环稳定后再评估 Textual TUI
 
 ## Phase 2：`03-rag-lab`
 

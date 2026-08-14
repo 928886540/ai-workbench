@@ -35,6 +35,7 @@ ai-workbench/
 ├── projects/
 │   ├── 01-llm-core/           # 模型调用、Prompt、结构化输出
 │   ├── 02-code-agent/         # 第一阶段主项目：会用工具的代码分析 Agent
+│   ├── 02-leon-agent/         # 独立 CLI：聊天 + Leon 生图工具
 │   ├── 03-rag-lab/            # 文件/知识库问答
 │   ├── 04-mcp-lab/            # 自建 MCP server / client
 │   ├── 05-workflow/           # 工作流编排与自动化
@@ -54,7 +55,7 @@ ai-workbench/
 
 ## 当前阶段
 
-**Phase 01 目标：`02-code-agent`**
+**Phase 01 已跑通，当前在做可日用的 `02-leon-agent`。**
 
 做一个能分析本地项目的 AI Agent Assistant：
 
@@ -75,6 +76,17 @@ Agent：
 - 基础 memory / context 管理
 - 结构化输出
 
+现在可以从终端进入独立 Agent：
+
+```powershell
+uv run leon
+```
+
+普通问题直接聊天；明确的生图请求会调用现有 Leon / ComfyUI 工具。原 Tavo 插件保持独立，
+Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
+[Leon Agent 项目](projects/02-leon-agent/README.md) 和
+[总体架构](docs/leon-agent-architecture.md)。
+
 在真正做 Agent 前，先用 `01-llm-core` 把模型调用与结构化输出底座打稳。
 
 ## 技术栈（第一阶段）
@@ -91,13 +103,14 @@ Agent：
 
 明确不做的事（第一阶段）：
 - 不先上 LangChain 全家桶
-- 不先做聊天机器人壳子
+- 不做只有聊天壳子、没有真实工具闭环的 Agent
 - 不先堆 RAG 向量库花活
 
 ## Projects 进度
 
-- [ ] `01-llm-core`：模型调用 / Prompt / Structured Output
-- [ ] `02-code-agent`：Tool-using Code Analysis Agent
+- [x] `01-llm-core`：模型调用 / Prompt / Structured Output
+- [x] `02-code-agent`：Tool-using Code Analysis Agent
+- [x] `02-leon-agent`：独立 CLI / 会话 / Leon 生图工具第一版
 - [ ] `03-rag-lab`：文件问答与检索增强
 - [ ] `04-mcp-lab`：自建 MCP server
 - [ ] `05-workflow`：工作流自动化
@@ -117,6 +130,14 @@ Agent：
 
 > 先设计，再实现，再测试。
 
+
+## 职业方向
+
+近阶段目标：Java 后端 → **AI 应用工程师 / Agent 工程师**。
+
+- 转型计划：`notes/career/transition-plan.md`
+- 面试弹药：`D:/apiWorkSpace/面试准备/AI应用工程师面试准备.md`
+
 ## 快速开始
 
 ```bash
@@ -126,12 +147,14 @@ uv sync
 # 2. 复制环境变量
 copy .env.example .env
 
-# 3. 填入 OpenAI-compatible 配置后运行
+# 3. 验证模型底座或进入 Leon Agent
 uv run python -m llm_core.hello
+uv run leon
 ```
 
 ## 文档
 
 - [学习路线](LEARNING_ROADMAP.md)
 - [设计决策](notes/decisions/0001-repo-bootstrap.md)
+- [Leon Agent 架构决策](notes/decisions/0002-leon-agent-boundary.md)
 - [AI 协作约定](AGENTS.md)
