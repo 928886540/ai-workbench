@@ -31,6 +31,7 @@ class LeonSettings(BaseSettings):
         default="http://192.168.8.100:8188",
         alias="LEON_BACKEND_URL",
     )
+    public_image_base_url: str = Field(default="", alias="LEON_PUBLIC_IMAGE_BASE_URL")
     plugin_dir: Path | None = Field(default=None, alias="LEON_PLUGIN_DIR")
     session_db: Path = Field(
         default=REPO_ROOT / "data" / "leon-agent.db",
@@ -40,15 +41,20 @@ class LeonSettings(BaseSettings):
     http_timeout_seconds: float = Field(default=30.0, alias="LEON_HTTP_TIMEOUT_SECONDS")
     bridge_timeout_seconds: float = Field(default=20.0, alias="LEON_BRIDGE_TIMEOUT_SECONDS")
 
-    @field_validator("backend_url")
+    @field_validator("backend_url", "public_image_base_url")
     @classmethod
-    def normalize_backend_url(cls, value: str) -> str:
+    def normalize_base_url(cls, value: str) -> str:
         return value.strip().rstrip("/")
 
     @property
     def active_plugin_dir(self) -> Path:
         candidate = self.plugin_dir or DEFAULT_PLUGIN_DIR
         return candidate.expanduser().resolve()
+
+    @property
+    def active_public_image_base_url(self) -> str:
+        """Base URL used to build image links the user can actually open."""
+        return self.public_image_base_url or self.backend_url
 
     @property
     def default_mode_ids(self) -> list[str]:

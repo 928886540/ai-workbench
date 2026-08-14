@@ -25,6 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session", help="Resume an existing session id")
     parser.add_argument("--new", action="store_true", help="Always create a new session")
     parser.add_argument("--backend-url", help="Override LEON_BACKEND_URL")
+    parser.add_argument(
+        "--public-image-base-url",
+        help="Override LEON_PUBLIC_IMAGE_BASE_URL used to build absolute image links",
+    )
     parser.add_argument("--plugin-dir", help="Override LEON_PLUGIN_DIR")
     parser.add_argument("--db", help="Override LEON_SESSION_DB")
     return parser
@@ -37,6 +41,8 @@ class LeonConsole:
         updates = {}
         if args.backend_url:
             updates["backend_url"] = args.backend_url.rstrip("/")
+        if args.public_image_base_url:
+            updates["public_image_base_url"] = args.public_image_base_url.rstrip("/")
         if args.plugin_dir:
             updates["plugin_dir"] = Path(args.plugin_dir)
         if args.db:
@@ -59,6 +65,7 @@ class LeonConsole:
         image_client = LeonImageClient(
             backend_url=self.config.backend_url,
             plugin_dir=self.config.active_plugin_dir,
+            public_base_url=self.config.active_public_image_base_url,
             timeout_seconds=self.config.http_timeout_seconds,
             bridge_timeout_seconds=self.config.bridge_timeout_seconds,
         )
