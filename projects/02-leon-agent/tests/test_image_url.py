@@ -107,6 +107,7 @@ def test_gallery_image_urls_are_absolute() -> None:
             {"jobId": "job-3", "imageUrl": "//cdn.example.com/view?filename=c.png"},
             {"jobId": "job-4", "imageUrl": "   "},
             {"jobId": "job-5"},
+            {"job_id": "job-6", "final_image_url": "/view?filename=d.png"},
         ],
         expected_path="/ios/image_gallery/sync",
         public_base_url=PUBLIC_URL,
@@ -121,7 +122,45 @@ def test_gallery_image_urls_are_absolute() -> None:
         "https://cdn.example.com/view?filename=c.png",
         None,
         None,
+        f"{PUBLIC_URL}/view?filename=d.png",
     ]
+
+
+def test_latest_image_url_is_absolute() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/ios/image_gallery/latest"
+        return httpx.Response(
+            200,
+            json={
+                "item": {
+                    "job_id": "job-latest",
+                    "final_image_url": "/view?filename=latest.png",
+                    "finalized_at_ms": 123456,
+                }
+            },
+        )
+
+    client = LeonImageClient(
+        backend_url=BACKEND_URL,
+        plugin_dir=Path("unused"),
+        public_base_url=PUBLIC_URL,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        bridge=FakeBridge(),
+    )
+
+    result = client.get_latest_image()
+
+    assert result == {
+        "ok": True,
+        "item": {
+            "job_id": "job-latest",
+            "workflow_name": None,
+            "source_text": None,
+            "image_url": f"{PUBLIC_URL}/view?filename=latest.png",
+            "created_at": 123456,
+        },
+    }
 
 
 @pytest.mark.parametrize(

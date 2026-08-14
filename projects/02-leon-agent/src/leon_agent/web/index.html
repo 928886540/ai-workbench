@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Leon Agent">
@@ -11,7 +11,7 @@
 <title>Leon Agent</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:16px;line-height:1.5;background:#fff;color:#2C2C2B;-webkit-font-smoothing:antialiased}
+html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:16px;line-height:1.5;background:#fff;color:#2C2C2B;-webkit-font-smoothing:antialiased}
 :root{
   --blue:#2783DE;--blue-soft:#E5F2FC;
   --green:#46A171;--green-soft:#E8F1EC;
@@ -22,7 +22,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
   --border:#E6E5E3;--text:#2C2C2B;--text2:#7D7A75;
   --nav-h:56px;--header-h:52px;
 }
-#app{display:flex;flex-direction:column;height:100%;height:100dvh;min-height:0;overflow:hidden}
+#app{position:fixed;top:0;left:0;width:100%;display:flex;flex-direction:column;height:var(--app-height,100dvh);min-height:0;overflow:hidden}
 
 /* Login */
 #login-screen{position:fixed;inset:0;background:#fff;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px calc(32px + env(safe-area-inset-bottom));gap:0}
@@ -54,13 +54,14 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 
 /* Pages */
 #pages{flex:1;min-height:0;overflow:hidden;position:relative}
-.page{position:absolute;inset:0;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none;flex-direction:column}
+.page{position:absolute;inset:0;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;touch-action:pan-y;display:none;flex-direction:column}
 .page.active{display:flex}
 
 /* Chat */
-#chat-messages{flex:1;min-height:0;padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#page-chat{overflow:hidden;touch-action:none}
+#chat-messages{flex:1;min-height:0;padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;touch-action:pan-y;overflow-anchor:none;scrollbar-gutter:stable}
 #chat-input-wrap{flex-shrink:0;padding:8px 12px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:#fff;display:flex;align-items:flex-end;gap:8px;position:relative;z-index:5}
-#chat-input{display:block;flex:1;width:100%;min-height:40px;border:1.5px solid var(--border);border-radius:20px;padding:9px 14px;font-size:15px;outline:none;resize:none;max-height:120px;line-height:1.4;font-family:inherit;color:var(--text);background:#fff;caret-color:var(--blue);-webkit-user-select:text;user-select:text;touch-action:manipulation;transition:border-color .15s}
+#chat-input{display:block;flex:1;width:100%;min-height:40px;border:1.5px solid var(--border);border-radius:20px;padding:9px 14px;font-size:16px;outline:none;resize:none;max-height:120px;line-height:1.4;font-family:inherit;color:var(--text);background:#fff;caret-color:var(--blue);-webkit-user-select:text;user-select:text;touch-action:manipulation;transition:border-color .15s}
 #chat-input:focus{border-color:var(--blue)}
 #send-btn{width:40px;height:40px;border-radius:50%;background:var(--blue);color:#fff;border:none;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:opacity .15s}
 #send-btn:disabled{opacity:.4;cursor:default}
@@ -105,7 +106,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .task-plan{font-size:11px;color:var(--text2)}
 
 /* Gallery */
-#page-gallery{padding:12px;display:flex;flex-direction:column;gap:8px}
+#page-gallery{padding:12px;flex-direction:column;gap:8px}
 #gallery-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .gallery-img-wrap{border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--surface)}
 .gallery-img-wrap img{width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:pointer}
@@ -127,11 +128,53 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .settings-section h3{font-size:15px;font-weight:650;margin-bottom:4px}
 .settings-sub{font-size:12px;color:var(--text2);margin-bottom:12px}
 .settings-row{display:flex;align-items:center;gap:8px}
-#model-select{flex:1;min-width:0;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--text);padding:10px 12px;font:inherit;font-size:14px}
+#model-input{flex:1;min-width:0;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--text);padding:10px 12px;font:inherit;font-size:14px}
+#model-refresh{width:40px;height:40px;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--text2);font-size:21px;cursor:pointer;flex-shrink:0}
 #model-save{border:1px solid var(--blue);border-radius:9px;background:var(--blue);color:#fff;padding:10px 13px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
 #model-save:disabled{opacity:.5;cursor:default}
 #model-status{min-height:18px;margin-top:8px;font-size:12px;color:var(--text2)}
 #model-status.error{color:var(--red)}
+
+/* UX polish merged from feat/leon-ux-polish */
+#send-btn.ready{background:var(--blue);color:#fff}
+#send-btn.ready:active{transform:scale(.92)}
+.bubble.agent{white-space:normal;line-height:1.55}
+.bubble.agent.streaming{white-space:pre-wrap}
+.bubble.agent p{margin:.25em 0}
+.bubble.agent p:first-child{margin-top:0}
+.bubble.agent p:last-child{margin-bottom:0}
+.bubble.agent h1,.bubble.agent h2,.bubble.agent h3{font-size:1em;font-weight:700;margin:.4em 0 .2em}
+.bubble.agent ul,.bubble.agent ol{padding-left:1.4em;margin:.25em 0}
+.bubble.agent li{margin:.1em 0}
+.bubble.agent code{font-family:Menlo,monospace;font-size:13px;background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px}
+.bubble.agent pre{background:rgba(0,0,0,.06);border-radius:8px;padding:10px 12px;overflow-x:auto;margin:.4em 0}
+.bubble.agent pre code{background:none;padding:0;font-size:12px}
+.bubble.agent blockquote{border-left:3px solid var(--border);padding-left:10px;color:var(--text2);margin:.3em 0}
+.bubble.agent a{color:var(--blue);text-decoration:none}
+.bubble.agent .markdown-image-link{display:block;margin:.45em 0;line-height:0}
+.bubble.agent .markdown-image{display:block;width:auto;max-width:100%;max-height:60vh;object-fit:contain;border-radius:10px;border:1px solid var(--border);background:#fff;cursor:pointer}
+.thinking-bubble{align-self:flex-start;display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:18px;border-bottom-left-radius:5px;padding:9px 14px;font-size:14px;color:var(--text2)}
+.thinking-dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--text2);margin:0 1.5px;animation:tdot .9s ease-in-out infinite}
+.thinking-dots span:nth-child(2){animation-delay:.15s}
+.thinking-dots span:nth-child(3){animation-delay:.3s}
+@keyframes tdot{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-4px);opacity:1}}
+.thinking-timer{font-variant-numeric:tabular-nums;font-size:12px;opacity:.7;min-width:32px}
+.tool-card{cursor:pointer;transition:border-color .15s}
+.tool-card:hover{border-color:var(--blue)}
+.tool-chevron{margin-left:auto;font-size:10px;color:var(--text2);transition:transform .2s}
+.tool-card.open .tool-chevron{transform:rotate(180deg)}
+.tool-detail{display:none;margin-top:8px;background:var(--surface);border-radius:8px;padding:8px 10px;font-size:12px;font-family:Menlo,monospace;color:var(--text2);white-space:pre-wrap;word-break:break-all;max-height:180px;overflow-y:auto}
+.tool-card.open .tool-detail{display:block}
+.error-card{align-self:flex-start;max-width:90%;background:var(--red-soft);border:1.5px solid var(--red);border-radius:12px;padding:10px 13px;display:flex;flex-direction:column;gap:6px}
+.error-card-header{font-weight:600;font-size:14px;color:var(--red)}
+.error-card-msg{font-size:13px;color:#7a2020;word-break:break-word;white-space:pre-wrap}
+.error-retry-btn{align-self:flex-start;background:var(--red);color:#fff;border:none;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer}
+.image-placeholder{align-self:flex-start;width:min(260px,80%);border-radius:14px;overflow:hidden;border:1.5px solid var(--border);background:var(--surface)}
+.image-placeholder-inner{width:100%;aspect-ratio:1;background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.image-placeholder-label{padding:8px 12px;font-size:12px;color:var(--text2);display:flex;align-items:center;gap:6px}
+.image-card{animation:fadeIn .35s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 /* ============================================================
    TIMELINE OVERLAY
@@ -310,7 +353,9 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
         <h3>模型</h3>
         <p class="settings-sub" id="model-current">加载当前模型…</p>
         <div class="settings-row">
-          <select id="model-select" aria-label="选择模型"></select>
+          <input id="model-input" list="model-options" placeholder="输入或选择模型 ID" autocomplete="off" spellcheck="false">
+          <datalist id="model-options"></datalist>
+          <button id="model-refresh" type="button" aria-label="刷新模型列表" title="刷新模型列表">↻</button>
           <button id="model-save" type="button" disabled>保存</button>
         </div>
         <div id="model-status" role="status"></div>
@@ -402,7 +447,8 @@ async function doLogin(){
   try{
     const r=await fetch(BASE_URL+'/api/health',{headers:t?{Authorization:'Bearer '+t}:{}});
     if(!r.ok)throw new Error('Auth failed ('+r.status+')');
-    token=t;localStorage.setItem(TOKEN_KEY,token);hideLogin();await init();
+    token=t;sessionId='';localStorage.setItem(TOKEN_KEY,token);localStorage.removeItem(SESSION_KEY);
+    hideLogin();await init();
   }catch(err){$loginError.textContent='❌ '+err.message}
   finally{$loginBtn.disabled=false}
 }
@@ -414,8 +460,8 @@ document.querySelectorAll('.nav-item').forEach(btn=>{
     const t=btn.dataset.page;
     document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===t));
     document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+t));
-    if(t==='tasks')renderTasks();
-    if(t==='gallery')renderGallery();
+    if(t==='tasks'){renderTasks();loadImageState()}
+    if(t==='gallery'){renderGallery();loadImageState()}
     if(t==='settings'){updateDebugInfo();loadModelSettings()}
   });
 });
@@ -435,52 +481,51 @@ async function api(method,path,body){
 }
 
 // Session model settings
-const $modelSelect=document.getElementById('model-select');
+const $modelInput=document.getElementById('model-input');
+const $modelOptions=document.getElementById('model-options');
+const $modelRefresh=document.getElementById('model-refresh');
 const $modelSave=document.getElementById('model-save');
 const $modelCurrent=document.getElementById('model-current');
 const $modelStatus=document.getElementById('model-status');
 let modelSettingsLoaded=false;
 function fillModelSettings(data){
-  $modelSelect.replaceChildren();
-  const defaultOption=document.createElement('option');
-  defaultOption.value='';defaultOption.textContent='跟随默认 · '+data.default_model;
-  $modelSelect.appendChild(defaultOption);
+  $modelOptions.replaceChildren();
   const models=data.models||[];
   models.forEach(model=>{
     const option=document.createElement('option');
-    option.value=model;option.textContent=model;$modelSelect.appendChild(option);
+    option.value=model;$modelOptions.appendChild(option);
   });
-  if(data.selected_model&&!models.includes(data.selected_model)){
-    const option=document.createElement('option');
-    option.value=data.selected_model;option.textContent=data.selected_model+' · 当前会话';
-    $modelSelect.appendChild(option);
-  }
-  $modelSelect.value=data.selected_model||'';
-  $modelCurrent.textContent='当前：'+data.active_model+' · '+data.provider;
+  $modelInput.value=data.selected_model||'';
+  $modelInput.placeholder='跟随默认 · '+data.default_model;
+  $modelCurrent.textContent='当前：'+data.active_model+' · '+data.base_url;
+  $modelStatus.className=data.catalog_error?'error':'';
+  $modelStatus.textContent=data.catalog_error?'目录拉取失败，仍可手动输入模型 ID':'';
   modelSettingsLoaded=true;
 }
-async function loadModelSettings(){
+async function loadModelSettings(refresh=false){
   if(!sessionId)return;
-  $modelSave.disabled=true;$modelStatus.className='';
+  $modelSave.disabled=true;$modelRefresh.disabled=true;$modelStatus.className='';
   $modelStatus.textContent=modelSettingsLoaded?'正在刷新…':'正在加载…';
   try{
-    fillModelSettings(await api('GET','/api/agent/sessions/'+sessionId+'/model'));
-    $modelStatus.textContent='';
+    const suffix=refresh?'?refresh=true':'';
+    fillModelSettings(await api('GET','/api/agent/sessions/'+sessionId+'/model'+suffix));
   }catch(err){
     $modelStatus.className='error';$modelStatus.textContent='加载失败：'+err.message;
-  }finally{$modelSave.disabled=false}
+  }finally{$modelSave.disabled=false;$modelRefresh.disabled=false}
 }
 async function saveModelSettings(){
   if(!sessionId)return;
   $modelSave.disabled=true;$modelStatus.className='';$modelStatus.textContent='正在保存…';
   try{
-    fillModelSettings(await api('PUT','/api/agent/sessions/'+sessionId+'/model',{model:$modelSelect.value||null}));
+    const model=$modelInput.value.trim();
+    fillModelSettings(await api('PUT','/api/agent/sessions/'+sessionId+'/model',{model:model||null}));
     $modelStatus.textContent='已保存，下条消息开始使用';
   }catch(err){
     $modelStatus.className='error';$modelStatus.textContent='保存失败：'+err.message;
   }finally{$modelSave.disabled=false}
 }
 $modelSave.addEventListener('click',saveModelSettings);
+$modelRefresh.addEventListener('click',()=>loadModelSettings(true));
 
 // SSE
 let sse=null,sseTimer=null;
@@ -503,6 +548,125 @@ window.addEventListener('online',()=>{clearTimeout(sseTimer);sseTimer=setTimeout
 const tasks={},images={};
 let currentToolCard=null,currentBubble=null,sending=false;
 let ivTurns=0,ivTools=0;
+const imagePlaceholders={};
+let streamBuffer='',lastUserText='',lastAgentErrorAt=0;
+
+function safeHref(value){
+  try{
+    const url=new URL(value,location.origin);
+    return ['http:','https:'].includes(url.protocol)?url.href:'';
+  }catch{return ''}
+}
+function renderInline(raw){
+  const tokens=[];
+  const token=html=>{tokens.push(html);return '\u0000'+(tokens.length-1)+'\u0000'};
+  let text=String(raw)
+    .replace(/`([^`]+)`/g,(_,code)=>token('<code>'+esc(code)+'</code>'))
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,(_,label,url)=>{
+      const href=safeHref(url);
+      return href?token('<a class="markdown-image-link" href="'+esc(href)+'" target="_blank" rel="noopener"><img class="markdown-image" src="'+esc(href)+'" alt="'+esc(label||'图片')+'" loading="lazy"></a>'):esc(label||'图片');
+    })
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,(_,label,url)=>{
+      const href=safeHref(url);
+      return href?token('<a href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(label)+'</a>'):label;
+    });
+  text=esc(text)
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g,'<em>$1</em>');
+  return text.replace(/\u0000(\d+)\u0000/g,(_,index)=>tokens[Number(index)]||'');
+}
+function renderMd(raw){
+  const lines=String(raw||'').split(/\r?\n/);
+  const html=[];let inCode=false,code=[],inList=false;
+  const closeList=()=>{if(inList){html.push('</ul>');inList=false}};
+  for(const line of lines){
+    if(line.startsWith('```')){
+      if(inCode){html.push('<pre><code>'+esc(code.join('\n'))+'</code></pre>');code=[];inCode=false}
+      else{closeList();inCode=true}
+      continue;
+    }
+    if(inCode){code.push(line);continue}
+    const item=line.match(/^\s*[-*]\s+(.+)$/);
+    if(item){if(!inList){html.push('<ul>');inList=true}html.push('<li>'+renderInline(item[1])+'</li>');continue}
+    closeList();
+    if(!line.trim())continue;
+    const heading=line.match(/^#{1,3}\s+(.+)$/);
+    if(heading){html.push('<h3>'+renderInline(heading[1])+'</h3>');continue}
+    const quote=line.match(/^>\s?(.*)$/);
+    if(quote){html.push('<blockquote>'+renderInline(quote[1])+'</blockquote>');continue}
+    html.push('<p>'+renderInline(line)+'</p>');
+  }
+  closeList();
+  if(inCode)html.push('<pre><code>'+esc(code.join('\n'))+'</code></pre>');
+  return html.join('');
+}
+
+let twQueue=[],twBubble=null,twFrame=null,twFinalText=null;
+function twReset(){
+  if(twFrame)cancelAnimationFrame(twFrame);
+  if(twBubble&&twFinalText!==null){
+    twBubble.classList.remove('streaming');twBubble.innerHTML=renderMd(twFinalText);
+  }
+  twQueue=[];twBubble=null;twFrame=null;twFinalText=null;
+}
+function twEnqueue(text,bubble){
+  twBubble=bubble;twQueue.push(...Array.from(text));
+  if(!twFrame)twFrame=requestAnimationFrame(twTick);
+}
+function twTick(){
+  twFrame=null;
+  if(twBubble&&twQueue.length){
+    const count=Math.min(2,twQueue.length);
+    for(let i=0;i<count;i++)twBubble.textContent+=twQueue.shift();
+    scrollBottom();twFrame=requestAnimationFrame(twTick);return;
+  }
+  if(twBubble&&twFinalText!==null){
+    twBubble.classList.remove('streaming');twBubble.innerHTML=renderMd(twFinalText);twFinalText=null;scrollBottom();
+  }
+}
+function twComplete(finalText,bubble){
+  twBubble=bubble;twFinalText=finalText;
+  if(!twFrame)twFrame=requestAnimationFrame(twTick);
+}
+
+let thinkingEl=null,thinkingStart=0,thinkingTimer=null;
+function showThinking(){
+  hideThinking();
+  const el=document.createElement('div');el.className='thinking-bubble';
+  el.innerHTML='<span>思考中</span><span class="thinking-dots"><span></span><span></span><span></span></span><span class="thinking-timer">0.0s</span>';
+  $msgs.appendChild(el);thinkingEl=el;thinkingStart=Date.now();
+  thinkingTimer=setInterval(()=>{const t=el.querySelector('.thinking-timer');if(t)t.textContent=((Date.now()-thinkingStart)/1000).toFixed(1)+'s'},100);
+  scrollBottom();
+}
+function hideThinking(){
+  clearInterval(thinkingTimer);thinkingTimer=null;
+  if(thinkingEl){thinkingEl.remove();thinkingEl=null}
+}
+
+function addImageSkeleton(jobId){
+  const el=document.createElement('div');el.className='image-placeholder';
+  el.innerHTML='<div class="image-placeholder-inner"></div><div class="image-placeholder-label"><div class="spinner"></div><span>正在生成图片…</span><span class="status-badge queued">queued</span></div>';
+  $msgs.appendChild(el);imagePlaceholders[jobId]=el;scrollBottom();
+}
+function updateSkeletonBadge(jobId,status){
+  const el=imagePlaceholders[jobId];const badge=el&&el.querySelector('.status-badge');
+  if(badge){badge.className='status-badge '+status;badge.textContent=status}
+}
+function replaceSkeleton(jobId,url){
+  const placeholder=imagePlaceholders[jobId];
+  const card=createImageCard(url);
+  if(!card)return;
+  if(placeholder){placeholder.replaceWith(card);delete imagePlaceholders[jobId]}else{$msgs.appendChild(card)}
+  scrollBottom();
+}
+function addErrorCard(message){
+  const card=document.createElement('div');card.className='error-card';
+  card.innerHTML=`<div class="error-card-header">请求失败</div><div class="error-card-msg">${esc(message)}</div><button class="error-retry-btn">重试</button>`;
+  card.querySelector('.error-retry-btn').addEventListener('click',()=>{
+    if(lastUserText){$input.value=lastUserText;updateComposerState();$input.focus()}
+  });
+  $msgs.appendChild(card);scrollBottom();
+}
 
 // ============================================================
 // Timeline overlay
@@ -565,27 +729,44 @@ function handleEvent(ev){
       ivTurns++;addTlEntry('user','User Input',esc(ev.data.content||''),ev.timestamp);updateIvStats();break;
 
     case 'assistant.started':
-      currentBubble=addBubble('agent','',true);currentToolCard=null;currentIvToolEntry=null;break;
+      showThinking();currentBubble=null;currentToolCard=null;currentIvToolEntry=null;
+      streamBuffer='';twReset();break;
 
-    case 'assistant.delta':
-      if(currentBubble){currentBubble.querySelector('.bubble').textContent+=ev.data.delta||'';scrollBottom()}break;
+    case 'assistant.delta':{
+      const delta=ev.data.delta||'';if(!delta)break;
+      hideThinking();
+      if(!currentBubble)currentBubble=addBubble('agent','',true);
+      const bubble=currentBubble.querySelector('.bubble');
+      streamBuffer+=delta;twEnqueue(delta,bubble);break;
+    }
 
     case 'assistant.completed':{
       const content=ev.data.content||'';
-      if(currentBubble){const b=currentBubble.querySelector('.bubble');b.textContent=content||b.textContent;b.classList.remove('streaming');scrollBottom()}
+      hideThinking();
+      if(!currentBubble)currentBubble=addBubble('agent','',true);
+      const bubble=currentBubble.querySelector('.bubble');
+      if(!streamBuffer&&content)twEnqueue(content,bubble);
+      twComplete(content||streamBuffer,bubble);
       currentBubble=null;
       if(content)addTlEntry('agent','Agent Response',esc(content),ev.timestamp);
       break;
     }
 
+    case 'assistant.notice':{
+      const content=ev.data.content||'';
+      if(content){addBubble('agent',content,false);addTlEntry('agent','Agent Notice',esc(content),ev.timestamp)}
+      break;
+    }
+
     case 'tool.started':
-      ivTools++;currentToolCard=addToolCard(ev.data.tool_name,'running');scrollBottom();
+      hideThinking();
+      ivTools++;currentToolCard=addToolCard(ev.data.tool_name,'running',ev.data.input);scrollBottom();
       currentIvToolEntry=addTlEntry('tool','Tool Call',`Calling <code>${esc(ev.data.tool_name)}</code><span class="tl-badge running">running</span>`,ev.timestamp);
       updateIvStats();break;
 
     case 'tool.finished':{
       const ok=ev.data.ok!==false;
-      if(currentToolCard)updateToolCard(currentToolCard,ok?'done':'failed');
+      if(currentToolCard)updateToolCard(currentToolCard,ok?'done':'failed',ev.data.output);
       if(currentIvToolEntry){const b=currentIvToolEntry.querySelector('.tl-badge');if(b){b.className='tl-badge '+(ok?'completed':'failed');b.textContent=ok?'done':'failed'}}
       break;
     }
@@ -593,6 +774,7 @@ function handleEvent(ev){
     case 'image.task.created':
       tasks[ev.data.job_id]={status:ev.data.status||'queued',planId:ev.data.generation_plan_id};
       if(currentToolCard)addTaskMeta(currentToolCard,ev.data);
+      addImageSkeleton(ev.data.job_id);
       if(currentIvToolEntry){
         const c=currentIvToolEntry.querySelector('.tl-content');
         const row=document.createElement('div');row.style.marginTop='4px';
@@ -604,21 +786,22 @@ function handleEvent(ev){
     case 'image.task.updated':
       if(tasks[ev.data.job_id])tasks[ev.data.job_id].status=ev.data.status;
       if(currentToolCard)updateBadge(currentToolCard,ev.data.job_id,ev.data.status);
+      updateSkeletonBadge(ev.data.job_id,ev.data.status);
       {const ivb=document.getElementById('iv-badge-'+ev.data.job_id);if(ivb){ivb.className='tl-badge '+ev.data.status;ivb.textContent=ev.data.status}}
       break;
 
     case 'image.completed':
       tasks[ev.data.job_id]={...(tasks[ev.data.job_id]||{}),status:'completed'};
       images[ev.data.job_id]={url:ev.data.image_url};
-      addImageCard(ev.data.image_url,ev.data.job_id);
-      addTlEntry('image','Image Ready',`<a href="${esc(ev.data.image_url)}" target="_blank" style="color:#B09FCC">Open full image →</a><br><img src="${esc(ev.data.image_url)}" alt="generated" onclick="window.open('${esc(ev.data.image_url)}','_blank')">`,ev.timestamp);
+      replaceSkeleton(ev.data.job_id,ev.data.image_url);
+      {const href=safeHref(ev.data.image_url);if(href)addTlEntry('image','Image Ready',`<a href="${esc(href)}" target="_blank" rel="noopener" style="color:#B09FCC">Open full image →<br><img src="${esc(href)}" alt="generated"></a>`,ev.timestamp)}
       updateIvStats();break;
 
     case 'agent.error':{
-      const msg='❌ '+ev.data.error;
-      if(currentBubble){const b=currentBubble.querySelector('.bubble');b.textContent=msg;b.classList.remove('streaming');currentBubble=null}
-      else addBubble('agent',msg,false);
-      addTlEntry('error','Error',esc(ev.data.error),ev.timestamp);
+      const msg=ev.data.error||'Unknown error';
+      hideThinking();twReset();lastAgentErrorAt=Date.now();
+      if(currentBubble){currentBubble.remove();currentBubble=null}
+      addErrorCard(msg);addTlEntry('error','Error',esc(msg),ev.timestamp);
       break;
     }
   }
@@ -626,17 +809,28 @@ function handleEvent(ev){
 
 // Chat DOM
 const $msgs=document.getElementById('chat-messages');
+let autoFollowMessages=true;
 function addBubble(role,text,streaming){
   const w=document.createElement('div');w.className='bubble-wrap '+role;
   const b=document.createElement('div');b.className='bubble '+role+(streaming?' streaming':'');
-  b.textContent=text;w.appendChild(b);$msgs.appendChild(w);scrollBottom();return w;
+  if(role==='agent'&&!streaming)b.innerHTML=renderMd(text);else b.textContent=text;
+  w.appendChild(b);$msgs.appendChild(w);scrollBottom();return w;
 }
-function addToolCard(name,state){
+function addToolCard(name,state,inputData){
   const c=document.createElement('div');c.className='tool-card';
-  c.innerHTML=`<div class="tool-header"><div class="tool-icon ${state}">${iconFor(state)}</div><span>${esc(name)}</span></div><div class="tool-meta"></div>`;
+  const input=inputData?JSON.stringify(inputData,null,2):'';
+  c.innerHTML=`<div class="tool-header"><div class="tool-icon ${state}">${iconFor(state)}</div><span>${esc(name)}</span><span class="tool-chevron">▼</span></div><div class="tool-meta"></div>${input?`<div class="tool-detail">input\n${esc(input)}</div>`:''}`;
+  c.addEventListener('click',()=>c.classList.toggle('open'));
   $msgs.appendChild(c);return c;
 }
-function updateToolCard(c,state){const i=c.querySelector('.tool-icon');i.className='tool-icon '+state;i.innerHTML=iconFor(state)}
+function updateToolCard(c,state,outputData){
+  const i=c.querySelector('.tool-icon');i.className='tool-icon '+state;i.innerHTML=iconFor(state);
+  if(outputData){
+    let detail=c.querySelector('.tool-detail');
+    if(!detail){detail=document.createElement('div');detail.className='tool-detail';c.appendChild(detail)}
+    detail.textContent+=(detail.textContent?'\n\n':'')+'output\n'+JSON.stringify(outputData,null,2);
+  }
+}
 function iconFor(s){return s==='running'?'<div class="spinner"></div>':s==='done'?'✓':'✗'}
 function addTaskMeta(card,data){
   const m=card.querySelector('.tool-meta');
@@ -648,18 +842,59 @@ function updateBadge(card,jobId,status){
   const b=card.querySelector('#badge-'+jobId);
   if(b){b.className='status-badge '+status;b.textContent=status}
 }
-function addImageCard(url){
+function createImageCard(url){
+  const href=safeHref(url);if(!href)return null;
   const c=document.createElement('div');c.className='image-card';
-  c.innerHTML=`<img src="${esc(url)}" alt="generated" loading="lazy" onclick="window.open('${esc(url)}','_blank')"><div class="image-meta"><a href="${esc(url)}" target="_blank">Open full image →</a></div>`;
-  $msgs.appendChild(c);scrollBottom();
+  const img=document.createElement('img');img.src=href;img.alt='generated';img.loading='lazy';
+  img.addEventListener('click',()=>window.open(href,'_blank','noopener'));
+  const meta=document.createElement('div');meta.className='image-meta';
+  const link=document.createElement('a');link.href=href;link.target='_blank';link.rel='noopener';link.textContent='Open full image →';
+  meta.appendChild(link);c.append(img,meta);return c;
 }
-function scrollBottom(){requestAnimationFrame(()=>{$msgs.scrollTop=$msgs.scrollHeight})}
+function addImageCard(url){const c=createImageCard(url);if(c){$msgs.appendChild(c);scrollBottom()}}
+function scrollBottom(force=false){
+  if(!force&&!autoFollowMessages)return;
+  requestAnimationFrame(()=>{$msgs.scrollTop=$msgs.scrollHeight});
+}
+$msgs.addEventListener('scroll',()=>{
+  autoFollowMessages=$msgs.scrollHeight-$msgs.scrollTop-$msgs.clientHeight<80;
+},{passive:true});
+function syncVisualViewport(){
+  const height=window.visualViewport?window.visualViewport.height:window.innerHeight;
+  document.documentElement.style.setProperty('--app-height',Math.round(height)+'px');
+  if(autoFollowMessages)scrollBottom(true);
+}
+if(window.visualViewport){
+  window.visualViewport.addEventListener('resize',syncVisualViewport,{passive:true});
+  window.visualViewport.addEventListener('scroll',syncVisualViewport,{passive:true});
+}else window.addEventListener('resize',syncVisualViewport,{passive:true});
+syncVisualViewport();
+
+let imageStateLoading=false,imageStateLoaded=false,imageStateError='';
+async function loadImageState(){
+  if(!sessionId||imageStateLoading)return;
+  imageStateLoading=true;imageStateError='';renderTasks();renderGallery();
+  try{
+    const data=await api('GET','/api/agent/sessions/'+sessionId+'/image-state?limit=100');
+    (data.tasks||[]).forEach(item=>{
+      const jobId=String(item.job_id||'');if(!jobId)return;
+      tasks[jobId]={...tasks[jobId],...item};
+      if(item.image_url)images[jobId]={url:item.image_url,sourceText:item.source_text||''};
+    });
+    (data.images||[]).forEach(item=>{
+      const jobId=String(item.job_id||'');if(jobId&&item.image_url)images[jobId]={url:item.image_url,sourceText:item.source_text||''};
+    });
+    imageStateLoaded=true;
+    const errors=Object.values(data.errors||{});imageStateError=errors.join(' | ');
+  }catch(err){imageStateError=err.message}
+  finally{imageStateLoading=false;renderTasks();renderGallery();updateIvStats()}
+}
 
 // Tasks
 function renderTasks(){
   const $l=document.getElementById('tasks-list');$l.innerHTML='';
   const entries=Object.entries(tasks).reverse();
-  if(!entries.length){$l.innerHTML='<div class="empty-state"><div class="empty-icon">📋</div><p>No tasks yet</p></div>';return}
+  if(!entries.length){$l.innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><p>${imageStateLoading?'正在加载任务…':imageStateError?'任务加载失败':'No tasks yet'}</p></div>`;return}
   entries.forEach(([jobId,t])=>{
     const el=document.createElement('div');el.className='task-item';
     el.innerHTML=`<div class="task-top"><span class="task-id">${esc(jobId)}</span><span class="status-badge ${t.status}">${t.status}</span></div>${t.planId?`<div class="task-plan">plan: ${esc(t.planId)}</div>`:''}`;
@@ -671,10 +906,14 @@ function renderTasks(){
 function renderGallery(){
   const $g=document.getElementById('gallery-grid');$g.innerHTML='';
   const entries=Object.entries(images).reverse();
-  if(!entries.length){$g.innerHTML='<div class="empty-state"><div class="empty-icon">🖼️</div><p>No images yet</p></div>';return}
+  if(!entries.length){$g.innerHTML=`<div class="empty-state"><div class="empty-icon">🖼️</div><p>${imageStateLoading?'正在加载图库…':imageStateError?'图库加载失败':'No images yet'}</p></div>`;return}
   entries.forEach(([jobId,img])=>{
     const el=document.createElement('div');el.className='gallery-img-wrap';
-    el.innerHTML=`<img src="${esc(img.url)}" alt="image" loading="lazy" onclick="window.open('${esc(img.url)}','_blank')"><div class="gallery-meta">${esc(jobId.slice(0,12))}…</div>`;
+    const href=safeHref(img.url);if(!href)return;
+    const image=document.createElement('img');image.src=href;image.alt=img.sourceText||'image';image.loading='lazy';
+    image.addEventListener('click',()=>window.open(href,'_blank','noopener'));
+    const meta=document.createElement('div');meta.className='gallery-meta';meta.textContent=jobId.slice(0,12)+'…';
+    el.append(image,meta);
     $g.appendChild(el);
   });
 }
@@ -697,15 +936,19 @@ function logDebug(ev){
 // Send
 const $input=document.getElementById('chat-input'),$sendBtn=document.getElementById('send-btn');
 function updateComposerState(){
-  $sendBtn.disabled=sending||!sessionId||!$input.value.trim();
+  const ready=!sending&&!!sessionId&&!!$input.value.trim();
+  $sendBtn.disabled=!ready;$sendBtn.classList.toggle('ready',ready);
 }
 async function sendMessage(){
   const text=$input.value.trim();if(!text||sending||!sessionId)return;
+  lastUserText=text;autoFollowMessages=true;
   sending=true;updateComposerState();
   $input.value='';$input.style.height='';
   addBubble('user',text,false);
   try{await api('POST','/api/agent/sessions/'+sessionId+'/messages',{content:text})}
-  catch(err){if(!err.message.startsWith('401'))addBubble('agent','❌ '+err.message,false)}
+  catch(err){
+    if(!err.message.startsWith('401')&&!err.message.startsWith('500 ')&&Date.now()-lastAgentErrorAt>1000)addErrorCard(err.message);
+  }
   finally{sending=false;updateComposerState();$input.focus()}
 }
 $sendBtn.addEventListener('click',sendMessage);
@@ -713,25 +956,33 @@ $input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.prevent
 $input.addEventListener('input',()=>{
   $input.style.height='auto';$input.style.height=Math.min($input.scrollHeight,120)+'px';updateComposerState();
 })
+$input.addEventListener('focus',()=>{if(autoFollowMessages)setTimeout(()=>scrollBottom(true),50)})
 
 // Init
 async function ensureSession(){
-  if(sessionId){try{await api('GET','/api/agent/sessions/'+sessionId);return}catch{}}
+  if(sessionId){try{return await api('GET','/api/agent/sessions/'+sessionId)}catch{}}
   const d=await api('POST','/api/agent/sessions');
   sessionId=d.session_id;localStorage.setItem(SESSION_KEY,sessionId);
+  return {session_id:sessionId,messages:[]};
+}
+function renderHistory(messages){
+  if($msgs.children.length)return;
+  (messages||[]).forEach(message=>{
+    if(message.role==='user'||message.role==='assistant')addBubble(message.role==='assistant'?'agent':'user',message.content||'',false);
+  });
+  autoFollowMessages=true;scrollBottom(true);
 }
 async function init(){
   setStatus('connecting','Initializing...');
-  try{await ensureSession();connectSSE();updateDebugInfo();updateComposerState();}
+  try{
+    const session=await ensureSession();renderHistory(session.messages);
+    connectSSE();updateDebugInfo();updateComposerState();loadImageState();
+  }
   catch(err){if(!err.message.startsWith('401'))setStatus('error','Connection failed')}
 }
 
 if('serviceWorker' in navigator){
-  let swReloading=false;
-  navigator.serviceWorker.addEventListener('controllerchange',()=>{
-    if(swReloading)return;swReloading=true;location.reload();
-  });
-  navigator.serviceWorker.register('/sw.js',{scope:'/',updateViaCache:'none'})
+  navigator.serviceWorker.register('/sw.js?v=8',{scope:'/',updateViaCache:'none'})
     .then(registration=>registration.update()).catch(()=>{});
 }
 if(token){hideLogin();init()}

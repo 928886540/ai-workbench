@@ -15,6 +15,10 @@
 - 复用 `leon-image` 的 `executor-core.js + executor-assets.js`
 - 调用现有 `/ios/*` HTTP 接口，不复制 Prompt、Workflow 或 LoRA 配置
 - 任务与图库返回的图片地址统一补全成绝对 URL，可直接打开
+- CLI 与 Web 设置页从当前 LLM provider 的 `/models` 动态读取模型目录，手输模型 ID 保持原始大小写
+
+Codex、Notion AI 或其他 Agent 开发前先读
+[AI 协作状态](docs/AI-COLLABORATION.md)，其中记录唯一源码路径、事件协议、模型选择契约和交接格式。
 
 ## 运行边界
 

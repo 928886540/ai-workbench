@@ -225,6 +225,15 @@ class LeonImageClient:
         response = self._sync("/ios/image_gallery/sync", chat_id=chat_id, limit=limit)
         return {"ok": True, "items": [self._image_summary(item) for item in response]}
 
+    def get_latest_image(self) -> dict[str, Any]:
+        """Return the newest completed image across the Leon image database."""
+        response = self._json_request("GET", "/ios/image_gallery/latest")
+        item = response.get("item") if isinstance(response, dict) else None
+        return {
+            "ok": True,
+            "item": self._image_summary(item) if isinstance(item, dict) else None,
+        }
+
     def _sync(self, path: str, *, chat_id: str, limit: int) -> list[dict[str, Any]]:
         payload = {
             "chat_id": chat_id,
@@ -261,7 +270,16 @@ class LeonImageClient:
             "workflow_name": item.get("workflowName") or item.get("workflow_name"),
             "source_text": item.get("sourceText") or item.get("source_text"),
             "image_url": self._absolute_media_url(
-                item.get("imageUrl") or item.get("image_url")
+                item.get("imageUrl")
+                or item.get("image_url")
+                or item.get("finalImageUrl")
+                or item.get("final_image_url")
             ),
-            "created_at": item.get("createdAt") or item.get("created_at"),
+            "created_at": (
+                item.get("createdAt")
+                or item.get("created_at")
+                or item.get("finalized_at_ms")
+                or item.get("finished_at_ms")
+                or item.get("queued_at_ms")
+            ),
         }

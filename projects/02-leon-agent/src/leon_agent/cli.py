@@ -9,18 +9,20 @@ from pathlib import Path
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
-from workbench_core.agent import AgentEvent
+from workbench_core.agent import AgentEvent, AgentResult, ToolStep
 from workbench_core.config import Settings, get_settings, reset_settings_cache
 from workbench_core.llm import LLMClient
 
 from leon_agent.agent import LeonAgent
 from leon_agent.config import LeonSettings
 from leon_agent.leon_client import LeonImageClient
-from leon_agent.models import MODEL_IDS, resolve_model_id
+from leon_agent.models import model_provider_scope, resolve_model_id
 from leon_agent.session import SessionStore
+from leon_agent.tools import create_leon_tools
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,6 +78,10 @@ class LeonConsole:
         self.store = SessionStore(self.config.session_db)
         self.session_id = self._resolve_session(args)
         self.model_selection = self.store.get_model_selection(self.session_id)
+        self.model_catalog: list[str] = []
+        self.llm_scope = ""
+        self._progress: Progress | None = None
+        self._progress_task_id: int | None = None
         self.agent = self._create_agent()
 
     def _resolve_session(self, args: argparse.Namespace) -> str:
@@ -88,20 +94,33 @@ class LeonConsole:
     def _create_agent(self) -> LeonAgent:
         reset_settings_cache()
         llm_settings = self._resolve_llm_settings()
+        scope = model_provider_scope(
+            profile=llm_settings.profile,
+            base_url=llm_settings.active_base_url,
+        )
+        if self.model_selection and self.model_selection[0] != scope:
+            self.store.set_model_selection(self.session_id, provider=None, model=None)
+            self.model_selection = None
         model_override = self.model_selection[1] if self.model_selection else None
         llm_client = LLMClient(llm_settings, model_override=model_override)
         self.llm_model = llm_client.model
         self.llm_profile = llm_client.profile
-        image_client = LeonImageClient(
+        self.llm_scope = scope
+        self.image_client = LeonImageClient(
             backend_url=self.config.backend_url,
             plugin_dir=self.config.active_plugin_dir,
             public_base_url=self.config.active_public_image_base_url,
             timeout_seconds=self.config.http_timeout_seconds,
             bridge_timeout_seconds=self.config.bridge_timeout_seconds,
         )
+        self.direct_tools = create_leon_tools(
+            self.image_client,
+            session_id=self.session_id,
+            default_mode_ids=self.config.default_mode_ids,
+        )
         return LeonAgent(
             llm_client=llm_client,
-            image_client=image_client,
+            image_client=self.image_client,
             session_id=self.session_id,
             default_mode_ids=self.config.default_mode_ids,
             on_event=self._on_event,
@@ -143,23 +162,75 @@ class LeonConsole:
         # passed to LLMClient separately and never changes the provider config.
         return get_settings()
 
+    def _ensure_current_provider(self) -> None:
+        reset_settings_cache()
+        settings = self._resolve_llm_settings()
+        scope = model_provider_scope(profile=settings.profile, base_url=settings.active_base_url)
+        if scope != self.llm_scope:
+            self.model_catalog = []
+            self.agent = self._create_agent()
+
+    def _fetch_model_catalog(self) -> list[str]:
+        self._ensure_current_provider()
+        settings = self._resolve_llm_settings()
+        try:
+            models = LLMClient(settings, model_override=self.llm_model).list_models()
+        except Exception as exc:  # noqa: BLE001 - manual model entry remains available
+            self.console.print(
+                f"[yellow]模型列表拉取失败：{type(exc).__name__}: {exc}[/yellow]"
+            )
+            models = []
+        self.model_catalog = models
+        return models
+
+    def _start_image_progress(self) -> None:
+        self._stop_image_progress()
+        self._progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[cyan]{task.description}"),
+            TimeElapsedColumn(),
+            console=self.console,
+        )
+        self._progress.start()
+        self._progress_task_id = self._progress.add_task("正在生成图片…", total=None)
+
+    def _stop_image_progress(self, *, ok: bool | None = None) -> None:
+        if self._progress is None:
+            return
+        if self._progress_task_id is not None and ok is not None:
+            label = "图片生成完成" if ok else "图片生成失败"
+            self._progress.update(self._progress_task_id, description=label)
+        self._progress.stop()
+        self._progress = None
+        self._progress_task_id = None
+
     def _on_event(self, event: AgentEvent) -> None:
         if event.kind == "tool_started":
+            if event.tool_name == "generate_images":
+                self._start_image_progress()
+                return
             self.console.print(
                 f"[cyan]●[/cyan] [bold]调用工具[/bold] [cyan]{event.tool_name}[/cyan]"
             )
         elif event.kind == "tool_finished":
             ok = bool(event.result and event.result.get("ok"))
+            if event.tool_name == "generate_images":
+                self._stop_image_progress(ok=ok)
             if ok:
                 self.console.print(f"[green]✓[/green] [dim]{event.tool_name} 完成[/dim]")
             else:
                 self.console.print(f"[red]✗[/red] [dim]{event.tool_name} 失败[/dim]")
 
     def process(self, message: str) -> bool:
+        stripped = message.strip()
+        if stripped.casefold() == "/nsfw" or stripped.casefold().startswith("/nsfw "):
+            return self._process_nsfw(stripped)
+        self._ensure_current_provider()
         history = self.store.load_messages(self.session_id)
         try:
             result = self.agent.run(message, history=history)
         except Exception as exc:  # noqa: BLE001 - CLI should keep the session alive
+            self._stop_image_progress(ok=False)
             error = f"请求失败：{type(exc).__name__}: {exc}"
             self.console.print(f"[red]{error}[/red]")
             return False
@@ -167,6 +238,41 @@ class LeonConsole:
         self.store.record_result(self.session_id, result)
         self.store.add_message(self.session_id, "assistant", result.answer)
         self.console.print(Markdown(result.answer))
+        return True
+
+    def _process_nsfw(self, message: str) -> bool:
+        source_text = message[5:].strip()
+        if not source_text:
+            self.console.print("[yellow]用法：/nsfw <生图描述>[/yellow]")
+            return False
+        arguments = {
+            "source_text": source_text,
+            "workflow_ids": ["nsfw"],
+            "batch_count": 1,
+        }
+        self._start_image_progress()
+        result = self.direct_tools.execute("generate_images", arguments)
+        ok = bool(result.get("ok"))
+        self._stop_image_progress(ok=ok)
+        if not ok:
+            self.console.print(f"[red]NSFW 生图失败：{result.get('error') or '未知错误'}[/red]")
+            return False
+        images = [
+            item.get("image_url")
+            for item in result.get("images", [])
+            if isinstance(item, dict) and item.get("image_url")
+        ]
+        answer = "图片生成好了。"
+        if images:
+            answer += "\n\n" + "\n".join(f"- {url}" for url in images)
+        agent_result = AgentResult(
+            answer=answer,
+            steps=[ToolStep("generate_images", arguments, result)],
+        )
+        self.store.add_message(self.session_id, "user", message)
+        self.store.record_result(self.session_id, agent_result)
+        self.store.add_message(self.session_id, "assistant", answer)
+        self.console.print(Markdown(answer))
         return True
 
     def show_history(self) -> None:
@@ -180,15 +286,18 @@ class LeonConsole:
         self.console.print(table)
 
     def show_models(self) -> None:
+        models = self._fetch_model_catalog()
         self.console.print(
             f"当前模型：[bold]{self.llm_model}[/bold]  provider={self.llm_profile}"
         )
         table = Table("#", "Model", "Current")
-        for index, model_id in enumerate(MODEL_IDS, start=1):
+        for index, model_id in enumerate(models, start=1):
             table.add_row(str(index), model_id, "*" if model_id == self.llm_model else "")
-        if self.llm_model not in MODEL_IDS:
+        if self.llm_model not in models:
             table.add_row("自定义", self.llm_model, "*")
         self.console.print(table)
+        if not models:
+            self.console.print("[dim]供应商未返回模型列表，仍可直接输入完整模型 ID。[/dim]")
         self.console.print("使用 /model <序号或模型ID> 切换，/model default 恢复默认。")
 
     def switch_model(self, value: str) -> None:
@@ -206,19 +315,24 @@ class LeonConsole:
             )
             return
 
-        model_id = resolve_model_id(candidate)
+        catalog = self.model_catalog
+        if candidate.isdigit() and not catalog:
+            catalog = self._fetch_model_catalog()
+        model_id = resolve_model_id(candidate, catalog)
         if model_id is None:
             self.console.print(f"[red]未知模型：{candidate}[/red]")
             self.show_models()
             return
 
+        self._ensure_current_provider()
         settings = self._resolve_llm_settings()
+        scope = model_provider_scope(profile=settings.profile, base_url=settings.active_base_url)
         self.store.set_model_selection(
             self.session_id,
-            provider=settings.profile,
+            provider=scope,
             model=model_id,
         )
-        self.model_selection = (settings.profile, model_id)
+        self.model_selection = (scope, model_id)
         self.agent = self._create_agent()
         self.console.print(f"[green]已切换模型[/green] {self.llm_model} ({self.llm_profile})")
 
@@ -260,6 +374,7 @@ class LeonConsole:
                         "[bold]/history[/bold] 会话列表\n"
                         "[bold]/model[/bold] 查看模型\n"
                         "[bold]/model <序号或模型ID>[/bold] 切换模型\n"
+                        "[bold]/nsfw <描述>[/bold] 跳过 LLM，直接用 NSFW 模式生图\n"
                         "[bold]/exit[/bold] 退出\n\n"
                         "[dim]你也可以直接说：检查环境、生成图片、查询任务、查看最近图片。[/dim]",
                         title="Leon 命令",

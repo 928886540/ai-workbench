@@ -42,3 +42,29 @@ def test_custom_model_override_is_sent_in_request(monkeypatch) -> None:  # noqa:
     client.chat_turn([{"role": "user", "content": "hello"}])
 
     assert captured["model"] == "DeepSeek-V4-Pro"
+
+
+def test_list_models_uses_active_provider_catalog(monkeypatch) -> None:  # noqa: ANN001
+    class FakeModels:
+        def list(self):
+            return SimpleNamespace(
+                data=[
+                    SimpleNamespace(id="z-model"),
+                    SimpleNamespace(id="A-model"),
+                    SimpleNamespace(id="z-model"),
+                ]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.models = FakeModels()
+
+    monkeypatch.setattr("workbench_core.llm.OpenAI", FakeOpenAI)
+    settings = Settings(
+        LLM_SOURCE="env",
+        LLM_BASE_URL="https://provider.example/v1",
+        LLM_API_KEY="sk-test",
+        LLM_MODEL="default-model",
+    )
+
+    assert LLMClient(settings).list_models() == ["A-model", "z-model"]

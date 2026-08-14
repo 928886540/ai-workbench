@@ -170,8 +170,10 @@ def create_leon_tools(
                         },
                         "batch_count": {
                             "type": "integer",
-                            "enum": [1, 2, 3, 5, 10],
+                            "minimum": 1,
+                            "maximum": 10,
                             "default": 1,
+                            "description": "Images per selected mode; normally 1, 2, 3, 5, or 10.",
                         },
                         "character_context": {
                             "type": "string",
@@ -209,6 +211,15 @@ def create_leon_tools(
                     "additionalProperties": False,
                 },
                 handler=lambda limit=20: client.get_recent_images(chat_id=chat_id, limit=limit),
+            ),
+            AgentTool(
+                name="get_latest_image",
+                description=(
+                    "Get the newest completed image in the global Leon image database, across "
+                    "all chats and Leon Agent sessions."
+                ),
+                parameters={"type": "object", "properties": {}, "additionalProperties": False},
+                handler=client.get_latest_image,
             ),
         ]
     )

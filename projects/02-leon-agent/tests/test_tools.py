@@ -24,6 +24,9 @@ class FakeImageClient:
     def get_recent_images(self, **kwargs: Any) -> dict[str, Any]:
         return {"ok": True, "items": []}
 
+    def get_latest_image(self) -> dict[str, Any]:
+        return {"ok": True, "item": None}
+
 
 def test_generate_tool_passes_source_text_verbatim() -> None:
     client = FakeImageClient()
@@ -43,6 +46,24 @@ def test_generate_tool_passes_source_text_verbatim() -> None:
     assert client.generate_calls[0]["source_text"] == request
     assert client.generate_calls[0]["workflow_ids"] == ["k2_tifa_plus"]
     assert client.generate_calls[0]["batch_count"] == 2
+
+
+def test_generate_tool_schema_is_gemini_compatible() -> None:
+    tools = create_leon_tools(
+        FakeImageClient(),  # type: ignore[arg-type]
+        session_id="session-1",
+        default_mode_ids=["k2_tifa_plus"],
+    )
+    generate_schema = next(
+        item for item in tools.schemas if item["function"]["name"] == "generate_images"
+    )
+    batch_schema = generate_schema["function"]["parameters"]["properties"][
+        "batch_count"
+    ]
+
+    assert "enum" not in batch_schema
+    assert batch_schema["minimum"] == 1
+    assert batch_schema["maximum"] == 10
 
 
 def test_agent_prompt_forbids_image_prompt_rewriting() -> None:

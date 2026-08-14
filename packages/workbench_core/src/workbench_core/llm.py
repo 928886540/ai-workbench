@@ -59,6 +59,17 @@ class LLMClient:
     def profile(self) -> str:
         return self.settings.profile
 
+    def list_models(self) -> list[str]:
+        """Fetch the model catalog exposed by the active OpenAI-compatible provider."""
+        response = self._client.models.list()
+        items = getattr(response, "data", response)
+        model_ids = {
+            str(getattr(item, "id", "")).strip()
+            for item in items
+            if str(getattr(item, "id", "")).strip()
+        }
+        return sorted(model_ids, key=str.casefold)
+
     def chat(
         self,
         messages: Sequence[ChatMessage | dict[str, Any]],
