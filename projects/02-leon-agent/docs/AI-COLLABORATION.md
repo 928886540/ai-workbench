@@ -84,10 +84,12 @@ the currently installed mode catalog. `/nsfw` or `/nsfw --models` lists Chinese 
 mode IDs. The Web composer fetches `GET /api/image-modes` and shows selectable mode suggestions
 while the user types `--model`.
 
-Normal LLM-routed generation and `/nsfw` share the same completion tracker. Each finished image
-emits `image.completed`; the tracker then persists and emits an `assistant.notice` whose Markdown
-contains the completed image URL. That notice must render as a new image-bearing assistant bubble,
-so the user never needs to ask the LLM whether rendering finished.
+Normal LLM-routed generation and `/nsfw` share the same completion tracker. When the task endpoint
+already has the final image URL, it emits `image.completed` immediately; the gallery endpoint is only
+a fallback. The tracker persists the image Markdown separately, then asks the session-pinned LLM for
+a short natural completion note and emits that text through `assistant.notice`. The Web client keeps
+the Skeleton until the image resource itself loads, replaces it in place, and never waits for the LLM
+note before showing the image.
 
 Web refresh state is not reconstructed from SSE memory. The client loads
 `GET /api/agent/sessions/{session_id}/image-state`, which merges the current Leon task sync and
@@ -112,6 +114,7 @@ Merged from `feat/leon-ux-polish`:
 - Image generation skeleton replaced by the completed image
 - Markdown image syntax and plain ComfyUI image URLs render clickable images inside the assistant
   bubble; clicking opens the current-page full-screen viewer
+- Full-screen viewer supports pinch zoom, drag-to-pan, mouse wheel, and visible `+/-` controls
 - Chat history, image tasks, and gallery are restored after a page refresh
 - The chat message area remains touch-scrollable and stops auto-following when the user scrolls up
 - Mobile keyboard layout relies on `interactive-widget=resizes-content` and `100dvh`; do not add a

@@ -143,6 +143,9 @@ def test_web_client_supports_markdown_images_and_touch_scrolling(client):
     assert 'alt="生成图片"' in html
     assert 'id="image-viewer"' in html
     assert "openImageViewer" in html
+    assert "viewerPointers" in html
+    assert "image-viewer-zoom-in" in html
+    assert "replaceSkeletonWithImage" in html
     assert 'id="mode-suggestions"' in html
     assert "/api/image-modes" in html
     assert "touch-action:pan-y" in html
@@ -156,7 +159,7 @@ def test_web_client_supports_markdown_images_and_touch_scrolling(client):
     assert "$input.addEventListener('focus'" not in html
     assert "height:100dvh" in html
     assert "font-size:16px" in html
-    assert "/sw.js?v=10" in html
+    assert "/sw.js?v=11" in html
 
 
 def test_session_model_can_be_selected_and_reset(client, monkeypatch):
@@ -392,7 +395,7 @@ def test_nsfw_message_bypasses_llm_and_resolves_selected_mode(client, monkeypatc
     assert generate_calls[0]["batch_count"] == 1
 
 
-def test_track_image_jobs_publishes_image_and_notice_once(tmp_path):  # noqa: ANN001
+def test_track_image_jobs_uses_task_image_and_publishes_human_notice(tmp_path):  # noqa: ANN001
     async def scenario():
         session_id = "session-track"
         store = SessionStore(tmp_path / "track.db")
@@ -405,16 +408,17 @@ def test_track_image_jobs_publishes_image_and_notice_once(tmp_path):  # noqa: AN
             def get_image_tasks(self, **kwargs):  # noqa: ANN003
                 return {
                     "items": [
-                        {"job_id": "job-1", "status": "completed", "progress": 100}
+                        {
+                            "job_id": "job-1",
+                            "status": "completed",
+                            "progress": 100,
+                            "image_url": "https://images.example/task-job-1.png",
+                        }
                     ]
                 }
 
             def get_recent_images(self, **kwargs):  # noqa: ANN003
-                image = {
-                    "job_id": "job-1",
-                    "image_url": "https://images.example/job-1.png",
-                }
-                return {"items": [image, dict(image)]}
+                raise AssertionError("task image_url should avoid the gallery fallback")
 
         await _track_image_jobs(
             bus=registry,
@@ -424,6 +428,7 @@ def test_track_image_jobs_publishes_image_and_notice_once(tmp_path):  # noqa: AN
             chat_id=f"leon-agent:{session_id}",
             generation_plan_id="plan-1",
             jobs=[{"job_id": "job-1", "status": "queued"}],
+            completion_message_factory=lambda count: "这张图做好了，点开看看。",
         )
         await asyncio.sleep(0)
         events = []
@@ -436,15 +441,16 @@ def test_track_image_jobs_publishes_image_and_notice_once(tmp_path):  # noqa: AN
     notice_events = [event for event in events if event.event == "assistant.notice"]
 
     assert len(completed_events) == 1
-    assert completed_events[0].data["image_url"] == "https://images.example/job-1.png"
+    assert completed_events[0].data["image_url"] == "https://images.example/task-job-1.png"
     assert len(notice_events) == 1
     assert notice_events[0].data["job_ids"] == ["job-1"]
     assert messages == [
         {
             "role": "assistant",
-            "content": (
-                "图片生成好了。\n\n"
-                "![生成图片 1](https://images.example/job-1.png)"
-            ),
+            "content": "![生成图片 1](https://images.example/task-job-1.png)",
+        },
+        {
+            "role": "assistant",
+            "content": "这张图做好了，点开看看。",
         }
     ]

@@ -120,10 +120,12 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .gallery-meta{padding:6px 8px;font-size:11px;color:var(--text2)}
 
 /* Current-page image viewer */
-#image-viewer{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.94);display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));touch-action:pan-x pan-y}
+#image-viewer{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.94);display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));overflow:hidden;touch-action:none}
 #image-viewer[hidden]{display:none}
-#image-viewer img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+#image-viewer img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;transform-origin:center;will-change:transform;touch-action:none;user-select:none;-webkit-user-drag:none}
 #image-viewer-close{position:absolute;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:44px;height:44px;border:0;border-radius:50%;background:rgba(255,255,255,.14);color:#fff;font-size:30px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+#image-viewer-controls{position:absolute;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:10px;z-index:2}
+#image-viewer-controls button{width:44px;height:44px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font-size:24px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
 
 /* Debug */
 .debug-section{background:var(--surface);border-radius:10px;padding:12px}
@@ -186,7 +188,7 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .image-placeholder-inner{width:100%;aspect-ratio:1;background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 .image-placeholder-label{padding:8px 12px;font-size:12px;color:var(--text2);display:flex;align-items:center;gap:6px}
-.image-card{animation:fadeIn .35s ease}
+.image-card,.image-result{animation:fadeIn .35s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 /* ============================================================
@@ -397,6 +399,11 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 <div id="image-viewer" role="dialog" aria-modal="true" aria-label="图片预览" hidden>
   <button id="image-viewer-close" type="button" aria-label="关闭图片预览" title="关闭">×</button>
   <img id="image-viewer-image" alt="图片预览">
+  <div id="image-viewer-controls">
+    <button id="image-viewer-zoom-out" type="button" aria-label="缩小" title="缩小">−</button>
+    <button id="image-viewer-reset" type="button" aria-label="还原大小" title="还原大小">↺</button>
+    <button id="image-viewer-zoom-in" type="button" aria-label="放大" title="放大">+</button>
+  </div>
 </div>
 
 <!-- TIMELINE OVERLAY -->
@@ -585,14 +592,64 @@ function isImageHref(value){
 }
 const $imageViewer=document.getElementById('image-viewer');
 const $imageViewerImage=document.getElementById('image-viewer-image');
+const viewerPointers=new Map();
+let viewerScale=1,viewerX=0,viewerY=0,viewerPanStart=null,viewerPinchStart=null;
+function applyViewerTransform(){
+  if(viewerScale<=1){viewerScale=1;viewerX=0;viewerY=0}
+  const maxX=Math.max(0,($imageViewerImage.clientWidth*viewerScale-$imageViewer.clientWidth)/2+48);
+  const maxY=Math.max(0,($imageViewerImage.clientHeight*viewerScale-$imageViewer.clientHeight)/2+48);
+  viewerX=Math.max(-maxX,Math.min(maxX,viewerX));viewerY=Math.max(-maxY,Math.min(maxY,viewerY));
+  $imageViewerImage.style.transform=`translate3d(${viewerX}px,${viewerY}px,0) scale(${viewerScale})`;
+}
+function setViewerScale(value){viewerScale=Math.max(1,Math.min(6,value));applyViewerTransform()}
+function resetViewerZoom(){viewerScale=1;viewerX=0;viewerY=0;viewerPointers.clear();viewerPanStart=null;viewerPinchStart=null;applyViewerTransform()}
 function openImageViewer(value,alt='图片预览'){
   const href=safeHref(value);if(!href)return;
-  $imageViewerImage.src=href;$imageViewerImage.alt=alt||'图片预览';$imageViewer.hidden=false;
+  resetViewerZoom();$imageViewerImage.src=href;$imageViewerImage.alt=alt||'图片预览';$imageViewer.hidden=false;
 }
-function closeImageViewer(){$imageViewer.hidden=true;$imageViewerImage.removeAttribute('src')}
+function closeImageViewer(){$imageViewer.hidden=true;$imageViewerImage.removeAttribute('src');resetViewerZoom()}
 document.getElementById('image-viewer-close').addEventListener('click',closeImageViewer);
+document.getElementById('image-viewer-zoom-in').addEventListener('click',()=>setViewerScale(viewerScale*1.35));
+document.getElementById('image-viewer-zoom-out').addEventListener('click',()=>setViewerScale(viewerScale/1.35));
+document.getElementById('image-viewer-reset').addEventListener('click',resetViewerZoom);
 $imageViewer.addEventListener('click',e=>{if(e.target===$imageViewer)closeImageViewer()});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$imageViewer.hidden)closeImageViewer()});
+document.addEventListener('keydown',e=>{
+  if($imageViewer.hidden)return;
+  if(e.key==='Escape')closeImageViewer();
+  else if(e.key==='+'||e.key==='=')setViewerScale(viewerScale*1.25);
+  else if(e.key==='-')setViewerScale(viewerScale/1.25);
+  else if(e.key==='0')resetViewerZoom();
+});
+$imageViewerImage.addEventListener('pointerdown',e=>{
+  if(e.pointerType==='mouse'&&e.button!==0)return;
+  e.preventDefault();$imageViewerImage.setPointerCapture(e.pointerId);
+  viewerPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(viewerPointers.size===1)viewerPanStart={x:e.clientX,y:e.clientY,baseX:viewerX,baseY:viewerY};
+  if(viewerPointers.size===2){
+    const [a,b]=[...viewerPointers.values()];
+    viewerPinchStart={distance:Math.hypot(a.x-b.x,a.y-b.y),scale:viewerScale};
+  }
+});
+$imageViewerImage.addEventListener('pointermove',e=>{
+  if(!viewerPointers.has(e.pointerId))return;
+  viewerPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(viewerPointers.size===2&&viewerPinchStart){
+    const [a,b]=[...viewerPointers.values()];
+    const distance=Math.hypot(a.x-b.x,a.y-b.y);
+    setViewerScale(viewerPinchStart.scale*distance/Math.max(1,viewerPinchStart.distance));
+  }else if(viewerPointers.size===1&&viewerScale>1&&viewerPanStart){
+    viewerX=viewerPanStart.baseX+e.clientX-viewerPanStart.x;
+    viewerY=viewerPanStart.baseY+e.clientY-viewerPanStart.y;applyViewerTransform();
+  }
+});
+function endViewerPointer(e){
+  viewerPointers.delete(e.pointerId);viewerPinchStart=null;
+  const remaining=[...viewerPointers.values()][0];
+  viewerPanStart=remaining?{x:remaining.x,y:remaining.y,baseX:viewerX,baseY:viewerY}:null;
+}
+$imageViewerImage.addEventListener('pointerup',endViewerPointer);
+$imageViewerImage.addEventListener('pointercancel',endViewerPointer);
+$imageViewer.addEventListener('wheel',e=>{e.preventDefault();setViewerScale(viewerScale*(e.deltaY<0?1.15:.87))},{passive:false});
 document.addEventListener('click',e=>{
   const link=e.target.closest('.markdown-image-link,[data-image-preview]');
   if(!link)return;e.preventDefault();openImageViewer(link.href||link.dataset.imagePreview,e.target.alt||'图片预览');
@@ -699,9 +756,21 @@ function updateSkeletonBadge(jobId,status){
   const el=imagePlaceholders[jobId];const badge=el&&el.querySelector('.status-badge');
   if(badge){badge.className='status-badge '+status;badge.textContent=status}
 }
-function removeSkeleton(jobId){
-  const placeholder=imagePlaceholders[jobId];
-  if(placeholder){placeholder.remove();delete imagePlaceholders[jobId]}
+function createImageResult(url){
+  const wrap=document.createElement('div');wrap.className='bubble-wrap agent image-result';
+  const bubble=document.createElement('div');bubble.className='bubble agent';
+  bubble.innerHTML=renderMd(`![生成图片](${url})`);wrap.appendChild(bubble);return wrap;
+}
+function replaceSkeletonWithImage(jobId,url){
+  const href=safeHref(url);if(!href)return;
+  const placeholder=imagePlaceholders[jobId];const preload=new Image();let settled=false;
+  const show=()=>{
+    if(settled)return;settled=true;
+    const result=createImageResult(href);
+    if(placeholder&&placeholder.isConnected)placeholder.replaceWith(result);else $msgs.appendChild(result);
+    delete imagePlaceholders[jobId];scrollBottom();
+  };
+  preload.addEventListener('load',show,{once:true});preload.addEventListener('error',show,{once:true});preload.src=href;
 }
 function addErrorCard(message){
   const card=document.createElement('div');card.className='error-card';
@@ -837,7 +906,7 @@ function handleEvent(ev){
     case 'image.completed':
       tasks[ev.data.job_id]={...(tasks[ev.data.job_id]||{}),status:'completed'};
       images[ev.data.job_id]={url:ev.data.image_url};
-      removeSkeleton(ev.data.job_id);
+      replaceSkeletonWithImage(ev.data.job_id,ev.data.image_url);
       {const href=safeHref(ev.data.image_url);if(href)addTlEntry('image','Image Ready',`<a href="${esc(href)}" data-image-preview="${esc(href)}" style="color:#B09FCC">查看大图<br><img src="${esc(href)}" alt="generated"></a>`,ev.timestamp)}
       updateIvStats();break;
 
@@ -1060,7 +1129,7 @@ async function init(){
 }
 
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=10',{scope:'/',updateViaCache:'none'})
+  navigator.serviceWorker.register('/sw.js?v=11',{scope:'/',updateViaCache:'none'})
     .then(registration=>registration.update()).catch(()=>{});
 }
 if(token){hideLogin();init()}

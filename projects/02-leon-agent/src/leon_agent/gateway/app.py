@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -232,6 +233,56 @@ async def _model_selection_response(
 _TERMINAL_IMAGE_STATUSES = {"completed", "failed", "cancelled", "canceled"}
 
 
+def _fallback_image_completion(count: int) -> str:
+    if count == 1:
+        return "图已经生成好了，点开看看。"
+    return f"{count} 张图已经生成好了，点开看看。"
+
+
+def _llm_image_completion_message(llm_client: LLMClient, count: int) -> str:
+    """Ask the pinned session model for a short, human completion note."""
+    fallback = _fallback_image_completion(count)
+    prompt = (
+        "图片生成任务刚刚完成。请用一句自然、简短、有人味的中文告诉用户图片已经好了，"
+        "邀请他直接点开查看。不要输出图片 URL、Markdown、JSON、工具名或解释。"
+        f"本次共有 {count} 张图片。"
+    )
+    try:
+        answer = llm_client.chat(
+            [
+                {"role": "system", "content": "你是 Leon，一个说话自然的中文助手。"},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+        ).strip()
+    except Exception:  # noqa: BLE001 - image delivery must not depend on this optional note
+        return fallback
+    return answer[:200] or fallback
+
+
+def _session_image_completion_factory(
+    *,
+    session_id: str,
+    store: SessionStore,
+) -> Callable[[int], str]:
+    def complete(count: int) -> str:
+        snapshot = _get_llm_snapshot(session_id)
+        selection = store.get_model_selection(session_id)
+        model_override = None
+        if selection:
+            scope = model_provider_scope(
+                profile=snapshot.settings.profile,
+                base_url=snapshot.settings.active_base_url,
+            )
+            if selection[0] == scope:
+                model_override = selection[1]
+        return _llm_image_completion_message(
+            LLMClient(snapshot.settings, model_override=model_override), count
+        )
+
+    return complete
+
+
 async def _track_image_jobs(
     *,
     bus: EventBusRegistry,
@@ -241,6 +292,7 @@ async def _track_image_jobs(
     chat_id: str,
     generation_plan_id: str | None,
     jobs: list[dict[str, Any]],
+    completion_message_factory: Callable[[int], str] | None = None,
 ) -> None:
     """Publish task changes after the Agent returns its immediate submission response."""
     job_ids = {str(job["job_id"]) for job in jobs if job.get("job_id")}
@@ -289,25 +341,44 @@ async def _track_image_jobs(
             if str(task_by_id.get(job_id, {}).get("status") or "").lower() == "completed"
         }
         if completed_ids:
-            try:
-                gallery_result = await asyncio.to_thread(
-                    image_client.get_recent_images,
-                    chat_id=chat_id,
-                    limit=max(20, min(100, len(job_ids) * 4)),
+            completed_now = [
+                {
+                    "job_id": job_id,
+                    "image_url": str(task_by_id[job_id].get("image_url")),
+                }
+                for job_id in completed_ids
+                if task_by_id[job_id].get("image_url") and job_id not in notified_jobs
+            ]
+            missing_image_ids = completed_ids - {item["job_id"] for item in completed_now}
+            if missing_image_ids:
+                try:
+                    gallery_result = await asyncio.to_thread(
+                        image_client.get_recent_images,
+                        chat_id=chat_id,
+                        limit=max(20, min(100, len(job_ids) * 4)),
+                    )
+                except Exception:  # noqa: BLE001 - task remains visible even if gallery lags
+                    gallery_result = {"items": []}
+                gallery_items = (
+                    gallery_result.get("items", []) if isinstance(gallery_result, dict) else []
                 )
-            except Exception:  # noqa: BLE001 - task remains visible even if gallery lags
-                gallery_result = {"items": []}
-            gallery_items = (
-                gallery_result.get("items", []) if isinstance(gallery_result, dict) else []
-            )
-            completed_now: list[dict[str, str]] = []
-            for item in gallery_items:
-                if not isinstance(item, dict):
-                    continue
-                job_id = str(item.get("job_id") or "")
-                image_url = item.get("image_url")
-                if job_id not in completed_ids or not image_url or job_id in notified_jobs:
-                    continue
+                gallery_seen: set[str] = set()
+                for item in gallery_items:
+                    if not isinstance(item, dict):
+                        continue
+                    job_id = str(item.get("job_id") or "")
+                    image_url = item.get("image_url")
+                    if (
+                        job_id not in missing_image_ids
+                        or not image_url
+                        or job_id in notified_jobs
+                        or job_id in gallery_seen
+                    ):
+                        continue
+                    gallery_seen.add(job_id)
+                    completed_now.append({"job_id": job_id, "image_url": str(image_url)})
+            for item in completed_now:
+                job_id = item["job_id"]
                 notified_jobs.add(job_id)
                 bus.get_or_create(session_id, asyncio.get_running_loop()).publish(
                     LeonEvent(
@@ -316,31 +387,36 @@ async def _track_image_jobs(
                         data={
                             "generation_plan_id": generation_plan_id,
                             "job_id": job_id,
-                            "image_url": image_url,
+                            "image_url": item["image_url"],
                         },
                     )
                 )
                 pending.discard(job_id)
-                completed_now.append({"job_id": job_id, "image_url": str(image_url)})
             if completed_now:
                 count = len(completed_now)
-                heading = "图片生成好了。" if count == 1 else f"{count} 张图片生成好了。"
                 image_markdown = "\n\n".join(
                     f"![生成图片 {index}]({item['image_url']})"
                     for index, item in enumerate(completed_now, start=1)
                 )
-                content = f"{heading}\n\n{image_markdown}"
-                completed_job_ids = [item["job_id"] for item in completed_now]
-                store.add_message(session_id, "assistant", content)
-                bus.get_or_create(session_id, asyncio.get_running_loop()).publish(
-                    LeonEvent(
-                        event="assistant.notice",
-                        session_id=session_id,
-                        data={"content": content, "job_ids": completed_job_ids},
+                store.add_message(session_id, "assistant", image_markdown)
+                if completion_message_factory is not None:
+                    try:
+                        completion = await asyncio.to_thread(completion_message_factory, count)
+                    except Exception:  # noqa: BLE001 - never lose the completion notice
+                        completion = _fallback_image_completion(count)
+                    store.add_message(session_id, "assistant", completion)
+                    bus.get_or_create(session_id, asyncio.get_running_loop()).publish(
+                        LeonEvent(
+                            event="assistant.notice",
+                            session_id=session_id,
+                            data={
+                                "content": completion,
+                                "job_ids": [item["job_id"] for item in completed_now],
+                            },
+                        )
                     )
-                )
         if pending:
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +695,10 @@ async def send_message(
                             chat_id=f"leon-agent:{session_id}",
                             generation_plan_id=submission.get("generation_plan_id"),
                             jobs=jobs,
+                            completion_message_factory=_session_image_completion_factory(
+                                session_id=session_id,
+                                store=store,
+                            ),
                         )
                     )
                 )
