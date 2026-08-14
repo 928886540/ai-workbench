@@ -6,6 +6,7 @@ Default source is CC Switch local DB, so we don't hand-maintain provider secrets
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, PrivateAttr, SecretStr, model_validator
@@ -14,11 +15,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from workbench_core.ccs import CCSProvider, resolve_provider
 
 SourceName = Literal["ccs", "env"]
+REPO_ROOT = Path(__file__).resolve().parents[4]
+ENV_FILE = REPO_ROOT / ".env"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
