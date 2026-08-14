@@ -4,11 +4,18 @@ from pathlib import Path
 
 import httpx
 import pytest
-from leon_agent.config import LeonSettings
+from leon_agent.config import REPO_ROOT, LeonSettings
 from leon_agent.leon_client import LeonImageClient
 
 BACKEND_URL = "http://127.0.0.1:8188"
 PUBLIC_URL = "https://comfyui.928886540.xyz"
+
+
+def test_leon_settings_env_file_is_bound_to_repository_root() -> None:
+    configured_env_file = Path(LeonSettings.model_config["env_file"])
+
+    assert configured_env_file == REPO_ROOT / ".env"
+    assert configured_env_file.is_absolute()
 
 
 class FakeBridge:
