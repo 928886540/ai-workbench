@@ -38,6 +38,15 @@ uv sync
 uv run leon
 ```
 
+恢复已有会话：
+
+```powershell
+leon resume 6b34ef29606447d395f05899ba30abf7
+```
+
+恢复后会继续使用该 session 在 SQLite 中保存的消息历史。旧写法
+`leon --session <session_id>` 继续兼容。
+
 交互命令：
 
 - `/new`：创建新会话
