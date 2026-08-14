@@ -32,6 +32,7 @@ from leon_agent.agent import LeonAgent
 from leon_agent.config import LeonSettings
 from leon_agent.gateway.events import EventBusRegistry, LeonEvent
 from leon_agent.leon_client import LeonImageClient
+from leon_agent.models import MODEL_IDS
 from leon_agent.session import SessionStore
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,17 @@ app = FastAPI(
     description="HTTP + SSE gateway for the Leon Agent runtime.",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def disable_web_shell_cache(request: Request, call_next):  # noqa: ANN001
+    """Make installed PWAs pick up fixes instead of reusing a stale app shell."""
+    response = await call_next(request)
+    if request.url.path in {"/", "/index.html", "/sw.js"}:
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    if request.url.path == "/sw.js":
+        response.headers["Service-Worker-Allowed"] = "/"
+    return response
 
 # ---------------------------------------------------------------------------
 # Auth
@@ -126,6 +138,24 @@ class MessageResponse(BaseModel):
     session_id: str
     answer: str
     ok: bool
+
+
+class ModelSelectionRequest(BaseModel):
+    model: str | None = None
+
+
+def _model_selection_response(store: SessionStore, session_id: str) -> dict[str, Any]:
+    reset_settings_cache()
+    settings = get_settings()
+    selection = store.get_model_selection(session_id)
+    selected_model = selection[1] if selection else None
+    return {
+        "provider": settings.profile,
+        "default_model": settings.active_model,
+        "selected_model": selected_model,
+        "active_model": selected_model or settings.active_model,
+        "models": list(MODEL_IDS),
+    }
 
 
 _TERMINAL_IMAGE_STATUSES = {"completed", "failed", "cancelled", "canceled"}
@@ -285,6 +315,44 @@ async def get_messages(session_id: str, store: SessionStore = Depends(get_store)
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"messages": store.load_messages(session_id, limit=100)}
+
+
+@app.get(
+    "/api/agent/sessions/{session_id}/model",
+    tags=["sessions"],
+    dependencies=[Depends(verify_token)],
+)
+async def get_session_model(session_id: str, store: SessionStore = Depends(get_store)):
+    if not store.has_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return _model_selection_response(store, session_id)
+
+
+@app.put(
+    "/api/agent/sessions/{session_id}/model",
+    tags=["sessions"],
+    dependencies=[Depends(verify_token)],
+)
+async def set_session_model(
+    session_id: str,
+    body: ModelSelectionRequest,
+    store: SessionStore = Depends(get_store),
+):
+    if not store.has_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    model = (body.model or "").strip()
+    if model and model not in MODEL_IDS:
+        raise HTTPException(status_code=422, detail="Unsupported model")
+
+    reset_settings_cache()
+    settings = get_settings()
+    store.set_model_selection(
+        session_id,
+        provider=settings.profile if model else None,
+        model=model or None,
+    )
+    return _model_selection_response(store, session_id)
 
 
 # ---------------------------------------------------------------------------

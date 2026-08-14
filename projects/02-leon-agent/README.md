@@ -125,7 +125,8 @@ uv run leon-server --help
 
 5 个阶段均已完成：HTTP Gateway、SSE 事件流、手机 PWA 聊天、任务/图库视图，以及运行时间线。
 Web Gateway 提交生图任务后立即通过 SSE 推送 job id，并在后台跟踪状态和完成图片；CLI 仍保留
-同步等待图片结果的体验。
+同步等待图片结果的体验。Web 设置页可为当前 session 选择模型，或恢复跟随 Codex 配置中的
+默认模型；选择会与 CLI 共用同一份 SQLite 会话状态。
 
 架构与接口边界见 [Mobile Web 架构](docs/mobile-web-architecture.md)。
 

@@ -22,7 +22,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
   --border:#E6E5E3;--text:#2C2C2B;--text2:#7D7A75;
   --nav-h:56px;--header-h:52px;
 }
-#app{display:flex;flex-direction:column;height:100%;height:100dvh}
+#app{display:flex;flex-direction:column;height:100%;height:100dvh;min-height:0;overflow:hidden}
 
 /* Login */
 #login-screen{position:fixed;inset:0;background:#fff;z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px calc(32px + env(safe-area-inset-bottom));gap:0}
@@ -53,14 +53,14 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 #timeline-toggle.active{background:#1a1a2e;color:#fff}
 
 /* Pages */
-#pages{flex:1;overflow:hidden;position:relative}
-.page{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none;flex-direction:column}
+#pages{flex:1;min-height:0;overflow:hidden;position:relative}
+.page{position:absolute;inset:0;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none;flex-direction:column}
 .page.active{display:flex}
 
 /* Chat */
-#chat-messages{flex:1;padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;-webkit-overflow-scrolling:touch}
-#chat-input-wrap{padding:8px 12px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:#fff;display:flex;align-items:flex-end;gap:8px}
-#chat-input{flex:1;border:1.5px solid var(--border);border-radius:20px;padding:9px 14px;font-size:15px;outline:none;resize:none;max-height:120px;line-height:1.4;font-family:inherit;transition:border-color .15s}
+#chat-messages{flex:1;min-height:0;padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#chat-input-wrap{flex-shrink:0;padding:8px 12px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:#fff;display:flex;align-items:flex-end;gap:8px;position:relative;z-index:5}
+#chat-input{display:block;flex:1;width:100%;min-height:40px;border:1.5px solid var(--border);border-radius:20px;padding:9px 14px;font-size:15px;outline:none;resize:none;max-height:120px;line-height:1.4;font-family:inherit;color:var(--text);background:#fff;caret-color:var(--blue);-webkit-user-select:text;user-select:text;touch-action:manipulation;transition:border-color .15s}
 #chat-input:focus{border-color:var(--blue)}
 #send-btn{width:40px;height:40px;border-radius:50%;background:var(--blue);color:#fff;border:none;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:opacity .15s}
 #send-btn:disabled{opacity:.4;cursor:default}
@@ -112,7 +112,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .gallery-meta{padding:6px 8px;font-size:11px;color:var(--text2)}
 
 /* Debug */
-#page-debug{padding:12px;gap:8px}
 .debug-section{background:var(--surface);border-radius:10px;padding:12px}
 .debug-section h3{font-size:13px;font-weight:600;margin-bottom:8px}
 .debug-section pre{font-family:Menlo,Consolas,monospace;font-size:11px;overflow-x:auto;color:var(--text2);white-space:pre-wrap;word-break:break-all}
@@ -121,6 +120,18 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
 .debug-event:last-child{border-bottom:none}
 .ev-type{color:var(--blue);font-weight:600}
 .debug-btn{margin-top:8px;padding:8px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;width:100%}
+
+/* Settings */
+#page-settings{padding:12px;gap:8px}
+.settings-section{background:var(--surface);border-radius:10px;padding:14px}
+.settings-section h3{font-size:15px;font-weight:650;margin-bottom:4px}
+.settings-sub{font-size:12px;color:var(--text2);margin-bottom:12px}
+.settings-row{display:flex;align-items:center;gap:8px}
+#model-select{flex:1;min-width:0;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--text);padding:10px 12px;font:inherit;font-size:14px}
+#model-save{border:1px solid var(--blue);border-radius:9px;background:var(--blue);color:#fff;padding:10px 13px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+#model-save:disabled{opacity:.5;cursor:default}
+#model-status{min-height:18px;margin-top:8px;font-size:12px;color:var(--text2)}
+#model-status.error{color:var(--red)}
 
 /* ============================================================
    TIMELINE OVERLAY
@@ -282,8 +293,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
     <div class="page active" id="page-chat">
       <div id="chat-messages"></div>
       <div id="chat-input-wrap">
-        <textarea id="chat-input" placeholder="输入消息…" rows="1"></textarea>
-        <button id="send-btn" aria-label="发送">
+        <textarea id="chat-input" placeholder="输入消息…" rows="1" enterkeyhint="send" autocomplete="off"></textarea>
+        <button id="send-btn" aria-label="发送" disabled>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
           </svg>
@@ -294,9 +305,18 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
     <div class="page" id="page-tasks"><div id="tasks-list"></div></div>
     <div class="page" id="page-gallery"><div id="gallery-grid"></div></div>
 
-    <div class="page" id="page-debug">
+    <div class="page" id="page-settings">
+      <div class="settings-section">
+        <h3>模型</h3>
+        <p class="settings-sub" id="model-current">加载当前模型…</p>
+        <div class="settings-row">
+          <select id="model-select" aria-label="选择模型"></select>
+          <button id="model-save" type="button" disabled>保存</button>
+        </div>
+        <div id="model-status" role="status"></div>
+      </div>
       <div class="debug-section">
-        <h3>Runtime Info</h3>
+        <h3>连接信息</h3>
         <pre id="debug-info">加载中…</pre>
         <button class="debug-btn" id="logout-btn">🔒 退出登录</button>
       </div>
@@ -311,7 +331,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',He
     <button class="nav-item active" data-page="chat"><span class="nav-icon">💬</span>聊天</button>
     <button class="nav-item" data-page="tasks"><span class="nav-icon">📋</span>任务</button>
     <button class="nav-item" data-page="gallery"><span class="nav-icon">🖼️</span>图库</button>
-    <button class="nav-item" data-page="debug"><span class="nav-icon">🔧</span>调试</button>
+    <button class="nav-item" data-page="settings"><span class="nav-icon">⚙️</span>设置</button>
   </nav>
 </div>
 
@@ -396,7 +416,7 @@ document.querySelectorAll('.nav-item').forEach(btn=>{
     document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+t));
     if(t==='tasks')renderTasks();
     if(t==='gallery')renderGallery();
-    if(t==='debug')updateDebugInfo();
+    if(t==='settings'){updateDebugInfo();loadModelSettings()}
   });
 });
 
@@ -413,6 +433,54 @@ async function api(method,path,body){
   if(!r.ok)throw new Error(r.status+' '+await r.text());
   return r.json();
 }
+
+// Session model settings
+const $modelSelect=document.getElementById('model-select');
+const $modelSave=document.getElementById('model-save');
+const $modelCurrent=document.getElementById('model-current');
+const $modelStatus=document.getElementById('model-status');
+let modelSettingsLoaded=false;
+function fillModelSettings(data){
+  $modelSelect.replaceChildren();
+  const defaultOption=document.createElement('option');
+  defaultOption.value='';defaultOption.textContent='跟随默认 · '+data.default_model;
+  $modelSelect.appendChild(defaultOption);
+  const models=data.models||[];
+  models.forEach(model=>{
+    const option=document.createElement('option');
+    option.value=model;option.textContent=model;$modelSelect.appendChild(option);
+  });
+  if(data.selected_model&&!models.includes(data.selected_model)){
+    const option=document.createElement('option');
+    option.value=data.selected_model;option.textContent=data.selected_model+' · 当前会话';
+    $modelSelect.appendChild(option);
+  }
+  $modelSelect.value=data.selected_model||'';
+  $modelCurrent.textContent='当前：'+data.active_model+' · '+data.provider;
+  modelSettingsLoaded=true;
+}
+async function loadModelSettings(){
+  if(!sessionId)return;
+  $modelSave.disabled=true;$modelStatus.className='';
+  $modelStatus.textContent=modelSettingsLoaded?'正在刷新…':'正在加载…';
+  try{
+    fillModelSettings(await api('GET','/api/agent/sessions/'+sessionId+'/model'));
+    $modelStatus.textContent='';
+  }catch(err){
+    $modelStatus.className='error';$modelStatus.textContent='加载失败：'+err.message;
+  }finally{$modelSave.disabled=false}
+}
+async function saveModelSettings(){
+  if(!sessionId)return;
+  $modelSave.disabled=true;$modelStatus.className='';$modelStatus.textContent='正在保存…';
+  try{
+    fillModelSettings(await api('PUT','/api/agent/sessions/'+sessionId+'/model',{model:$modelSelect.value||null}));
+    $modelStatus.textContent='已保存，下条消息开始使用';
+  }catch(err){
+    $modelStatus.className='error';$modelStatus.textContent='保存失败：'+err.message;
+  }finally{$modelSave.disabled=false}
+}
+$modelSave.addEventListener('click',saveModelSettings);
 
 // SSE
 let sse=null,sseTimer=null;
@@ -628,18 +696,23 @@ function logDebug(ev){
 
 // Send
 const $input=document.getElementById('chat-input'),$sendBtn=document.getElementById('send-btn');
+function updateComposerState(){
+  $sendBtn.disabled=sending||!sessionId||!$input.value.trim();
+}
 async function sendMessage(){
-  const text=$input.value.trim();if(!text||sending)return;
-  sending=true;$sendBtn.disabled=true;
+  const text=$input.value.trim();if(!text||sending||!sessionId)return;
+  sending=true;updateComposerState();
   $input.value='';$input.style.height='';
   addBubble('user',text,false);
   try{await api('POST','/api/agent/sessions/'+sessionId+'/messages',{content:text})}
   catch(err){if(!err.message.startsWith('401'))addBubble('agent','❌ '+err.message,false)}
-  finally{sending=false;$sendBtn.disabled=false;$input.focus()}
+  finally{sending=false;updateComposerState();$input.focus()}
 }
 $sendBtn.addEventListener('click',sendMessage);
 $input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}})
-$input.addEventListener('input',()=>{$input.style.height='auto';$input.style.height=Math.min($input.scrollHeight,120)+'px'})
+$input.addEventListener('input',()=>{
+  $input.style.height='auto';$input.style.height=Math.min($input.scrollHeight,120)+'px';updateComposerState();
+})
 
 // Init
 async function ensureSession(){
@@ -649,11 +722,18 @@ async function ensureSession(){
 }
 async function init(){
   setStatus('connecting','Initializing...');
-  try{await ensureSession();connectSSE();updateDebugInfo();}
+  try{await ensureSession();connectSSE();updateDebugInfo();updateComposerState();}
   catch(err){if(!err.message.startsWith('401'))setStatus('error','Connection failed')}
 }
 
-if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+if('serviceWorker' in navigator){
+  let swReloading=false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(swReloading)return;swReloading=true;location.reload();
+  });
+  navigator.serviceWorker.register('/sw.js',{scope:'/',updateViaCache:'none'})
+    .then(registration=>registration.update()).catch(()=>{});
+}
 if(token){hideLogin();init()}
 </script>
 </body>
