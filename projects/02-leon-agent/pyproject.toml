@@ -5,10 +5,14 @@ description = "Independent conversational agent with Leon image-generation tools
 requires-python = ">=3.10"
 dependencies = [
   "workbench-core",
+  "fastapi>=0.111",
+  "uvicorn[standard]>=0.29",
+  "httpx>=0.27",
 ]
 
 [project.scripts]
 leon = "leon_agent.cli:main"
+leon-server = "leon_agent.gateway.server:main"
 
 [build-system]
 requires = ["hatchling"]
