@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Leon Agent">
+<meta name="theme-color" content="#2783DE">
+<link rel="manifest" href="manifest.json">
+<title>Leon Agent</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:16px;line-height:1.5;background:#fff;color:#2C2C2B;-webkit-font-smoothing:antialiased}
+:root{
+  --blue:#2783DE;--blue-soft:#E5F2FC;
+  --green:#46A171;--green-soft:#E8F1EC;
+  --orange:#D5803B;--orange-soft:#FBEBDE;
+  --red:#E56458;--red-soft:#FCE9E7;
+  --surface:#F9F8F7;--surface2:#F0EFED;
+  --border:#E6E5E3;--text:#2C2C2B;--text2:#7D7A75;
+  --nav-h:56px;--header-h:52px;
+}
+#app{display:flex;flex-direction:column;height:100%;height:100dvh}
+
+/* Header */
+#header{
+  height:var(--header-h);display:flex;align-items:center;
+  justify-content:space-between;padding:0 16px;
+  border-bottom:1px solid var(--border);background:#fff;
+  position:sticky;top:0;z-index:20;
+}
+#header h1{font-size:17px;font-weight:600;letter-spacing:-.3px}
+#status-wrap{display:flex;align-items:center;gap:6px}
+#status-dot{width:8px;height:8px;border-radius:50%;background:var(--border);transition:background .3s}
+#status-dot.online{background:var(--green)}
+#status-dot.error{background:var(--red)}
+#status-dot.connecting{background:var(--orange)}
+#status-label{font-size:12px;color:var(--text2)}
+
+/* Pages */
+#pages{flex:1;overflow:hidden;position:relative}
+.page{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none;flex-direction:column}
+.page.active{display:flex}
+
+/* Chat page */
+#page-chat{padding-bottom:0}
+#chat-messages{flex:1;padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#chat-input-wrap{
+  padding:8px 12px calc(8px + env(safe-area-inset-bottom));
+  border-top:1px solid var(--border);background:#fff;
+  display:flex;align-items:flex-end;gap:8px;
+}
+#chat-input{
+  flex:1;border:1.5px solid var(--border);border-radius:20px;
+  padding:9px 14px;font-size:15px;outline:none;resize:none;
+  max-height:120px;line-height:1.4;font-family:inherit;
+  transition:border-color .15s;
+}
+#chat-input:focus{border-color:var(--blue)}
+#send-btn{
+  width:40px;height:40px;border-radius:50%;background:var(--blue);
+  color:#fff;border:none;cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;transition:opacity .15s;
+}
+#send-btn:disabled{opacity:.4;cursor:default}
+
+/* Bubbles */
+.bubble-wrap{display:flex;flex-direction:column;max-width:85%;gap:2px}
+.bubble-wrap.user{align-self:flex-end;align-items:flex-end}
+.bubble-wrap.agent{align-self:flex-start;align-items:flex-start}
+.bubble{
+  padding:9px 13px;border-radius:18px;font-size:15px;line-height:1.45;
+  word-break:break-word;white-space:pre-wrap;
+}
+.bubble.user{background:var(--blue);color:#fff;border-bottom-right-radius:5px}
+.bubble.agent{background:var(--surface);color:var(--text);border-bottom-left-radius:5px}
+.bubble.agent.streaming::after{content:'▋';animation:blink .7s step-start infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* Tool Call cards */
+.tool-card{
+  align-self:flex-start;background:#fff;border:1.5px solid var(--border);
+  border-radius:12px;padding:10px 13px;font-size:13px;max-width:92%;width:100%;
+}
+.tool-card .tool-header{display:flex;align-items:center;gap:7px;font-weight:600;font-size:14px}
+.tool-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0}
+.tool-icon.running{background:var(--blue-soft);color:var(--blue)}
+.tool-icon.done{background:var(--green-soft);color:var(--green)}
+.tool-icon.failed{background:var(--red-soft);color:var(--red)}
+.tool-card .tool-meta{margin-top:6px;color:var(--text2);font-size:12px;display:flex;flex-direction:column;gap:3px}
+.tool-card .tool-meta span{display:flex;align-items:center;gap:5px}
+
+/* Task status badge */
+.status-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500;
+}
+.status-badge.queued{background:var(--surface2);color:var(--text2)}
+.status-badge.running{background:var(--blue-soft);color:var(--blue)}
+.status-badge.completed{background:var(--green-soft);color:var(--green)}
+.status-badge.failed{background:var(--red-soft);color:var(--red)}
+
+/* Image card */
+.image-card{
+  align-self:flex-start;border-radius:14px;overflow:hidden;
+  border:1px solid var(--border);max-width:min(280px,85%);
+}
+.image-card img{width:100%;display:block;object-fit:cover}
+.image-card .image-meta{
+  padding:8px 10px;font-size:11px;color:var(--text2);
+  background:#fff;word-break:break-all;
+}
+.image-card .image-meta a{color:var(--blue);text-decoration:none}
+
+/* Tasks page */
+#page-tasks{padding:12px;gap:8px}
+.task-item{
+  background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;
+  display:flex;flex-direction:column;gap:5px;
+}
+.task-item .task-top{display:flex;align-items:center;justify-content:space-between}
+.task-item .task-id{font-size:12px;color:var(--text2);font-family:monospace}
+.task-item .task-plan{font-size:11px;color:var(--text2);margin-top:1px}
+
+/* Gallery page */
+#page-gallery{padding:12px;display:flex;flex-direction:column;gap:8px}
+#gallery-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.gallery-img-wrap{border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--surface)}
+.gallery-img-wrap img{width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:pointer}
+.gallery-img-wrap .gallery-meta{padding:6px 8px;font-size:11px;color:var(--text2)}
+
+/* Debug page */
+#page-debug{padding:12px;gap:8px}
+.debug-section{background:var(--surface);border-radius:10px;padding:12px;font-size:12px}
+.debug-section h3{font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text)}
+.debug-section pre{font-family:Menlo,Consolas,monospace;font-size:11px;overflow-x:auto;color:var(--text2);white-space:pre-wrap;word-break:break-all}
+#debug-events{max-height:260px;overflow-y:auto}
+.debug-event{padding:4px 0;border-bottom:1px solid var(--border);font-size:11px;font-family:Menlo,monospace;color:var(--text2)}
+.debug-event:last-child{border-bottom:none}
+.debug-event .ev-type{color:var(--blue);font-weight:600}
+
+/* Bottom nav */
+#nav{
+  height:var(--nav-h);display:flex;border-top:1px solid var(--border);
+  background:#fff;padding-bottom:env(safe-area-inset-bottom);
+}
+.nav-item{
+  flex:1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:2px;border:none;background:none;
+  cursor:pointer;color:var(--text2);font-size:10px;font-weight:500;
+  padding:6px 0;transition:color .15s;
+}
+.nav-item .nav-icon{font-size:22px;line-height:1}
+.nav-item.active{color:var(--blue)}
+
+/* Settings modal */
+#settings-modal{
+  position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;
+  display:flex;align-items:flex-end;opacity:0;pointer-events:none;transition:opacity .2s;
+}
+#settings-modal.open{opacity:1;pointer-events:all}
+#settings-sheet{
+  background:#fff;width:100%;border-radius:20px 20px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom));
+  transform:translateY(100%);transition:transform .25s ease;
+}
+#settings-modal.open #settings-sheet{transform:translateY(0)}
+#settings-sheet h2{font-size:17px;font-weight:600;margin-bottom:16px}
+.settings-row{display:flex;flex-direction:column;gap:4px;margin-bottom:14px}
+.settings-row label{font-size:13px;font-weight:500;color:var(--text2)}
+.settings-row input{
+  border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;
+  font-size:15px;outline:none;font-family:inherit;
+}
+.settings-row input:focus{border-color:var(--blue)}
+#save-settings-btn{
+  width:100%;padding:13px;background:var(--blue);color:#fff;
+  border:none;border-radius:12px;font-size:16px;font-weight:600;
+  cursor:pointer;margin-top:4px;
+}
+
+/* Empty state */
+.empty-state{
+  flex:1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:8px;color:var(--text2);padding:32px;
+}
+.empty-state .empty-icon{font-size:40px}
+.empty-state p{font-size:14px;text-align:center}
+
+/* Spinner */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{
+  width:16px;height:16px;border:2px solid var(--border);
+  border-top-color:var(--blue);border-radius:50%;
+  animation:spin .7s linear infinite;flex-shrink:0;
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <h1>⚡ Leon Agent</h1>
+    <div id="status-wrap">
+      <div id="status-dot"></div>
+      <span id="status-label">未连接</span>
+    </div>
+  </div>
+
+  <div id="pages">
+    <!-- Chat -->
+    <div class="page active" id="page-chat">
+      <div id="chat-messages"></div>
+      <div id="chat-input-wrap">
+        <textarea id="chat-input" placeholder="输入消息…" rows="1"></textarea>
+        <button id="send-btn" aria-label="发送">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tasks -->
+    <div class="page" id="page-tasks">
+      <div id="tasks-list"></div>
+    </div>
+
+    <!-- Gallery -->
+    <div class="page" id="page-gallery">
+      <div id="gallery-grid"></div>
+    </div>
+
+    <!-- Debug -->
+    <div class="page" id="page-debug">
+      <div class="debug-section">
+        <h3>连接信息</h3>
+        <pre id="debug-info">加载中…</pre>
+      </div>
+      <div class="debug-section">
+        <h3>SSE Events</h3>
+        <div id="debug-events"></div>
+      </div>
+    </div>
+  </div>
+
+  <nav id="nav">
+    <button class="nav-item active" data-page="chat">
+      <span class="nav-icon">💬</span>聊天
+    </button>
+    <button class="nav-item" data-page="tasks">
+      <span class="nav-icon">📋</span>任务
+    </button>
+    <button class="nav-item" data-page="gallery">
+      <span class="nav-icon">🖼️</span>图库
+    </button>
+    <button class="nav-item" data-page="debug">
+      <span class="nav-icon">🔧</span>调试
+    </button>
+  </nav>
+</div>
+
+<!-- Settings modal -->
+<div id="settings-modal">
+  <div id="settings-sheet">
+    <h2>⚙️ 设置</h2>
+    <div class="settings-row">
+      <label>Gateway URL</label>
+      <input id="cfg-base-url" type="url" placeholder="http://192.168.8.x:8233">
+    </div>
+    <div class="settings-row">
+      <label>API Token（可留空）</label>
+      <input id="cfg-token" type="password" placeholder="未设置则清空">
+    </div>
+    <button id="save-settings-btn">保存并重连</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ---- Config ----------------------------------------------------------------
+const CFG_KEY = 'leon_cfg';
+function loadCfg() {
+  try { return JSON.parse(localStorage.getItem(CFG_KEY) || '{}'); } catch { return {}; }
+}
+function saveCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
+let cfg = loadCfg();
+if (!cfg.baseUrl) { cfg.baseUrl = location.origin; saveCfg(cfg); }
+
+// ---- State -----------------------------------------------------------------
+let sessionId = localStorage.getItem('leon_session') || '';
+let sse = null;
+let sseReconnectTimer = null;
+let sending = false;
+const tasks = {};    // job_id -> {status, planId}
+const images = {};   // job_id -> {url, planId}
+
+// ---- DOM refs --------------------------------------------------------------
+const $msgs       = document.getElementById('chat-messages');
+const $input      = document.getElementById('chat-input');
+const $sendBtn    = document.getElementById('send-btn');
+const $statusDot  = document.getElementById('status-dot');
+const $statusLbl  = document.getElementById('status-label');
+const $debugInfo  = document.getElementById('debug-info');
+const $debugEvts  = document.getElementById('debug-events');
+const $tasksList  = document.getElementById('tasks-list');
+const $galleryGrid= document.getElementById('gallery-grid');
+
+// ---- Navigation ------------------------------------------------------------
+const navBtns = document.querySelectorAll('.nav-item');
+const pages   = document.querySelectorAll('.page');
+navBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.page;
+    navBtns.forEach(b => b.classList.toggle('active', b.dataset.page === target));
+    pages.forEach(p => p.classList.toggle('active', p.id === 'page-' + target));
+    if (target === 'tasks') renderTasks();
+    if (target === 'gallery') renderGallery();
+    if (target === 'debug') updateDebugInfo();
+  });
+});
+
+// ---- Settings modal --------------------------------------------------------
+document.getElementById('header').addEventListener('click', () => openSettings());
+function openSettings() {
+  document.getElementById('cfg-base-url').value = cfg.baseUrl || '';
+  document.getElementById('cfg-token').value = cfg.token || '';
+  document.getElementById('settings-modal').classList.add('open');
+}
+document.getElementById('settings-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('settings-modal'))
+    document.getElementById('settings-modal').classList.remove('open');
+});
+document.getElementById('save-settings-btn').addEventListener('click', () => {
+  cfg.baseUrl = document.getElementById('cfg-base-url').value.trim().replace(/\/$/, '');
+  cfg.token   = document.getElementById('cfg-token').value.trim();
+  saveCfg(cfg);
+  document.getElementById('settings-modal').classList.remove('open');
+  init();
+});
+
+// ---- Status ----------------------------------------------------------------
+function setStatus(state, label) {
+  $statusDot.className = state;
+  $statusLbl.textContent = label;
+}
+
+// ---- API helpers -----------------------------------------------------------
+async function api(method, path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (cfg.token) headers['Authorization'] = 'Bearer ' + cfg.token;
+  const r = await fetch(cfg.baseUrl + path, {
+    method, headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(r.status + ' ' + await r.text());
+  return r.json();
+}
+
+// ---- SSE -------------------------------------------------------------------
+function connectSSE() {
+  if (!sessionId) return;
+  if (sse) { sse.close(); sse = null; }
+  clearTimeout(sseReconnectTimer);
+  setStatus('connecting', '连接中…');
+
+  const url = cfg.baseUrl + '/api/agent/sessions/' + sessionId + '/events'
+    + (cfg.token ? '?token=' + encodeURIComponent(cfg.token) : '');
+  sse = new EventSource(url);
+
+  sse.onopen = () => setStatus('online', '已连接');
+  sse.onerror = () => {
+    sse.close(); sse = null;
+    setStatus('error', '断线');
+    sseReconnectTimer = setTimeout(connectSSE, 3000);
+  };
+  sse.onmessage = e => {
+    try { handleEvent(JSON.parse(e.data)); } catch {}
+  };
+}
+
+window.addEventListener('online', () => {
+  clearTimeout(sseReconnectTimer);
+  sseReconnectTimer = setTimeout(connectSSE, 500);
+});
+
+// ---- Event handler ---------------------------------------------------------
+let currentToolCard = null;  // DOM element
+let currentBubble = null;    // agent streaming bubble
+
+function handleEvent(ev) {
+  logDebugEvent(ev);
+  switch (ev.event) {
+    case 'session.connected':
+      setStatus('online', '已连接');
+      break;
+
+    case 'user.message':
+      // already shown optimistically
+      break;
+
+    case 'assistant.started':
+      currentBubble = addBubble('agent', '', true);
+      currentToolCard = null;
+      break;
+
+    case 'assistant.delta':
+      if (currentBubble) {
+        const span = currentBubble.querySelector('.bubble');
+        span.textContent += ev.data.delta || '';
+        scrollBottom();
+      }
+      break;
+
+    case 'assistant.completed':
+      if (currentBubble) {
+        const span = currentBubble.querySelector('.bubble');
+        span.textContent = ev.data.content || span.textContent;
+        span.classList.remove('streaming');
+        scrollBottom();
+      }
+      currentBubble = null;
+      break;
+
+    case 'tool.started':
+      currentToolCard = addToolCard(ev.data.tool_name, 'running');
+      scrollBottom();
+      break;
+
+    case 'tool.finished': {
+      const ok = ev.data.ok !== false;
+      if (currentToolCard) updateToolCard(currentToolCard, ok ? 'done' : 'failed');
+      break;
+    }
+
+    case 'image.task.created':
+      tasks[ev.data.job_id] = { status: ev.data.status || 'queued', planId: ev.data.generation_plan_id };
+      if (currentToolCard) addTaskMetaToCard(currentToolCard, ev.data);
+      break;
+
+    case 'image.task.updated':
+      if (tasks[ev.data.job_id]) tasks[ev.data.job_id].status = ev.data.status;
+      if (currentToolCard) updateTaskStatus(currentToolCard, ev.data.job_id, ev.data.status);
+      break;
+
+    case 'image.completed':
+      tasks[ev.data.job_id] = { ...tasks[ev.data.job_id], status: 'completed' };
+      images[ev.data.job_id] = { url: ev.data.image_url, planId: ev.data.generation_plan_id };
+      addImageCard(ev.data.image_url, ev.data.job_id);
+      break;
+
+    case 'agent.error':
+      if (currentBubble) {
+        const span = currentBubble.querySelector('.bubble');
+        span.textContent = '❌ ' + ev.data.error;
+        span.classList.remove('streaming');
+      } else {
+        addBubble('agent', '❌ ' + ev.data.error, false);
+      }
+      currentBubble = null;
+      break;
+  }
+}
+
+// ---- Chat DOM helpers ------------------------------------------------------
+function addBubble(role, text, streaming) {
+  const wrap = document.createElement('div');
+  wrap.className = 'bubble-wrap ' + role;
+  const bbl = document.createElement('div');
+  bbl.className = 'bubble ' + role + (streaming ? ' streaming' : '');
+  bbl.textContent = text;
+  wrap.appendChild(bbl);
+  $msgs.appendChild(wrap);
+  scrollBottom();
+  return wrap;
+}
+
+function addToolCard(toolName, state) {
+  const card = document.createElement('div');
+  card.className = 'tool-card';
+  card.innerHTML = `
+    <div class="tool-header">
+      <div class="tool-icon ${state}">${state === 'running' ? '<div class="spinner"></div>' : state === 'done' ? '✓' : '✗'}</div>
+      <span>${escHtml(toolName)}</span>
+    </div>
+    <div class="tool-meta"></div>
+  `;
+  $msgs.appendChild(card);
+  return card;
+}
+
+function updateToolCard(card, state) {
+  const icon = card.querySelector('.tool-icon');
+  icon.className = 'tool-icon ' + state;
+  icon.innerHTML = state === 'running' ? '<div class="spinner"></div>' : state === 'done' ? '✓' : '✗';
+}
+
+function addTaskMetaToCard(card, data) {
+  const meta = card.querySelector('.tool-meta');
+  const row = document.createElement('span');
+  row.id = 'task-row-' + data.job_id;
+  row.innerHTML = `
+    job: <code>${escHtml(String(data.job_id || ''))}</code>
+    &nbsp;<span class="status-badge ${data.status || 'queued'}" id="badge-${data.job_id}">${data.status || 'queued'}</span>
+  `;
+  meta.appendChild(row);
+}
+
+function updateTaskStatus(card, jobId, status) {
+  const badge = card.querySelector('#badge-' + jobId);
+  if (badge) { badge.className = 'status-badge ' + status; badge.textContent = status; }
+}
+
+function addImageCard(url, jobId) {
+  const card = document.createElement('div');
+  card.className = 'image-card';
+  card.innerHTML = `
+    <img src="${escHtml(url)}" alt="生成图片" loading="lazy" onclick="window.open('${escHtml(url)}','_blank')">
+    <div class="image-meta"><a href="${escHtml(url)}" target="_blank">查看原图 →</a></div>
+  `;
+  $msgs.appendChild(card);
+  scrollBottom();
+}
+
+function scrollBottom() {
+  requestAnimationFrame(() => { $msgs.scrollTop = $msgs.scrollHeight; });
+}
+
+// ---- Tasks page ------------------------------------------------------------
+function renderTasks() {
+  $tasksList.innerHTML = '';
+  const entries = Object.entries(tasks);
+  if (!entries.length) {
+    $tasksList.innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div><p>暂无生图任务</p></div>';
+    return;
+  }
+  entries.reverse().forEach(([jobId, t]) => {
+    const el = document.createElement('div');
+    el.className = 'task-item';
+    el.innerHTML = `
+      <div class="task-top">
+        <span class="task-id">${escHtml(jobId)}</span>
+        <span class="status-badge ${t.status}">${t.status}</span>
+      </div>
+      ${t.planId ? `<div class="task-plan">plan: ${escHtml(t.planId)}</div>` : ''}
+    `;
+    $tasksList.appendChild(el);
+  });
+}
+
+// ---- Gallery page ----------------------------------------------------------
+function renderGallery() {
+  $galleryGrid.innerHTML = '';
+  const entries = Object.entries(images);
+  if (!entries.length) {
+    $galleryGrid.innerHTML = '<div class="empty-state"><div class="empty-icon">🖼️</div><p>暂无已完成图片</p></div>';
+    return;
+  }
+  entries.reverse().forEach(([jobId, img]) => {
+    const el = document.createElement('div');
+    el.className = 'gallery-img-wrap';
+    el.innerHTML = `
+      <img src="${escHtml(img.url)}" alt="图片" loading="lazy"
+        onclick="window.open('${escHtml(img.url)}','_blank')">
+      <div class="gallery-meta">${escHtml(jobId.slice(0, 12))}…</div>
+    `;
+    $galleryGrid.appendChild(el);
+  });
+}
+
+// ---- Debug page ------------------------------------------------------------
+function updateDebugInfo() {
+  $debugInfo.textContent = JSON.stringify({
+    session_id: sessionId,
+    gateway: cfg.baseUrl,
+    sse_connected: !!sse && sse.readyState === 1,
+    tasks: Object.keys(tasks).length,
+    images: Object.keys(images).length,
+  }, null, 2);
+}
+
+function logDebugEvent(ev) {
+  const el = document.createElement('div');
+  el.className = 'debug-event';
+  el.innerHTML = `<span class="ev-type">${escHtml(ev.event)}</span> ${escHtml(JSON.stringify(ev.data || {}))}`.slice(0, 200);
+  $debugEvts.prepend(el);
+  if ($debugEvts.children.length > 100) $debugEvts.lastChild.remove();
+}
+
+// ---- Send message ----------------------------------------------------------
+async function sendMessage() {
+  const text = $input.value.trim();
+  if (!text || sending) return;
+  sending = true;
+  $sendBtn.disabled = true;
+  $input.value = '';
+  $input.style.height = '';
+  addBubble('user', text, false);
+
+  try {
+    await api('POST', '/api/agent/sessions/' + sessionId + '/messages', { content: text });
+  } catch (err) {
+    addBubble('agent', '❌ 请求失败: ' + err.message, false);
+  } finally {
+    sending = false;
+    $sendBtn.disabled = false;
+    $input.focus();
+  }
+}
+
+$sendBtn.addEventListener('click', sendMessage);
+$input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+$input.addEventListener('input', () => {
+  $input.style.height = 'auto';
+  $input.style.height = Math.min($input.scrollHeight, 120) + 'px';
+});
+
+// ---- Init ------------------------------------------------------------------
+async function ensureSession() {
+  if (sessionId) {
+    try {
+      await api('GET', '/api/agent/sessions/' + sessionId);
+      return;
+    } catch {}
+  }
+  const data = await api('POST', '/api/agent/sessions');
+  sessionId = data.session_id;
+  localStorage.setItem('leon_session', sessionId);
+}
+
+async function init() {
+  setStatus('connecting', '初始化…');
+  if (!cfg.baseUrl) { openSettings(); return; }
+  try {
+    await ensureSession();
+    connectSSE();
+    updateDebugInfo();
+  } catch (err) {
+    setStatus('error', '连接失败');
+    console.error(err);
+    // Show settings if config looks wrong
+    setTimeout(openSettings, 800);
+  }
+}
+
+// ---- PWA service worker ----------------------------------------------------
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+// ---- Go! -------------------------------------------------------------------
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+init();
+</script>
+</body>
+</html>
