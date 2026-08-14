@@ -12,6 +12,7 @@
 - SQLite 持久化会话、消息、tool call、`generationPlanId` 和 `jobId`
 - 复用 `leon-image` 的 `executor-core.js + executor-assets.js`
 - 调用现有 `/ios/*` HTTP 接口，不复制 Prompt、Workflow 或 LoRA 配置
+- 任务与图库返回的图片地址统一补全成绝对 URL，可直接打开
 
 ## 运行边界
 
@@ -62,9 +63,18 @@ uv tool install --editable .\projects\02-leon-agent `
 | 环境变量 | 默认值 | 作用 |
 |---|---|---|
 | `LEON_BACKEND_URL` | `http://192.168.8.100:8188` | Leon / ComfyUI 后端 |
+| `LEON_PUBLIC_IMAGE_BASE_URL` | 空（回退到 `LEON_BACKEND_URL`） | 生成图片链接时使用的对外地址，例如 `https://comfyui.928886540.xyz` |
 | `LEON_PLUGIN_DIR` | 自动发现同级 `ComfyUI-aki` | 原插件目录 |
 | `LEON_DEFAULT_IMAGE_MODES` | `k2_tifa` | 未指定模式时的默认值，逗号分隔 |
 | `LEON_SESSION_DB` | `data/leon-agent.db` | 本地会话数据库 |
+
+后端返回的图片可能是 `/view?filename=...` 这类相对路径。工具层会把它拼成
+`LEON_PUBLIC_IMAGE_BASE_URL`（未配置时用 `LEON_BACKEND_URL`）下的绝对地址，已经是
+`http(s)://` 的地址保持原样。也可以临时用 CLI 覆盖：
+
+```powershell
+uv run leon --public-image-base-url https://comfyui.928886540.xyz
+```
 
 模型配置继续走仓库现有 CC Switch / `LLM_SOURCE`，与生图后端配置分离。
 
