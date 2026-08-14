@@ -10,7 +10,6 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "rich>=13.0",
-    "qrcode[terminal]>=7.4",
     "workbench-core",
 ]
 
