@@ -36,8 +36,14 @@ class ChatTurn:
 
 
 class LLMClient:
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        model_override: str | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
+        self._model_override = (model_override or "").strip() or None
         self._client = OpenAI(
             api_key=self.settings.require_api_key(),
             base_url=self.settings.active_base_url,
@@ -47,7 +53,7 @@ class LLMClient:
 
     @property
     def model(self) -> str:
-        return self.settings.active_model
+        return self._model_override or self.settings.active_model
 
     @property
     def profile(self) -> str:

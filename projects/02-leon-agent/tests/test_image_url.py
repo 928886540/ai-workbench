@@ -18,6 +18,14 @@ def test_leon_settings_env_file_is_bound_to_repository_root() -> None:
     assert configured_env_file.is_absolute()
 
 
+def test_default_image_mode_is_tifa_plus(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LEON_DEFAULT_IMAGE_MODES", raising=False)
+
+    settings = LeonSettings(_env_file=None)
+
+    assert settings.default_mode_ids == ["k2_tifa_plus"]
+
+
 class FakeBridge:
     def run(self, action: str, **payload):  # noqa: ANN003, ARG002
         raise AssertionError(f"bridge should not be used: {action}")

@@ -22,3 +22,30 @@ def test_env_source_settings() -> None:
     assert settings.active_base_url == "http://localhost:9/v1"
     assert settings.active_model == "test-model"
     assert settings.require_api_key() == "sk-test"
+
+
+def test_toml_source_reads_active_codex_provider(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '''
+model_provider = "codex"
+model = "active-model"
+
+[model_providers.codex]
+model = "provider-fallback-model"
+base_url = "https://gateway.example/v1/"
+experimental_bearer_token = "sk-test-token"
+'''.strip(),
+        encoding="utf-8",
+    )
+
+    settings = Settings(
+        _env_file=None,
+        LLM_SOURCE="toml",
+        CODEX_CONFIG_PATH=config_path,
+    )
+
+    assert settings.profile == "toml:codex"
+    assert settings.active_base_url == "https://gateway.example/v1"
+    assert settings.active_model == "active-model"
+    assert settings.require_api_key() == "sk-test-token"

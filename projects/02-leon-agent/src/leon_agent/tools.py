@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
@@ -25,12 +26,7 @@ def _wait_for_image_results(
     timeout_seconds: float = 240.0,
     poll_interval_seconds: float = 2.0,
 ) -> dict[str, Any]:
-    """Poll existing Leon task/gallery sync APIs until submitted jobs finish.
-
-    This keeps Prompt/Workflow/LoRA ownership in the existing Leon image system. The
-    Agent only waits on durable job ids so a single generate_images tool call can return
-    the finished image URLs instead of requiring a second user turn.
-    """
+    """Wait for submitted jobs only when the caller needs a synchronous result."""
     job_ids = {
         str(item.get("job_id"))
         for item in submission.get("jobs", [])
@@ -60,7 +56,6 @@ def _wait_for_image_results(
             str(task_by_id[job_id].get("status") or "").lower() in TERMINAL_IMAGE_STATUSES
             for job_id in job_ids
         )
-
         if all_terminal:
             gallery_result = client.get_recent_images(
                 chat_id=chat_id,
@@ -90,7 +85,6 @@ def _wait_for_image_results(
                 "tasks": latest_tasks,
                 "images": [],
             }
-
         time.sleep(max(0.1, poll_interval_seconds))
 
 
@@ -99,6 +93,8 @@ def create_leon_tools(
     *,
     session_id: str,
     default_mode_ids: list[str],
+    wait_for_image_completion: bool = True,
+    on_generation_submitted: Callable[[dict[str, Any]], None] | None = None,
 ) -> ToolRegistry:
     chat_id = f"leon-agent:{session_id}"
 
@@ -108,7 +104,7 @@ def create_leon_tools(
         batch_count: int = 1,
         character_context: str = "",
         random_workflow: bool = False,
-    ) -> dict:
+    ) -> dict[str, Any]:
         modes = workflow_ids or default_mode_ids
         submission = client.generate_images(
             source_text=source_text,
@@ -119,6 +115,10 @@ def create_leon_tools(
             character_context=character_context,
             random_workflow=random_workflow,
         )
+        if on_generation_submitted is not None:
+            on_generation_submitted(submission)
+        if not wait_for_image_completion:
+            return submission
         return _wait_for_image_results(
             client,
             chat_id=chat_id,
@@ -145,11 +145,11 @@ def create_leon_tools(
             AgentTool(
                 name="generate_images",
                 description=(
-                    "Generate images through the existing Leon/ComfyUI pipeline. Call only when "
-                    "the user explicitly asks to create or generate images. The tool waits for "
-                    "the submitted jobs to finish and returns completed image records when they "
-                    "are available. source_text must preserve the user's image request rather than "
-                    "rewriting it into a new prompt. batch_count is per selected mode."
+                    "Route an explicit user image-generation request to the existing Leon/ComfyUI "
+                    "pipeline. Put the user's current request in source_text verbatim: do not "
+                    "translate, rewrite, expand, beautify, or add prompt details. Only pass count, "
+                    "exact mode ids, or random mode when the user explicitly supplied them. "
+                    "batch_count is per selected mode."
                 ),
                 parameters={
                     "type": "object",
@@ -157,14 +157,16 @@ def create_leon_tools(
                         "source_text": {
                             "type": "string",
                             "description": (
-                                "The user's original image request to pass through to the existing "
-                                "Leon prompt pipeline with minimal rewriting."
+                                "The user's current image request verbatim, without "
+                                "prompt rewriting or added visual details."
                             ),
                         },
                         "workflow_ids": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Optional mode ids from list_image_modes.",
+                            "description": (
+                                "Optional exact Leon mode ids explicitly requested by the user."
+                            ),
                         },
                         "batch_count": {
                             "type": "integer",

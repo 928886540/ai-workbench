@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -37,9 +37,10 @@ class LeonSettings(BaseSettings):
         default=REPO_ROOT / "data" / "leon-agent.db",
         alias="LEON_SESSION_DB",
     )
-    default_modes: str = Field(default="k2_tifa", alias="LEON_DEFAULT_IMAGE_MODES")
+    default_modes: str = Field(default="k2_tifa_plus", alias="LEON_DEFAULT_IMAGE_MODES")
     http_timeout_seconds: float = Field(default=30.0, alias="LEON_HTTP_TIMEOUT_SECONDS")
     bridge_timeout_seconds: float = Field(default=20.0, alias="LEON_BRIDGE_TIMEOUT_SECONDS")
+    api_token: SecretStr | None = Field(default=None, alias="LEON_API_TOKEN")
 
     @field_validator("backend_url", "public_image_base_url")
     @classmethod

@@ -15,12 +15,18 @@
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
 - `02-leon-agent`：独立 `leon` CLI、SQLite、5 个生图工具已完成第一版
+- `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
+- CLI 与 Web 已接入 CCS 模型切换；Web 会话会继承已有 session 的模型选择
+- 公网入口已部署到 `https://leon.928886540.xyz`，由 Cloudflare Tunnel 转发到 `127.0.0.1:8233`
+- Windows 计划任务 `Leon Agent` 与 `CF Tunnel` 已运行，并配置登录自启/异常重试
 - Leon 环境只读自检：19 模式、38 节点类型、39 LoRA，通过
 - 架构决策：`notes/decisions/0002-leon-agent-boundary.md`
 - 新需求计划：`notes/plans/leon-agent-expansion.md`
-- 下一步优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
+- 当前验证：`pytest` 50 passed，`ruff check .` 通过，本地与公网 `/api/health` 均为 200
+- 下一步最小动作：在 Cloudflare Dashboard 为 `/api/agent/*/events` 添加 Cache Bypass Rule，然后手机端验收 SSE 与生图闭环
+- 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
-- 流式输出和完成通知跟进；完整 TUI 后置
+- 完整 TUI 后置
 
 ---
 

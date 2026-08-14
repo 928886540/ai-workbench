@@ -32,3 +32,21 @@ def test_session_store_persists_messages_and_job_ids(tmp_path: Path) -> None:
         {"role": "assistant", "content": "已提交"},
     ]
     assert store.list_sessions()[0]["message_count"] == 2
+
+
+def test_session_store_persists_model_selection(tmp_path: Path) -> None:
+    db_path = tmp_path / "leon.db"
+    store = SessionStore(db_path)
+    session_id = store.create_session()
+
+    store.set_model_selection(
+        session_id,
+        provider="薄荷 level3",
+        model="gpt-5.6-sol",
+    )
+
+    reopened = SessionStore(db_path)
+    assert reopened.get_model_selection(session_id) == ("薄荷 level3", "gpt-5.6-sol")
+
+    reopened.set_model_selection(session_id, provider=None, model=None)
+    assert reopened.get_model_selection(session_id) is None

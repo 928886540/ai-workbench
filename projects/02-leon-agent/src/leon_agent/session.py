@@ -29,7 +29,9 @@ class SessionStore:
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
                     created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
+                    updated_at INTEGER NOT NULL,
+                    llm_provider TEXT,
+                    llm_model TEXT
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,6 +64,13 @@ class SessionStore:
                 );
                 """
             )
+            session_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(sessions)")
+            }
+            if "llm_provider" not in session_columns:
+                connection.execute("ALTER TABLE sessions ADD COLUMN llm_provider TEXT")
+            if "llm_model" not in session_columns:
+                connection.execute("ALTER TABLE sessions ADD COLUMN llm_model TEXT")
 
     def create_session(self) -> str:
         session_id = uuid4().hex
@@ -80,6 +89,42 @@ class SessionStore:
                 (session_id,),
             ).fetchone()
         return row is not None
+
+    def get_model_selection(self, session_id: str) -> tuple[str, str] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT llm_provider, llm_model FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"Session not found: {session_id}")
+        provider = str(row["llm_provider"] or "").strip()
+        model = str(row["llm_model"] or "").strip()
+        return (provider, model) if provider and model else None
+
+    def set_model_selection(
+        self,
+        session_id: str,
+        *,
+        provider: str | None,
+        model: str | None,
+    ) -> None:
+        normalized_provider = (provider or "").strip() or None
+        normalized_model = (model or "").strip() or None
+        if (normalized_provider is None) != (normalized_model is None):
+            raise ValueError("provider and model must both be set or both be cleared")
+        now = int(time.time() * 1000)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE sessions
+                SET llm_provider = ?, llm_model = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (normalized_provider, normalized_model, now, session_id),
+            )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Session not found: {session_id}")
 
     def add_message(self, session_id: str, role: str, content: str) -> None:
         now = int(time.time() * 1000)

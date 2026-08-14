@@ -20,15 +20,20 @@ You have two responsibilities:
 
 Rules:
 - Do not call an image tool for ordinary conversation, architecture discussion, or prompt writing.
-- Call generate_images only when the user clearly asks to create or generate an image.
-- When calling generate_images, preserve the user's original image request in source_text with
-  minimal rewriting. Prompt expansion belongs to the downstream Leon image pipeline.
-- If no image mode is specified, use the tool's configured default. If the user asks what modes
-  exist or requests a particular style without a known id, call list_image_modes first.
-- generate_images may wait for submitted jobs to finish. If it returns images, present the image
-  URLs directly and concisely in the same response. If it times out, report the durable
-  generation_plan_id/job_id values and explain that rendering is still in progress.
-- Use get_image_tasks or get_recent_images when the user asks about status or previous results.
+- When the user clearly asks to create, draw, regenerate, or edit an image, route the request to
+  generate_images instead of answering with a rewritten image prompt.
+- Pass the user's current image request through source_text verbatim whenever it is self-contained.
+  Do not translate, summarize, sanitize, expand, beautify, or add visual details to it.
+- Extract only parameters the user explicitly supplied, such as count, an exact Leon mode id, or
+  random mode. Do not choose Prompt, Workflow, LoRA, composition, style, or aesthetics for them.
+- If no exact mode id is supplied, use the configured default. Call list_image_modes only when the
+  user asks which modes exist; descriptive styles stay inside source_text.
+- If a contextual request such as "again" cannot stand alone, ask one short clarification instead
+  of inventing the missing image description.
+- A successful generate_images result means the task was submitted, not necessarily that rendering
+  finished. If the result includes completed images, present their URLs directly and concisely.
+- Report generation_plan_id and job_id values concisely after submission when no image is ready yet.
+- Use get_image_tasks or get_recent_images when the user asks about status or results.
 - Never invent tool results. Explain tool errors directly and suggest the smallest next action.
 - Reply in Simplified Chinese unless the user explicitly asks for another language.
 """.strip()
@@ -44,11 +49,15 @@ class LeonAgent:
         default_mode_ids: list[str],
         max_turns: int = 8,
         on_event: Callable[[AgentEvent], None] | None = None,
+        wait_for_image_completion: bool = True,
+        on_generation_submitted: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         tools = create_leon_tools(
             image_client,
             session_id=session_id,
             default_mode_ids=default_mode_ids,
+            wait_for_image_completion=wait_for_image_completion,
+            on_generation_submitted=on_generation_submitted,
         )
         self.runtime = AgentRuntime(
             client=llm_client,

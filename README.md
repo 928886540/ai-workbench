@@ -55,7 +55,7 @@ ai-workbench/
 
 ## 当前阶段
 
-**Phase 01 已跑通，当前在做可日用的 `02-leon-agent`。**
+**`02-leon-agent` 的 CLI 与手机 Web Client 均已完成；Web 端 5 个阶段已跑通。**
 
 做一个能分析本地项目的 AI Agent Assistant：
 
@@ -110,7 +110,7 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 
 - [x] `01-llm-core`：模型调用 / Prompt / Structured Output
 - [x] `02-code-agent`：Tool-using Code Analysis Agent
-- [x] `02-leon-agent`：独立 CLI / 会话 / Leon 生图工具第一版
+- [x] `02-leon-agent`：独立 CLI / 会话 / Leon 生图工具 / FastAPI + SSE 手机 Web Client
 - [ ] `03-rag-lab`：文件问答与检索增强
 - [ ] `04-mcp-lab`：自建 MCP server
 - [ ] `05-workflow`：工作流自动化

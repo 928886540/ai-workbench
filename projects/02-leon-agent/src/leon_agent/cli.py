@@ -13,12 +13,13 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 from workbench_core.agent import AgentEvent
-from workbench_core.config import get_settings, reset_settings_cache
+from workbench_core.config import Settings, get_settings, reset_settings_cache
 from workbench_core.llm import LLMClient
 
 from leon_agent.agent import LeonAgent
 from leon_agent.config import LeonSettings
 from leon_agent.leon_client import LeonImageClient
+from leon_agent.models import MODEL_IDS, resolve_model_id
 from leon_agent.session import SessionStore
 
 
@@ -74,6 +75,7 @@ class LeonConsole:
         self.config = config.model_copy(update=updates)
         self.store = SessionStore(self.config.session_db)
         self.session_id = self._resolve_session(args)
+        self.model_selection = self.store.get_model_selection(self.session_id)
         self.agent = self._create_agent()
 
     def _resolve_session(self, args: argparse.Namespace) -> str:
@@ -85,7 +87,11 @@ class LeonConsole:
 
     def _create_agent(self) -> LeonAgent:
         reset_settings_cache()
-        llm_client = LLMClient(get_settings())
+        llm_settings = self._resolve_llm_settings()
+        model_override = self.model_selection[1] if self.model_selection else None
+        llm_client = LLMClient(llm_settings, model_override=model_override)
+        self.llm_model = llm_client.model
+        self.llm_profile = llm_client.profile
         image_client = LeonImageClient(
             backend_url=self.config.backend_url,
             plugin_dir=self.config.active_plugin_dir,
@@ -110,6 +116,8 @@ class LeonConsole:
         body.append(f"{self.session_id}\n", style="bold")
         body.append("后端  ", style="dim")
         body.append(f"{self.config.backend_url}\n")
+        body.append("模型  ", style="dim")
+        body.append(f"{self.llm_model} ({self.llm_profile})\n")
         body.append("生图  ", style="dim")
         body.append(", ".join(self.config.default_mode_ids) or "未配置", style="green")
         body.append("\n\n")
@@ -123,15 +131,23 @@ class LeonConsole:
             Panel(
                 body,
                 title=title,
-                subtitle="/help 命令  ·  /new 新会话  ·  /history 历史  ·  /exit 退出",
+                subtitle="/help 命令  ·  /new 新会话  ·  /model 模型  ·  /exit 退出",
                 border_style="cyan",
                 padding=(1, 2),
             )
         )
 
+    def _resolve_llm_settings(self) -> Settings:
+        # LLM base_url/auth always follows the currently active provider in
+        # ~/.codex/config.toml (CC Switch writes it). A session model override is
+        # passed to LLMClient separately and never changes the provider config.
+        return get_settings()
+
     def _on_event(self, event: AgentEvent) -> None:
         if event.kind == "tool_started":
-            self.console.print(f"[cyan]●[/cyan] [bold]调用工具[/bold] [cyan]{event.tool_name}[/cyan]")
+            self.console.print(
+                f"[cyan]●[/cyan] [bold]调用工具[/bold] [cyan]{event.tool_name}[/cyan]"
+            )
         elif event.kind == "tool_finished":
             ok = bool(event.result and event.result.get("ok"))
             if ok:
@@ -164,8 +180,50 @@ class LeonConsole:
             )
         self.console.print(table)
 
+    def show_models(self) -> None:
+        self.console.print(
+            f"当前模型：[bold]{self.llm_model}[/bold]  provider={self.llm_profile}"
+        )
+        table = Table("#", "Model", "Current")
+        for index, model_id in enumerate(MODEL_IDS, start=1):
+            table.add_row(str(index), model_id, "*" if model_id == self.llm_model else "")
+        self.console.print(table)
+        self.console.print("使用 /model <序号或模型ID> 切换，/model default 恢复默认。")
+
+    def switch_model(self, value: str) -> None:
+        candidate = value.strip()
+        if candidate.casefold() == "default":
+            self.store.set_model_selection(
+                self.session_id,
+                provider=None,
+                model=None,
+            )
+            self.model_selection = None
+            self.agent = self._create_agent()
+            self.console.print(
+                f"[green]已恢复默认模型[/green] {self.llm_model} ({self.llm_profile})"
+            )
+            return
+
+        model_id = resolve_model_id(candidate)
+        if model_id is None:
+            self.console.print(f"[red]未知模型：{candidate}[/red]")
+            self.show_models()
+            return
+
+        settings = self._resolve_llm_settings()
+        self.store.set_model_selection(
+            self.session_id,
+            provider=settings.profile,
+            model=model_id,
+        )
+        self.model_selection = (settings.profile, model_id)
+        self.agent = self._create_agent()
+        self.console.print(f"[green]已切换模型[/green] {self.llm_model} ({self.llm_profile})")
+
     def new_session(self) -> None:
         self.session_id = self.store.create_session()
+        self.model_selection = None
         self.agent = self._create_agent()
         self.console.print(f"[green]✓[/green] 新会话 [bold]{self.session_id}[/bold]")
 
@@ -188,11 +246,19 @@ class LeonConsole:
             if message == "/history":
                 self.show_history()
                 continue
+            if message == "/model":
+                self.show_models()
+                continue
+            if message.startswith("/model "):
+                self.switch_model(message.removeprefix("/model "))
+                continue
             if message == "/help":
                 self.console.print(
                     Panel(
                         "[bold]/new[/bold] 新会话\n"
                         "[bold]/history[/bold] 会话列表\n"
+                        "[bold]/model[/bold] 查看模型\n"
+                        "[bold]/model <序号或模型ID>[/bold] 切换模型\n"
                         "[bold]/exit[/bold] 退出\n\n"
                         "[dim]你也可以直接说：检查环境、生成图片、查询任务、查看最近图片。[/dim]",
                         title="Leon 命令",

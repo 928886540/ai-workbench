@@ -7,7 +7,9 @@
 ## 当前能力
 
 - `leon` 交互式 CLI / REPL
+- `leon-server`：FastAPI Gateway + SSE + 手机 PWA Web Client
 - 普通问题直接聊天，不调用工具
+- 明确生图请求优先路由工具，用户原话作为 `source_text` 透传，不由 Agent 扩写 Prompt
 - 5 个 Leon 生图工具：模式、环境、自助生成、任务、图库
 - SQLite 持久化会话、消息、tool call、`generationPlanId` 和 `jobId`
 - 复用 `leon-image` 的 `executor-core.js + executor-assets.js`
@@ -38,6 +40,17 @@ uv sync
 uv run leon
 ```
 
+启动手机 Web Client：
+
+```powershell
+uv sync
+uv run leon-server --host 127.0.0.1 --port 8233
+```
+
+本机浏览器打开 `http://127.0.0.1:8233`。通过 Cloudflare Tunnel 暴露时，使用
+`https://leon.928886540.xyz`，并在登录页输入 `.env` 中的 `LEON_API_TOKEN`。Windows 部署与
+Tunnel 缓存规则见 [Windows + Cloudflare 部署](docs/windows-cloudflare-deploy.md)。
+
 恢复已有会话：
 
 ```powershell
@@ -51,7 +64,15 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 
 - `/new`：创建新会话
 - `/history`：查看本地会话
+- `/model`：显示当前模型与可选模型
+- `/model <序号或任意模型ID>`：切换当前 session 的模型
+- `/model default`：恢复 `~/.codex/config.toml` 的默认模型
 - `/exit`：退出
+
+启动时直接读取 CC Switch 写入的 `~/.codex/config.toml`，使用其中当前 provider 的
+`base_url`、`experimental_bearer_token` 和顶层 `model`。`/model` 接受列表序号或任意新
+model ID，只替换当前会话请求中的 model；URL 与密钥仍跟随配置文件。选择会写入当前
+SQLite session，之后执行 `leon resume <session_id>` 仍会恢复该模型。
 
 单次调用：
 
@@ -74,8 +95,9 @@ uv tool install --editable .\projects\02-leon-agent `
 | `LEON_BACKEND_URL` | `http://192.168.8.100:8188` | Leon / ComfyUI 后端 |
 | `LEON_PUBLIC_IMAGE_BASE_URL` | 空（回退到 `LEON_BACKEND_URL`） | 生成图片链接时使用的对外地址，例如 `https://comfyui.928886540.xyz` |
 | `LEON_PLUGIN_DIR` | 自动发现同级 `ComfyUI-aki` | 原插件目录 |
-| `LEON_DEFAULT_IMAGE_MODES` | `k2_tifa` | 未指定模式时的默认值，逗号分隔 |
+| `LEON_DEFAULT_IMAGE_MODES` | `k2_tifa_plus` | 未指定模式时的默认值，逗号分隔 |
 | `LEON_SESSION_DB` | `data/leon-agent.db` | 本地会话数据库 |
+| `LEON_API_TOKEN` | 空 | Web Gateway 鉴权 token；公网暴露时必须设置 |
 
 后端返回的图片可能是 `/view?filename=...` 这类相对路径。工具层会把它拼成
 `LEON_PUBLIC_IMAGE_BASE_URL`（未配置时用 `LEON_BACKEND_URL`）下的绝对地址，已经是
@@ -85,7 +107,8 @@ uv tool install --editable .\projects\02-leon-agent `
 uv run leon --public-image-base-url https://comfyui.928886540.xyz
 ```
 
-模型配置继续走仓库现有 CC Switch / `LLM_SOURCE`，与生图后端配置分离。
+模型配置默认读取 `~/.codex/config.toml`；可用 `CODEX_CONFIG_PATH` 指定其他路径，或通过
+`LLM_SOURCE=ccs/env` 使用旧 CC Switch DB / 手工环境变量。它与生图后端配置分离。
 
 ## 验证
 
@@ -93,9 +116,18 @@ uv run leon --public-image-base-url https://comfyui.928886540.xyz
 uv run pytest projects/02-leon-agent/tests -q
 uv run ruff check projects/02-leon-agent
 uv run leon --help
+uv run leon-server --help
 ```
 
 单元测试不会提交真实生图。环境自检也是只读；只有模型明确调用 `generate_images` 才会创建任务。
+
+## Mobile Web Client
+
+5 个阶段均已完成：HTTP Gateway、SSE 事件流、手机 PWA 聊天、任务/图库视图，以及运行时间线。
+Web Gateway 提交生图任务后立即通过 SSE 推送 job id，并在后台跟踪状态和完成图片；CLI 仍保留
+同步等待图片结果的体验。
+
+架构与接口边界见 [Mobile Web 架构](docs/mobile-web-architecture.md)。
 
 ## 后续路线
 
