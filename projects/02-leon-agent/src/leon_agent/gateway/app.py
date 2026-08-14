@@ -9,6 +9,7 @@ Phase 1 scope:
   GET    /api/agent/sessions/{id}/events              SSE event stream
   GET    /api/health                                  liveness
   GET    /api/health/detail                           dependency status
+  GET    /                                            mobile web client (static)
 """
 
 from __future__ import annotations
@@ -17,12 +18,14 @@ import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from workbench_core.config import get_settings, reset_settings_cache
 from workbench_core.llm import LLMClient
@@ -34,12 +37,15 @@ from leon_agent.leon_client import LeonImageClient
 from leon_agent.session import SessionStore
 
 # ---------------------------------------------------------------------------
-# Process-global singletons (initialised in lifespan)
+# Process-global singletons
 # ---------------------------------------------------------------------------
 
 _config: LeonSettings | None = None
 _store: SessionStore | None = None
 _bus_registry: EventBusRegistry = EventBusRegistry()
+
+# Web static files — bundled inside the package at leon_agent/web/
+_WEB_DIR: Path = Path(__file__).parent.parent / "web"
 
 
 @asynccontextmanager
@@ -132,6 +138,7 @@ class MessageResponse(BaseModel):
 
 @app.get("/api/health", tags=["health"])
 async def health():
+    """Public liveness check — no auth required (used by login screen to verify token)."""
     return {"ok": True, "service": "leon-agent-gateway"}
 
 
@@ -145,7 +152,7 @@ async def health_detail(config: LeonSettings = Depends(get_config)):
     except Exception:
         results["comfyui"] = "offline"
     results["image_tool"] = "ready" if config.active_plugin_dir else "not_configured"
-    results["llm"] = "unknown"  # full check deferred
+    results["llm"] = "unknown"
     return {"ok": True, "services": results}
 
 
@@ -178,10 +185,7 @@ async def list_sessions(store: SessionStore = Depends(get_store)):
 async def get_session(session_id: str, store: SessionStore = Depends(get_store)):
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    return {
-        "session_id": session_id,
-        "messages": store.load_messages(session_id, limit=100),
-    }
+    return {"session_id": session_id, "messages": store.load_messages(session_id, limit=100)}
 
 
 @app.get(
@@ -213,19 +217,12 @@ async def send_message(
     store: SessionStore = Depends(get_store),
     config: LeonSettings = Depends(get_config),
 ):
-    """Run one Agent turn and stream events over SSE.
-
-    The Agent loop is synchronous; we run it in a thread via asyncio.to_thread.
-    on_event callbacks push LeonEvents into the per-session EventBus.
-    Any SSE consumer watching /events receives them in real time.
-    """
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
 
     loop = asyncio.get_event_loop()
     bus = _bus_registry.get_or_create(session_id, loop)
 
-    # Announce user message
     bus.publish(
         LeonEvent(event="user.message", session_id=session_id, data={"content": body.content})
     )
@@ -233,7 +230,6 @@ async def send_message(
     history = store.load_messages(session_id)
     store.add_message(session_id, "user", body.content)
 
-    # Build on_event bridge: thread → async queue
     def on_event(event) -> None:  # noqa: ANN001
         kind = event.kind
         if kind == "tool_started":
@@ -254,7 +250,6 @@ async def send_message(
                     data={"tool_name": event.tool_name, "ok": ok},
                 )
             )
-            # Image task events
             plan_id = result.get("generation_plan_id")
             for job in result.get("jobs", []):
                 if isinstance(job, dict) and job.get("job_id"):
@@ -322,11 +317,7 @@ async def send_message(
     except Exception as exc:
         err_msg = f"{type(exc).__name__}: {exc}"
         bus.publish(
-            LeonEvent(
-                event="agent.error",
-                session_id=session_id,
-                data={"error": err_msg},
-            )
+            LeonEvent(event="agent.error", session_id=session_id, data={"error": err_msg})
         )
         bus.publish_done()
         raise HTTPException(status_code=500, detail=err_msg) from exc
@@ -342,13 +333,11 @@ async def send_message(
     tags=["events"],
     dependencies=[Depends(verify_token)],
 )
-async def session_events(session_id: str, request: Request, store: SessionStore = Depends(get_store)):
-    """Server-Sent Events stream for a session.
-
-    Connect before or after sending a message — events are queued.
-    Sends a heartbeat comment every 15 s to keep Safari / proxies alive.
-    Reconnect using Last-Event-ID (clients must re-subscribe manually for now).
-    """
+async def session_events(
+    session_id: str,
+    request: Request,
+    store: SessionStore = Depends(get_store),
+):
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -357,9 +346,7 @@ async def session_events(session_id: str, request: Request, store: SessionStore 
     queue = bus.subscribe()
 
     async def event_generator():
-        # Immediate connection acknowledgement
-        connected = LeonEvent(event="session.connected", session_id=session_id, data={})
-        yield connected.to_sse()
+        yield LeonEvent(event="session.connected", session_id=session_id, data={}).to_sse()
         try:
             while True:
                 if await request.is_disconnected():
@@ -367,9 +354,9 @@ async def session_events(session_id: str, request: Request, store: SessionStore 
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15.0)
                 except asyncio.TimeoutError:
-                    yield ": ping\n\n"  # SSE comment — keeps connection alive
+                    yield ": ping\n\n"
                     continue
-                if event is None:  # done sentinel
+                if event is None:
                     break
                 yield event.to_sse()
         finally:
@@ -378,8 +365,13 @@ async def session_events(session_id: str, request: Request, store: SessionStore 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # disable nginx buffering
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Static web client — mount LAST so /api/* routes take priority
+# ---------------------------------------------------------------------------
+
+if _WEB_DIR.exists():
+    app.mount("/", StaticFiles(directory=_WEB_DIR, html=True), name="web")
