@@ -97,7 +97,8 @@ def test_gallery_image_urls_are_absolute() -> None:
         public_base_url=PUBLIC_URL,
     )
 
-    urls = [item["image_url"] for item in client.get_recent_images(chat_id="leon-agent:test")["items"]]
+    result = client.get_recent_images(chat_id="leon-agent:test")
+    urls = [item["image_url"] for item in result["items"]]
 
     assert urls == [
         f"{PUBLIC_URL}/view?filename=a.png",
