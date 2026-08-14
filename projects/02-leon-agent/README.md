@@ -97,6 +97,15 @@ uv run leon --help
 
 单元测试不会提交真实生图。环境自检也是只读；只有模型明确调用 `generate_images` 才会创建任务。
 
+## Mobile Web Client
+
+> 规划中
+
+为 Leon Agent 提供手机竖屏远程 Web Client（PWA），让用户在手机浏览器中与 Agent 对话、
+实时查看 Tool Call 过程和生图任务状态。
+
+详见 [docs/mobile-web-architecture.md](docs/mobile-web-architecture.md)。
+
 ## 后续路线
 
 已记录三条扩展需求：面试 MCP、Telegram Bot、Tavo 互通。详细边界与实施顺序见
