@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 
 from rich.console import Console
@@ -21,6 +22,13 @@ from leon_agent.session import SessionStore
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Chat with Leon Agent and use Leon image tools")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["resume"],
+        help="Command: resume an existing conversation",
+    )
+    parser.add_argument("resume_session", nargs="?", help="Session id used by `leon resume`")
     parser.add_argument("--once", help="Run one message and exit")
     parser.add_argument("--session", help="Resume an existing session id")
     parser.add_argument("--new", action="store_true", help="Always create a new session")
@@ -32,6 +40,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--plugin-dir", help="Override LEON_PLUGIN_DIR")
     parser.add_argument("--db", help="Override LEON_SESSION_DB")
     return parser
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "resume":
+        if not args.resume_session:
+            parser.error("leon resume requires a session id")
+        if args.session:
+            parser.error("use either `leon resume <id>` or `--session <id>`, not both")
+        if args.new:
+            parser.error("`leon resume` cannot be combined with `--new`")
+        args.session = args.resume_session
+    return args
 
 
 class LeonConsole:
@@ -142,7 +164,7 @@ class LeonConsole:
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    args = parse_args()
     try:
         app = LeonConsole(args)
     except Exception as exc:  # noqa: BLE001 - provide a readable startup failure
