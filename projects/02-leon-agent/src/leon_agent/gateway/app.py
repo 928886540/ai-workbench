@@ -34,6 +34,13 @@ from workbench_core.llm import LLMClient
 from leon_agent.agent import LeonAgent
 from leon_agent.config import LeonSettings
 from leon_agent.gateway.events import EventBusRegistry, LeonEvent
+from leon_agent.image_modes import (
+    DEFAULT_NSFW_MODE_ID,
+    format_mode_catalog,
+    mode_catalog_items,
+    mode_display_name,
+    parse_nsfw_command,
+)
 from leon_agent.leon_client import LeonImageClient
 from leon_agent.models import model_provider_scope
 from leon_agent.session import SessionStore
@@ -293,7 +300,7 @@ async def _track_image_jobs(
             gallery_items = (
                 gallery_result.get("items", []) if isinstance(gallery_result, dict) else []
             )
-            completed_now: list[str] = []
+            completed_now: list[dict[str, str]] = []
             for item in gallery_items:
                 if not isinstance(item, dict):
                     continue
@@ -314,20 +321,22 @@ async def _track_image_jobs(
                     )
                 )
                 pending.discard(job_id)
-                completed_now.append(job_id)
+                completed_now.append({"job_id": job_id, "image_url": str(image_url)})
             if completed_now:
                 count = len(completed_now)
-                content = (
-                    "图片生成好了，已直接显示在聊天中。"
-                    if count == 1
-                    else f"{count} 张图片生成好了，已直接显示在聊天中。"
+                heading = "图片生成好了。" if count == 1 else f"{count} 张图片生成好了。"
+                image_markdown = "\n\n".join(
+                    f"![生成图片 {index}]({item['image_url']})"
+                    for index, item in enumerate(completed_now, start=1)
                 )
+                content = f"{heading}\n\n{image_markdown}"
+                completed_job_ids = [item["job_id"] for item in completed_now]
                 store.add_message(session_id, "assistant", content)
                 bus.get_or_create(session_id, asyncio.get_running_loop()).publish(
                     LeonEvent(
                         event="assistant.notice",
                         session_id=session_id,
-                        data={"content": content, "job_ids": completed_now},
+                        data={"content": content, "job_ids": completed_job_ids},
                     )
                 )
         if pending:
@@ -357,6 +366,18 @@ async def health_detail(config: LeonSettings = Depends(get_config)):
     results["image_tool"] = "ready" if config.active_plugin_dir else "not_configured"
     results["llm"] = "unknown"
     return {"ok": True, "services": results}
+
+
+@app.get("/api/image-modes", tags=["images"], dependencies=[Depends(verify_token)])
+async def get_image_modes(config: LeonSettings = Depends(get_config)):
+    image_client = _create_image_client(config)
+    result = await asyncio.to_thread(image_client.list_modes)
+    modes = result.get("modes", []) if isinstance(result, dict) else []
+    return {
+        "default_mode_id": DEFAULT_NSFW_MODE_ID,
+        "default_mode_name": mode_display_name(DEFAULT_NSFW_MODE_ID),
+        "modes": mode_catalog_items(modes),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -538,7 +559,6 @@ async def send_message(
     stripped_content = body.content.strip()
     folded_content = stripped_content.casefold()
     is_nsfw_command = folded_content == "/nsfw" or folded_content.startswith("/nsfw ")
-    nsfw_source_text = stripped_content[5:].strip() if is_nsfw_command else ""
 
     def on_event(event) -> None:  # noqa: ANN001
         kind = event.kind
@@ -604,11 +624,35 @@ async def send_message(
                 )
 
         if is_nsfw_command:
-            if not nsfw_source_text:
-                raise ValueError("用法：/nsfw <生图描述>")
+            mode_result = await asyncio.to_thread(image_client.list_modes)
+            modes = mode_result.get("modes", []) if isinstance(mode_result, dict) else []
+            try:
+                command = parse_nsfw_command(stripped_content, modes)
+            except ValueError as exc:
+                answer = f"{exc}\n\n{format_mode_catalog(modes)}"
+                store.add_message(session_id, "assistant", answer)
+                bus.publish(
+                    LeonEvent(
+                        event="assistant.completed",
+                        session_id=session_id,
+                        data={"content": answer},
+                    )
+                )
+                return MessageResponse(session_id=session_id, answer=answer, ok=False)
+            if command is None:
+                answer = format_mode_catalog(modes)
+                store.add_message(session_id, "assistant", answer)
+                bus.publish(
+                    LeonEvent(
+                        event="assistant.completed",
+                        session_id=session_id,
+                        data={"content": answer},
+                    )
+                )
+                return MessageResponse(session_id=session_id, answer=answer, ok=True)
             arguments = {
-                "source_text": nsfw_source_text,
-                "workflow_ids": ["nsfw"],
+                "source_text": command.source_text,
+                "workflow_ids": [command.workflow_id],
                 "batch_count": 1,
             }
             bus.publish(
@@ -643,9 +687,9 @@ async def send_message(
                 )
             )
             answer = (
-                "已直接提交 NSFW 生图任务，ComfyUI 完成后会自动回图。"
+                f"已使用 {command.mode_name} 模式提交生图任务，完成后会自动在聊天里显示图片。"
                 if ok
-                else f"NSFW 生图提交失败：{submission.get('error') or '未知错误'}"
+                else f"直达生图提交失败：{submission.get('error') or '未知错误'}"
             )
             result = AgentResult(
                 answer=answer,

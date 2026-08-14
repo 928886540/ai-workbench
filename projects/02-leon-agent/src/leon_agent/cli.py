@@ -19,6 +19,7 @@ from workbench_core.llm import LLMClient
 
 from leon_agent.agent import LeonAgent
 from leon_agent.config import LeonSettings
+from leon_agent.image_modes import format_mode_catalog, parse_nsfw_command
 from leon_agent.leon_client import LeonImageClient
 from leon_agent.models import model_provider_scope, resolve_model_id
 from leon_agent.session import SessionStore
@@ -241,28 +242,41 @@ class LeonConsole:
         return True
 
     def _process_nsfw(self, message: str) -> bool:
-        source_text = message[5:].strip()
-        if not source_text:
-            self.console.print("[yellow]用法：/nsfw <生图描述>[/yellow]")
+        try:
+            mode_result = self.image_client.list_modes()
+            modes = mode_result.get("modes", [])
+            command = parse_nsfw_command(message, modes)
+        except Exception as exc:  # noqa: BLE001 - invalid command should not exit the REPL
+            self.console.print(f"[red]{exc}[/red]")
+            if "modes" in locals():
+                self.console.print(Markdown(format_mode_catalog(modes)))
             return False
+        if command is None:
+            self.console.print(Markdown(format_mode_catalog(modes)))
+            return True
         arguments = {
-            "source_text": source_text,
-            "workflow_ids": ["nsfw"],
+            "source_text": command.source_text,
+            "workflow_ids": [command.workflow_id],
             "batch_count": 1,
         }
         self._start_image_progress()
-        result = self.direct_tools.execute("generate_images", arguments)
+        try:
+            result = self.direct_tools.execute("generate_images", arguments)
+        except Exception as exc:  # noqa: BLE001 - image failure should not exit the REPL
+            self._stop_image_progress(ok=False)
+            self.console.print(f"[red]直达生图失败：{type(exc).__name__}: {exc}[/red]")
+            return False
         ok = bool(result.get("ok"))
         self._stop_image_progress(ok=ok)
         if not ok:
-            self.console.print(f"[red]NSFW 生图失败：{result.get('error') or '未知错误'}[/red]")
+            self.console.print(f"[red]直达生图失败：{result.get('error') or '未知错误'}[/red]")
             return False
         images = [
             item.get("image_url")
             for item in result.get("images", [])
             if isinstance(item, dict) and item.get("image_url")
         ]
-        answer = "图片生成好了。"
+        answer = f"{command.mode_name}模式的图片生成好了。"
         if images:
             answer += "\n\n" + "\n".join(f"- {url}" for url in images)
         agent_result = AgentResult(

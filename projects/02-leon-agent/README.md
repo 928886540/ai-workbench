@@ -71,6 +71,10 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 - `/model`：显示当前模型与可选模型
 - `/model <序号或任意模型ID>`：切换当前 session 的模型
 - `/model default`：恢复 `~/.codex/config.toml` 的默认模型
+- `/nsfw <描述>`：绕过 LLM，使用默认的玛莉卡模式直接生图
+- `/nsfw --model <中文名或模式ID> <描述>`：指定生图模式，例如
+  `/nsfw --model 蒂法增强 生成一张雨夜人像`
+- `/nsfw` 或 `/nsfw --models`：列出当前安装模式的中文名和真实 ID
 - `/exit`：退出
 
 启动时直接读取 CC Switch 写入的 `~/.codex/config.toml`，使用其中当前 provider 的
@@ -129,7 +133,8 @@ uv run leon-server --help
 
 5 个阶段均已完成：HTTP Gateway、SSE 事件流、手机 PWA 聊天、任务/图库视图，以及运行时间线。
 Web Gateway 提交生图任务后立即通过 SSE 推送 job id，并在后台跟踪状态和完成图片；CLI 仍保留
-同步等待图片结果的体验。Web 设置页可为当前 session 选择模型，或恢复跟随 Codex 配置中的
+同步等待图片结果的体验。图片完成后 Gateway 会主动持久化并推送一条带图片的助手消息，Web
+聊天气泡直接显示图片，不需要再次询问 LLM。Web 设置页可为当前 session 选择模型，或恢复跟随 Codex 配置中的
 默认模型；选择会与 CLI 共用同一份 SQLite 会话状态。
 
 架构与接口边界见 [Mobile Web 架构](docs/mobile-web-architecture.md)。

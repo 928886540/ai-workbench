@@ -138,14 +138,25 @@ def test_web_client_supports_markdown_images_and_touch_scrolling(client):
     html = client.get("/").text
 
     assert 'class="markdown-image-link"' in html
+    assert "function isImageHref" in html
+    assert "url.searchParams.get('filename')" in html
+    assert 'alt="生成图片"' in html
+    assert 'id="image-viewer"' in html
+    assert "openImageViewer" in html
+    assert 'id="mode-suggestions"' in html
+    assert "/api/image-modes" in html
     assert "touch-action:pan-y" in html
     assert "autoFollowMessages" in html
     assert "/image-state?limit=100" in html
     assert "localStorage.removeItem(SESSION_KEY)" in html
     assert "maximum-scale=1,user-scalable=no" in html
     assert "interactive-widget=resizes-content" in html
-    assert "window.visualViewport.height" in html
+    assert "window.visualViewport" not in html
+    assert "window.open(href" not in html
+    assert "$input.addEventListener('focus'" not in html
+    assert "height:100dvh" in html
     assert "font-size:16px" in html
+    assert "/sw.js?v=10" in html
 
 
 def test_session_model_can_be_selected_and_reset(client, monkeypatch):
@@ -298,12 +309,41 @@ def test_send_message_session_not_found(client):
     assert r.status_code == 404
 
 
-def test_nsfw_message_bypasses_llm_and_uses_fixed_workflow(client, monkeypatch):
+def test_image_modes_endpoint_returns_chinese_names_and_marika_default(client, monkeypatch):
+    class FakeImageClient:
+        def list_modes(self):
+            return {
+                "ok": True,
+                "modes": [
+                    {"id": "k2_queen_marika"},
+                    {"id": "k2_tifa_plus"},
+                ],
+            }
+
+    monkeypatch.setattr(
+        "leon_agent.gateway.app._create_image_client", lambda config: FakeImageClient()
+    )
+
+    response = client.get("/api/image-modes")
+
+    assert response.status_code == 200
+    assert response.json()["default_mode_id"] == "k2_queen_marika"
+    assert response.json()["default_mode_name"] == "玛莉卡"
+    assert response.json()["modes"][1]["name"] == "蒂法增强"
+
+
+def test_nsfw_message_bypasses_llm_and_resolves_selected_mode(client, monkeypatch):
     generate_calls = []
 
     class FakeImageClient:
         def list_modes(self):
-            return {"ok": True, "modes": []}
+            return {
+                "ok": True,
+                "modes": [
+                    {"id": "k2_queen_marika"},
+                    {"id": "k2_tifa_plus"},
+                ],
+            }
 
         def check_environment(self):
             return {"ok": True}
@@ -338,17 +378,17 @@ def test_nsfw_message_bypasses_llm_and_uses_fixed_workflow(client, monkeypatch):
 
     response = client.post(
         f"/api/agent/sessions/{session_id}/messages",
-        json={"content": "/NSFW 原样描述"},
+        json={"content": "/NSFW --model tifa-plus 原样描述"},
     )
 
     assert response.status_code == 200
     assert response.json() == {
         "session_id": session_id,
-        "answer": "已直接提交 NSFW 生图任务，ComfyUI 完成后会自动回图。",
+        "answer": "已使用 蒂法增强 模式提交生图任务，完成后会自动在聊天里显示图片。",
         "ok": True,
     }
     assert generate_calls[0]["source_text"] == "原样描述"
-    assert generate_calls[0]["workflow_ids"] == ["nsfw"]
+    assert generate_calls[0]["workflow_ids"] == ["k2_tifa_plus"]
     assert generate_calls[0]["batch_count"] == 1
 
 
@@ -400,5 +440,11 @@ def test_track_image_jobs_publishes_image_and_notice_once(tmp_path):  # noqa: AN
     assert len(notice_events) == 1
     assert notice_events[0].data["job_ids"] == ["job-1"]
     assert messages == [
-        {"role": "assistant", "content": "图片生成好了，已直接显示在聊天中。"}
+        {
+            "role": "assistant",
+            "content": (
+                "图片生成好了。\n\n"
+                "![生成图片 1](https://images.example/job-1.png)"
+            ),
+        }
     ]

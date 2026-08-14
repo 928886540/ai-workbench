@@ -52,7 +52,7 @@ def test_failed_cli_turn_is_not_persisted(tmp_path) -> None:  # noqa: ANN001
     assert cli.store.load_messages(cli.session_id) == []
 
 
-def test_nsfw_command_bypasses_llm_and_uses_fixed_workflow(tmp_path) -> None:  # noqa: ANN001
+def test_nsfw_command_bypasses_llm_and_defaults_to_marika(tmp_path) -> None:  # noqa: ANN001
     calls = []
 
     class FakeDirectTools:
@@ -68,6 +68,16 @@ def test_nsfw_command_bypasses_llm_and_uses_fixed_workflow(tmp_path) -> None:  #
     cli.session_id = cli.store.create_session()
     cli.agent = FailingAgent()
     cli.direct_tools = FakeDirectTools()
+    cli.image_client = type(
+        "FakeImageClient",
+        (),
+        {
+            "list_modes": lambda self: {
+                "ok": True,
+                "modes": [{"id": "k2_queen_marika"}, {"id": "k2_tifa_plus"}],
+            }
+        },
+    )()
     cli.console = Console(quiet=True)
     cli._progress = None
     cli._progress_task_id = None
@@ -81,7 +91,7 @@ def test_nsfw_command_bypasses_llm_and_uses_fixed_workflow(tmp_path) -> None:  #
             "generate_images",
             {
                 "source_text": "原样描述",
-                "workflow_ids": ["nsfw"],
+                "workflow_ids": ["k2_queen_marika"],
                 "batch_count": 1,
             },
         )
@@ -90,7 +100,7 @@ def test_nsfw_command_bypasses_llm_and_uses_fixed_workflow(tmp_path) -> None:  #
         {"role": "user", "content": "/NSFW 原样描述"},
         {
             "role": "assistant",
-            "content": "图片生成好了。\n\n- https://images.example/nsfw.png",
+            "content": "玛莉卡模式的图片生成好了。\n\n- https://images.example/nsfw.png",
         },
     ]
 

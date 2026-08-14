@@ -77,10 +77,17 @@ SSE currently transports lifecycle events and final answers. It does not yet pro
 streaming. The Web client progressively renders a completed answer for smoother presentation; do not
 describe that as backend token streaming.
 
-`/nsfw <source text>` is a command path in both CLI and Web. It bypasses the LLM completely and
-calls `generate_images` with `workflow_ids=["nsfw"]`. Normal LLM-routed generation and `/nsfw`
-share the same completion tracker: each finished image emits `image.completed`, followed by an
-`assistant.notice` persisted into session history.
+`/nsfw` is a direct image command in both CLI and Web; it is not the name of a fixed workflow. It
+bypasses the LLM completely. Syntax is `/nsfw [--model <name-or-id>] <source text>`. The default is
+`玛莉卡 -> k2_queen_marika`; aliases such as `tifa-plus`, `蒂法增强`, and `玛莉卡` resolve against
+the currently installed mode catalog. `/nsfw` or `/nsfw --models` lists Chinese names plus exact
+mode IDs. The Web composer fetches `GET /api/image-modes` and shows selectable mode suggestions
+while the user types `--model`.
+
+Normal LLM-routed generation and `/nsfw` share the same completion tracker. Each finished image
+emits `image.completed`; the tracker then persists and emits an `assistant.notice` whose Markdown
+contains the completed image URL. That notice must render as a new image-bearing assistant bubble,
+so the user never needs to ask the LLM whether rendering finished.
 
 Web refresh state is not reconstructed from SSE memory. The client loads
 `GET /api/agent/sessions/{session_id}/image-state`, which merges the current Leon task sync and
@@ -103,11 +110,15 @@ Merged from `feat/leon-ux-polish`:
 - Progressive answer rendering and safe local Markdown rendering
 - Collapsible tool input/output cards
 - Image generation skeleton replaced by the completed image
-- Markdown image syntax renders a clickable image inside the assistant bubble
+- Markdown image syntax and plain ComfyUI image URLs render clickable images inside the assistant
+  bubble; clicking opens the current-page full-screen viewer
 - Chat history, image tasks, and gallery are restored after a page refresh
 - The chat message area remains touch-scrollable and stops auto-following when the user scrolls up
-- Mobile focus uses `visualViewport` so the composer stays above the keyboard and the latest message
-  remains visible; browser double-tap/input-focus zoom is disabled for the installed phone UI
+- Mobile keyboard layout relies on `interactive-widget=resizes-content` and `100dvh`; do not add a
+  second `visualViewport.height` resize or force-scroll on textarea focus, because that creates a
+  blank bottom area and pushes the composer too far upward
+- Chat and gallery images open in the current-page full-screen viewer, not a new tab/download page
+- Typing `/nsfw --model` opens a selectable mode menu above the composer
 - Error card with retry-to-composer behavior
 - CLI image-generation progress indicator
 
