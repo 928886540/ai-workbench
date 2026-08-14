@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from pathlib import Path
+from threading import Event as ThreadEvent
 
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
@@ -20,6 +23,25 @@ from leon_agent.agent import LeonAgent
 from leon_agent.config import LeonSettings
 from leon_agent.leon_client import LeonImageClient
 from leon_agent.session import SessionStore
+
+
+def _try_print_qr(url: str, console: Console) -> None:
+    """Print a QR code for url if qrcode is available, else skip silently."""
+    try:
+        import io
+        import qrcode  # type: ignore[import-untyped]
+
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(url)
+        qr.make(fit=True)
+        buf = io.StringIO()
+        qr.print_ascii(out=buf, invert=True)
+        buf.seek(0)
+        console.print(f"[dim]\u626b码查看图片:[/dim]")
+        for line in buf.read().splitlines():
+            console.print(line, highlight=False, markup=False)
+    except Exception:  # noqa: BLE001
+        pass  # qrcode not installed or terminal issue — skip gracefully
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,7 +84,7 @@ class LeonConsole:
     def __init__(self, args: argparse.Namespace) -> None:
         self.console = Console()
         config = LeonSettings()
-        updates = {}
+        updates: dict[str, object] = {}
         if args.backend_url:
             updates["backend_url"] = args.backend_url.rstrip("/")
         if args.public_image_base_url:
@@ -75,6 +97,14 @@ class LeonConsole:
         self.store = SessionStore(self.config.session_db)
         self.session_id = self._resolve_session(args)
         self.agent = self._create_agent()
+
+        # 7-B / 7-C: runtime state
+        self._streaming = False  # True while assistant is streaming text
+        self._progress: Progress | None = None  # rich progress for image tasks
+        self._image_task_ids: dict[str, object] = {}  # job_id -> rich task id
+        self._image_done = ThreadEvent()  # set when all image tasks complete
+        self._pending_image_jobs: set[str] = set()
+        self._completed_image_urls: dict[str, str] = {}  # job_id -> url
 
     def _resolve_session(self, args: argparse.Namespace) -> str:
         if args.session and not args.new:
@@ -129,33 +159,139 @@ class LeonConsole:
             )
         )
 
-    def _on_event(self, event: AgentEvent) -> None:
-        if event.kind == "tool_started":
+    # ------------------------------------------------------------------
+    # 7-B / 7-C / 7-D  Event handler
+    # ------------------------------------------------------------------
+    def _on_event(self, event: AgentEvent) -> None:  # noqa: C901
+        kind = event.kind
+
+        # 7-B: streaming delta — write char-by-char to stdout
+        if kind == "assistant_delta":
+            delta = (event.result or {}).get("delta", "")
+            if delta:
+                if not self._streaming:
+                    # Print Agent label once before first chunk
+                    sys.stdout.write("\n\033[1;32mLeon\033[0m  ")
+                    self._streaming = True
+                sys.stdout.write(delta)
+                sys.stdout.flush()
+            return
+
+        # End of streaming — newline + reset
+        if kind == "assistant_completed":
+            if self._streaming:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                self._streaming = False
+            return
+
+        # Tool events
+        if kind == "tool_started":
             self.console.print(f"[cyan]●[/cyan] [bold]调用工具[/bold] [cyan]{event.tool_name}[/cyan]")
-        elif event.kind == "tool_finished":
+
+        elif kind == "tool_finished":
             ok = bool(event.result and event.result.get("ok"))
             if ok:
                 self.console.print(f"[green]✓[/green] [dim]{event.tool_name} 完成[/dim]")
             else:
                 self.console.print(f"[red]✗[/red] [dim]{event.tool_name} 失败[/dim]")
 
+        # 7-C: image progress bar
+        elif kind == "image_task_created":
+            job_id = (event.result or {}).get("job_id", "?")
+            self._pending_image_jobs.add(str(job_id))
+            if self._progress is None:
+                self._progress = Progress(
+                    SpinnerColumn(),
+                    TextColumn("[bold cyan]{task.description}[/bold cyan]"),
+                    BarColumn(bar_width=24),
+                    TextColumn("[dim]{task.fields[status]}[/dim]"),
+                    TimeElapsedColumn(),
+                    console=self.console,
+                    transient=False,
+                )
+                self._progress.start()
+            rich_task_id = self._progress.add_task(
+                f"🎨 生成图片 [{str(job_id)[:8]}]",
+                total=100,
+                status="queued",
+            )
+            self._image_task_ids[str(job_id)] = rich_task_id
+
+        elif kind == "image_task_updated":
+            job_id = str((event.result or {}).get("job_id", ""))
+            status = (event.result or {}).get("status", "running")
+            if self._progress and job_id in self._image_task_ids:
+                advance = {"queued": 0, "running": 30, "processing": 60}.get(status, 0)
+                self._progress.update(
+                    self._image_task_ids[job_id],  # type: ignore[arg-type]
+                    completed=advance,
+                    status=status,
+                )
+
+        elif kind == "image_completed":
+            job_id = str((event.result or {}).get("job_id", ""))
+            url = (event.result or {}).get("image_url", "")
+            self._completed_image_urls[job_id] = str(url)
+            if self._progress and job_id in self._image_task_ids:
+                self._progress.update(
+                    self._image_task_ids[job_id],  # type: ignore[arg-type]
+                    completed=100,
+                    status="[green]done[/green]",
+                )
+            self._pending_image_jobs.discard(job_id)
+            if not self._pending_image_jobs:
+                self._image_done.set()
+
+    def _stop_progress(self) -> None:
+        if self._progress:
+            self._progress.stop()
+            self._progress = None
+            self._image_task_ids.clear()
+
+    def _show_image_results(self) -> None:
+        """After agent run: print URLs and optional QR codes for each finished image."""
+        for job_id, url in self._completed_image_urls.items():
+            self.console.print(f"\n[bold green]✔[/bold green] 图片就绪: [link={url}]{url}[/link]")
+            # 7-D: QR code
+            _try_print_qr(url, self.console)
+        self._completed_image_urls.clear()
+        self._pending_image_jobs.clear()
+        self._image_done.clear()
+
     def process(self, message: str) -> bool:
         history = self.store.load_messages(self.session_id)
         self.store.add_message(self.session_id, "user", message)
+        self._streaming = False
         try:
             result = self.agent.run(message, history=history)
-        except Exception as exc:  # noqa: BLE001 - CLI should keep the session alive
+        except Exception as exc:  # noqa: BLE001
+            self._stop_progress()
             error = f"请求失败：{type(exc).__name__}: {exc}"
             self.store.add_message(self.session_id, "assistant", error)
             self.console.print(f"[red]{error}[/red]")
             return False
+        finally:
+            # Ensure streaming newline is flushed
+            if self._streaming:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                self._streaming = False
+
+        self._stop_progress()
         self.store.record_result(self.session_id, result)
         self.store.add_message(self.session_id, "assistant", result.answer)
-        self.console.print(Markdown(result.answer))
+
+        # If no streaming happened (no delta events), print answer now
+        if result.answer and not self._streaming:
+            self.console.print(Markdown(result.answer))
+
+        # 7-D: show image URLs + QR codes
+        self._show_image_results()
         return True
 
     def show_history(self) -> None:
-        table = Table("Session", "Messages", "Updated")
+        table = Table("会话", "消息数", "更新时间")
         for item in self.store.list_sessions():
             table.add_row(
                 item["id"],
@@ -207,7 +343,7 @@ def main() -> None:
     args = parse_args()
     try:
         app = LeonConsole(args)
-    except Exception as exc:  # noqa: BLE001 - provide a readable startup failure
+    except Exception as exc:  # noqa: BLE001
         Console().print(f"[red]Leon Agent 启动失败：{type(exc).__name__}: {exc}[/red]")
         raise SystemExit(1) from exc
     if args.once:

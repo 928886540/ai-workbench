@@ -1,13 +1,17 @@
 [project]
 name = "leon-agent"
 version = "0.1.0"
-description = "Independent conversational agent with Leon image-generation tools."
-requires-python = ">=3.10"
+description = "Leon Agent — AI 生图个人助手"
+requires-python = ">=3.11"
 dependencies = [
-  "workbench-core",
-  "fastapi>=0.111",
-  "uvicorn[standard]>=0.29",
-  "httpx>=0.27",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "rich>=13.0",
+    "qrcode[terminal]>=7.4",
+    "workbench-core",
 ]
 
 [project.scripts]
@@ -23,3 +27,9 @@ packages = ["src/leon_agent"]
 
 [tool.uv.sources]
 workbench-core = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "BLE"]
