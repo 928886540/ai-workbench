@@ -50,3 +50,17 @@ def test_session_store_persists_model_selection(tmp_path: Path) -> None:
 
     reopened.set_model_selection(session_id, provider=None, model=None)
     assert reopened.get_model_selection(session_id) is None
+
+
+def test_load_messages_ignores_failed_cli_turns(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "leon.db")
+    session_id = store.create_session()
+    store.add_message(session_id, "user", "第一次请求")
+    store.add_message(session_id, "assistant", "请求失败：InternalServerError: stale request")
+    store.add_message(session_id, "user", "成功请求")
+    store.add_message(session_id, "assistant", "正常答案")
+
+    assert store.load_messages(session_id) == [
+        {"role": "user", "content": "成功请求"},
+        {"role": "assistant", "content": "正常答案"},
+    ]

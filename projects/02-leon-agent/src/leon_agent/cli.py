@@ -157,14 +157,13 @@ class LeonConsole:
 
     def process(self, message: str) -> bool:
         history = self.store.load_messages(self.session_id)
-        self.store.add_message(self.session_id, "user", message)
         try:
             result = self.agent.run(message, history=history)
         except Exception as exc:  # noqa: BLE001 - CLI should keep the session alive
             error = f"请求失败：{type(exc).__name__}: {exc}"
-            self.store.add_message(self.session_id, "assistant", error)
             self.console.print(f"[red]{error}[/red]")
             return False
+        self.store.add_message(self.session_id, "user", message)
         self.store.record_result(self.session_id, result)
         self.store.add_message(self.session_id, "assistant", result.answer)
         self.console.print(Markdown(result.answer))
@@ -187,6 +186,8 @@ class LeonConsole:
         table = Table("#", "Model", "Current")
         for index, model_id in enumerate(MODEL_IDS, start=1):
             table.add_row(str(index), model_id, "*" if model_id == self.llm_model else "")
+        if self.llm_model not in MODEL_IDS:
+            table.add_row("自定义", self.llm_model, "*")
         self.console.print(table)
         self.console.print("使用 /model <序号或模型ID> 切换，/model default 恢复默认。")
 

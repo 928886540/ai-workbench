@@ -142,7 +142,7 @@ class SessionStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT role, content
+                SELECT id, role, content
                 FROM (
                     SELECT id, role, content
                     FROM messages
@@ -154,7 +154,31 @@ class SessionStore:
                 """,
                 (session_id, limit),
             ).fetchall()
-        return [{"role": row["role"], "content": row["content"]} for row in rows]
+
+        # Failed CLI turns used to be persisted as assistant messages. Exclude
+        # those old pairs so a transport error/request id cannot be replayed as
+        # conversation context after the user switches models.
+        messages: list[dict[str, str]] = []
+        index = 0
+        while index < len(rows):
+            row = rows[index]
+            is_error = row["role"] == "assistant" and str(row["content"]).startswith(
+                ("请求失败：", "请求失败:")
+            )
+            next_is_error = (
+                index + 1 < len(rows)
+                and rows[index + 1]["role"] == "assistant"
+                and str(rows[index + 1]["content"]).startswith(("请求失败：", "请求失败:"))
+            )
+            if is_error:
+                index += 1
+                continue
+            if row["role"] == "user" and next_is_error:
+                index += 2
+                continue
+            messages.append({"role": row["role"], "content": row["content"]})
+            index += 1
+        return messages
 
     def record_result(self, session_id: str, result: AgentResult) -> None:
         for step in result.steps:
