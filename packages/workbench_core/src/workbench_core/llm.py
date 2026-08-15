@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
+from threading import Event
 from typing import Any
 
 from openai import OpenAI
@@ -76,12 +78,15 @@ class LLMClient:
         *,
         temperature: float = 0.2,
         response_format: dict[str, Any] | None = None,
+        cancel_event: Event | None = None,
     ) -> str:
-        turn = self.chat_turn(
-            messages,
-            temperature=temperature,
-            response_format=response_format,
-        )
+        kwargs: dict[str, Any] = {
+            "temperature": temperature,
+            "response_format": response_format,
+        }
+        if cancel_event is not None:
+            kwargs["cancel_event"] = cancel_event
+        turn = self.chat_turn(messages, **kwargs)
         if turn.content is None:
             raise RuntimeError("LLM returned empty content")
         return turn.content
@@ -94,7 +99,10 @@ class LLMClient:
         temperature: float = 0.2,
         response_format: dict[str, Any] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        cancel_event: Event | None = None,
     ) -> ChatTurn:
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("LLM request cancelled")
         payload = [
             {"role": m.role, "content": m.content} if isinstance(m, ChatMessage) else m
             for m in messages
@@ -111,6 +119,8 @@ class LLMClient:
             kwargs["response_format"] = response_format
 
         response = self._client.chat.completions.create(**kwargs)
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("LLM request cancelled")
         message = response.choices[0].message
 
         tool_calls: list[ToolCall] = []
@@ -142,8 +152,11 @@ class LLMClient:
         if raw_tool_calls:
             raw_message["tool_calls"] = raw_tool_calls
 
-        return ChatTurn(
+        result = ChatTurn(
             content=message.content,
             tool_calls=tool_calls,
             raw_message=raw_message,
         )
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("LLM request cancelled")
+        return result

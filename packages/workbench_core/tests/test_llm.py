@@ -1,5 +1,8 @@
+from concurrent.futures import CancelledError
+from threading import Event
 from types import SimpleNamespace
 
+import pytest
 from workbench_core.config import Settings
 from workbench_core.llm import LLMClient
 
@@ -92,3 +95,65 @@ def test_list_models_uses_active_provider_catalog(monkeypatch) -> None:  # noqa:
     )
 
     assert LLMClient(settings).list_models() == ["A-model", "z-model"]
+
+
+def test_chat_turn_stops_before_provider_when_cancelled(monkeypatch) -> None:  # noqa: ANN001
+    calls = 0
+
+    class FakeCompletions:
+        def create(self, **kwargs):  # noqa: ANN003, ARG002
+            nonlocal calls
+            calls += 1
+            raise AssertionError("cancelled request must not reach the provider")
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr("workbench_core.llm.OpenAI", FakeOpenAI)
+    settings = Settings(
+        _env_file=None,
+        LLM_SOURCE="env",
+        LLM_BASE_URL="https://provider.example/v1",
+        LLM_API_KEY="sk-test",
+        LLM_MODEL="default-model",
+    )
+    cancel_event = Event()
+    cancel_event.set()
+
+    with pytest.raises(CancelledError):
+        LLMClient(settings).chat_turn(
+            [{"role": "user", "content": "hello"}],
+            cancel_event=cancel_event,
+        )
+
+    assert calls == 0
+
+
+def test_chat_turn_discards_response_when_cancelled_after_provider_returns(monkeypatch) -> None:  # noqa: ANN001
+    cancel_event = Event()
+
+    class FakeCompletions:
+        def create(self, **kwargs):  # noqa: ANN003, ARG002
+            cancel_event.set()
+            message = SimpleNamespace(content="late", tool_calls=[])
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr("workbench_core.llm.OpenAI", FakeOpenAI)
+    settings = Settings(
+        _env_file=None,
+        LLM_SOURCE="env",
+        LLM_BASE_URL="https://provider.example/v1",
+        LLM_API_KEY="sk-test",
+        LLM_MODEL="default-model",
+    )
+
+    with pytest.raises(CancelledError):
+        LLMClient(settings).chat_turn(
+            [{"role": "user", "content": "hello"}],
+            cancel_event=cancel_event,
+        )

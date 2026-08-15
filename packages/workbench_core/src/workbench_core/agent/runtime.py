@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import CancelledError
+from contextlib import contextmanager
+from contextvars import ContextVar
+from threading import Event
 from typing import Any, Protocol
 
 from workbench_core.agent.events import AgentEvent, AgentResult, ToolStep
-from workbench_core.llm import LLMClient
+from workbench_core.llm import ChatTurn, LLMClient
 
 
 class ToolExecutor(Protocol):
@@ -25,6 +29,31 @@ class ToolExecutor(Protocol):
 
 
 EventHandler = Callable[[AgentEvent], None]
+
+
+class AgentCancelled(CancelledError):
+    """Raised when a caller cancels an in-flight agent turn."""
+
+
+_cancel_event: ContextVar[Event | None] = ContextVar(
+    "workbench_agent_cancel_event",
+    default=None,
+)
+
+
+def current_cancel_event() -> Event | None:
+    """Return the cancellation event active in the current agent context."""
+    return _cancel_event.get()
+
+
+@contextmanager
+def cancellation_scope(cancel_event: Event | None) -> Iterator[None]:
+    """Make one per-turn cancellation event visible to nested tools."""
+    token = _cancel_event.set(cancel_event)
+    try:
+        yield
+    finally:
+        _cancel_event.reset(token)
 
 
 def parse_tool_arguments(raw: str) -> dict[str, Any]:
@@ -73,11 +102,78 @@ class AgentRuntime:
         if self.on_event is not None:
             self.on_event(event)
 
+    @staticmethod
+    def _check_cancelled(cancel_event: Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise AgentCancelled("agent turn cancelled")
+
+    def _chat_turn(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None,
+        temperature: float,
+        cancel_event: Event | None,
+    ) -> ChatTurn:
+        self._check_cancelled(cancel_event)
+        kwargs: dict[str, Any] = {
+            "tools": tools,
+            "temperature": temperature,
+        }
+        if cancel_event is not None:
+            kwargs["cancel_event"] = cancel_event
+        try:
+            response = self.client.chat_turn(messages, **kwargs)
+        except CancelledError as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                raise AgentCancelled("agent turn cancelled") from exc
+            raise
+        self._check_cancelled(cancel_event)
+        return response
+
+    def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float,
+        cancel_event: Event | None,
+    ) -> str:
+        self._check_cancelled(cancel_event)
+        kwargs: dict[str, Any] = {"temperature": temperature}
+        if cancel_event is not None:
+            kwargs["cancel_event"] = cancel_event
+        try:
+            answer = self.client.chat(messages, **kwargs)
+        except CancelledError as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                raise AgentCancelled("agent turn cancelled") from exc
+            raise
+        self._check_cancelled(cancel_event)
+        return answer
+
     def run(
         self,
         user_message: str,
         *,
         history: Sequence[dict[str, Any]] = (),
+        cancel_event: Event | None = None,
+    ) -> AgentResult:
+        resolved_cancel_event = (
+            cancel_event if cancel_event is not None else current_cancel_event()
+        )
+        with cancellation_scope(resolved_cancel_event):
+            return self._run(
+                user_message,
+                history=history,
+                cancel_event=resolved_cancel_event,
+            )
+
+    def _run(
+        self,
+        user_message: str,
+        *,
+        history: Sequence[dict[str, Any]],
+        cancel_event: Event | None,
     ) -> AgentResult:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
@@ -85,87 +181,117 @@ class AgentRuntime:
             {"role": "user", "content": user_message},
         ]
         steps: list[ToolStep] = []
+        current_turn = 1
 
-        for turn in range(1, self.max_turns + 1):
-            self._emit(AgentEvent(kind="turn_started", turn=turn))
-            response = self.client.chat_turn(
+        try:
+            self._check_cancelled(cancel_event)
+            for turn in range(1, self.max_turns + 1):
+                current_turn = turn
+                self._check_cancelled(cancel_event)
+                self._emit(AgentEvent(kind="turn_started", turn=turn))
+                response = self._chat_turn(
+                    messages,
+                    tools=self.tools.schemas,
+                    temperature=self.temperature,
+                    cancel_event=cancel_event,
+                )
+
+                if response.has_tool_calls:
+                    messages.append(response.raw_message)
+                    direct_answers: list[str] = []
+                    direct_answer_resolver = getattr(self.tools, "direct_answer", None)
+                    for call in response.tool_calls:
+                        self._check_cancelled(cancel_event)
+                        arguments = parse_tool_arguments(call.arguments)
+                        self._emit(
+                            AgentEvent(
+                                kind="tool_started",
+                                turn=turn,
+                                tool_name=call.name,
+                                arguments=arguments,
+                            )
+                        )
+                        self._check_cancelled(cancel_event)
+                        if "_error" in arguments:
+                            result = {
+                                "ok": False,
+                                "error": arguments["_error"],
+                                "raw": arguments.get("_raw"),
+                            }
+                        else:
+                            result = self.tools.execute(call.name, arguments)
+                        self._check_cancelled(cancel_event)
+                        direct_answer = (
+                            direct_answer_resolver(call.name, arguments, result)
+                            if direct_answer_resolver is not None
+                            else None
+                        )
+                        if direct_answer:
+                            direct_answers.append(direct_answer)
+                        self._check_cancelled(cancel_event)
+                        steps.append(ToolStep(call.name, arguments, result))
+                        self._emit(
+                            AgentEvent(
+                                kind="tool_finished",
+                                turn=turn,
+                                tool_name=call.name,
+                                arguments=arguments,
+                                result=result,
+                            )
+                        )
+                        self._check_cancelled(cancel_event)
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call.id,
+                                "content": _compact_result(result, self.result_limit),
+                            }
+                        )
+                    if direct_answers:
+                        self._check_cancelled(cancel_event)
+                        answer = "\n\n".join(direct_answers)
+                        messages.append({"role": "assistant", "content": answer})
+                        self._check_cancelled(cancel_event)
+                        self._emit(AgentEvent(kind="completed", turn=turn, content=answer))
+                        return AgentResult(
+                            answer=answer,
+                            steps=steps,
+                            turns=turn,
+                            messages=messages,
+                        )
+                    self._check_cancelled(cancel_event)
+                    continue
+
+                answer = (response.content or "").strip()
+                if not answer:
+                    answer = "模型没有返回最终答案，也没有继续调用工具。"
+                messages.append({"role": "assistant", "content": answer})
+                self._check_cancelled(cancel_event)
+                self._emit(AgentEvent(kind="completed", turn=turn, content=answer))
+                return AgentResult(answer=answer, steps=steps, turns=turn, messages=messages)
+
+            self._check_cancelled(cancel_event)
+            messages.append({"role": "user", "content": self.closing_prompt})
+            answer = self._chat(
                 messages,
-                tools=self.tools.schemas,
                 temperature=self.temperature,
+                cancel_event=cancel_event,
             )
-
-            if response.has_tool_calls:
-                messages.append(response.raw_message)
-                direct_answers: list[str] = []
-                direct_answer_resolver = getattr(self.tools, "direct_answer", None)
-                for call in response.tool_calls:
-                    arguments = parse_tool_arguments(call.arguments)
-                    self._emit(
-                        AgentEvent(
-                            kind="tool_started",
-                            turn=turn,
-                            tool_name=call.name,
-                            arguments=arguments,
-                        )
-                    )
-                    if "_error" in arguments:
-                        result = {
-                            "ok": False,
-                            "error": arguments["_error"],
-                            "raw": arguments.get("_raw"),
-                        }
-                    else:
-                        result = self.tools.execute(call.name, arguments)
-                    steps.append(ToolStep(call.name, arguments, result))
-                    direct_answer = (
-                        direct_answer_resolver(call.name, arguments, result)
-                        if direct_answer_resolver is not None
-                        else None
-                    )
-                    if direct_answer:
-                        direct_answers.append(direct_answer)
-                    self._emit(
-                        AgentEvent(
-                            kind="tool_finished",
-                            turn=turn,
-                            tool_name=call.name,
-                            arguments=arguments,
-                            result=result,
-                        )
-                    )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call.id,
-                            "content": _compact_result(result, self.result_limit),
-                        }
-                    )
-                if direct_answers:
-                    answer = "\n\n".join(direct_answers)
-                    messages.append({"role": "assistant", "content": answer})
-                    self._emit(AgentEvent(kind="completed", turn=turn, content=answer))
-                    return AgentResult(
-                        answer=answer,
-                        steps=steps,
-                        turns=turn,
-                        messages=messages,
-                    )
-                continue
-
-            answer = (response.content or "").strip()
-            if not answer:
-                answer = "模型没有返回最终答案，也没有继续调用工具。"
+            self._check_cancelled(cancel_event)
             messages.append({"role": "assistant", "content": answer})
-            self._emit(AgentEvent(kind="completed", turn=turn, content=answer))
-            return AgentResult(answer=answer, steps=steps, turns=turn, messages=messages)
-
-        messages.append({"role": "user", "content": self.closing_prompt})
-        answer = self.client.chat(messages, temperature=self.temperature)
-        messages.append({"role": "assistant", "content": answer})
-        self._emit(AgentEvent(kind="completed", turn=self.max_turns, content=answer))
-        return AgentResult(
-            answer=answer,
-            steps=steps,
-            turns=self.max_turns,
-            messages=messages,
-        )
+            self._check_cancelled(cancel_event)
+            self._emit(AgentEvent(kind="completed", turn=self.max_turns, content=answer))
+            return AgentResult(
+                answer=answer,
+                steps=steps,
+                turns=self.max_turns,
+                messages=messages,
+            )
+        except AgentCancelled:
+            self._emit(AgentEvent(kind="cancelled", turn=current_turn))
+            raise
+        except CancelledError as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                self._emit(AgentEvent(kind="cancelled", turn=current_turn))
+                raise AgentCancelled("agent turn cancelled") from exc
+            raise
