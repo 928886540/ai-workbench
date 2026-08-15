@@ -26,6 +26,50 @@ export const messageIndex = computed(
   () => new Map(messages.value.map((message) => [message.id, message])),
 );
 
+export function makeMessage(
+  role: MessageRole,
+  text = "",
+  status: MessageStatus = "done",
+): ChatMessage {
+  const now = Date.now();
+  return {
+    id: `m_${now}_${Math.random().toString(36).slice(2, 8)}`,
+    role,
+    text,
+    status,
+    images: [],
+    meta: {
+      model: null,
+      startedAt: status === "pending" || status === "streaming" ? now : null,
+      finishedAt: status === "done" || status === "error" ? now : null,
+      elapsedMs: null,
+      tokensIn: null,
+      tokensOut: null,
+    },
+  };
+}
+
+export function appendMessage(message: ChatMessage): ChatMessage {
+  messages.value.push(message);
+  return message;
+}
+
+export function clearMessages(): void {
+  messages.value.splice(0, messages.value.length);
+}
+
+export function findMessage(id: string | null): ChatMessage | null {
+  return id ? messageIndex.value.get(id) || null : null;
+}
+
+export function latestMessage(role?: MessageRole): ChatMessage | null {
+  for (let index = messages.value.length - 1; index >= 0; index -= 1) {
+    const message = messages.value[index];
+    if (!role || message.role === role) return message;
+  }
+  return null;
+}
+
 export function upsertMessage(message: ChatMessage): void {
   const index = messages.value.findIndex((item) => item.id === message.id);
   if (index === -1) {

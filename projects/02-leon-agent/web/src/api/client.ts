@@ -4,10 +4,141 @@ export interface HealthResponse {
   [key: string]: unknown;
 }
 
-export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  const response = await fetch("/api/health", { signal });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+export interface SessionResponse {
+  session_id: string;
+  messages: Array<{ role: string; content: string }>;
+}
+
+export interface CreateSessionResponse {
+  session_id: string;
+  created_at: number;
+}
+
+export interface MessageResponse {
+  session_id: string;
+  answer: string;
+  ok: boolean;
+}
+
+export interface LeonEvent {
+  event: string;
+  session_id: string;
+  timestamp?: string;
+  data: Record<string, unknown>;
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, detail: string) {
+    super(detail || `HTTP ${status}`);
+    this.name = "ApiError";
+    this.status = status;
   }
-  return (await response.json()) as HealthResponse;
+}
+
+const TOKEN_KEY = "leon_token";
+const SESSION_KEY = "leon_session";
+
+function readStorage(key: string): string {
+  return typeof localStorage === "undefined" ? "" : localStorage.getItem(key) || "";
+}
+
+export class LeonApi {
+  token = readStorage(TOKEN_KEY);
+  sessionId = readStorage(SESSION_KEY);
+
+  setToken(token: string): void {
+    this.token = token.trim();
+    if (typeof localStorage !== "undefined") {
+      if (this.token) localStorage.setItem(TOKEN_KEY, this.token);
+      else localStorage.removeItem(TOKEN_KEY);
+    }
+  }
+
+  setSession(sessionId: string): void {
+    this.sessionId = sessionId;
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(SESSION_KEY, sessionId);
+    }
+  }
+
+  clearSession(): void {
+    this.sessionId = "";
+    if (typeof localStorage !== "undefined") localStorage.removeItem(SESSION_KEY);
+  }
+
+  logout(): void {
+    this.setToken("");
+    this.clearSession();
+  }
+
+  async checkHealth(signal?: AbortSignal, token = this.token): Promise<HealthResponse> {
+    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+    const response = await fetch("/api/health", { headers, signal });
+    if (!response.ok) throw new ApiError(response.status, await response.text());
+    return (await response.json()) as HealthResponse;
+  }
+
+  async getSession(sessionId: string): Promise<SessionResponse> {
+    return this.request<SessionResponse>(`/api/agent/sessions/${sessionId}`);
+  }
+
+  async createSession(): Promise<CreateSessionResponse> {
+    return this.request<CreateSessionResponse>("/api/agent/sessions", { method: "POST" });
+  }
+
+  async sendMessage(sessionId: string, content: string): Promise<MessageResponse> {
+    return this.request<MessageResponse>(`/api/agent/sessions/${sessionId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+  }
+
+  connectEvents(
+    sessionId: string,
+    onEvent: (event: LeonEvent) => void,
+    onError: () => void,
+  ): EventSource {
+    const query = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
+    const source = new EventSource(`/api/agent/sessions/${sessionId}/events${query}`);
+    source.onmessage = (message) => {
+      try {
+        onEvent(JSON.parse(message.data) as LeonEvent);
+      } catch {
+        // Ignore malformed heartbeats or an incomplete event payload.
+      }
+    };
+    source.onerror = onError;
+    return source;
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const headers = new Headers(init.headers);
+    headers.set("Content-Type", "application/json");
+    if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
+    const response = await fetch(path, { ...init, headers });
+    if (response.status === 401) {
+      this.logout();
+      throw new ApiError(401, "Token 已失效，请重新登录");
+    }
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const payload = (await response.json()) as { detail?: string };
+        detail = payload.detail || "";
+      } catch {
+        detail = await response.text();
+      }
+      throw new ApiError(response.status, detail);
+    }
+    return (await response.json()) as T;
+  }
+}
+
+export const api = new LeonApi();
+
+// Kept as a small function for components/tests that only need liveness.
+export function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  return api.checkHealth(signal);
 }
