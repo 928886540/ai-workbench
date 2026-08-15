@@ -70,6 +70,8 @@ let imageModeCatalogRequest: Promise<ImageMode[]> | null = null;
 let modeSuggestionRequestId = 0;
 let lastAgentErrorAt = 0;
 const autoplayRequests = new Set<string>();
+const COMPOSER_MIN_HEIGHT = 42;
+const COMPOSER_MAX_HEIGHT = 120;
 
 interface ModeCompletionContext {
   prefix: string;
@@ -132,7 +134,30 @@ function selectModeSuggestion(item: ImageMode): void {
   if (!context) return;
   draft.value = `${context.prefix} ${item.name} `;
   hideModeSuggestions();
-  void nextTick(() => composerInput.value?.focus());
+  void nextTick(() => {
+    resizeComposer();
+    composerInput.value?.focus();
+  });
+}
+
+function resizeComposer(): void {
+  const textarea = composerInput.value;
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  const contentHeight = Math.max(textarea.scrollHeight, COMPOSER_MIN_HEIGHT);
+  const nextHeight = Math.min(contentHeight, COMPOSER_MAX_HEIGHT);
+  textarea.style.height = `${nextHeight}px`;
+  textarea.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
+}
+
+function handleComposerInput(): void {
+  resizeComposer();
+  void updateModeSuggestions();
+}
+
+function handleComposerFocus(): void {
+  resizeComposer();
+  void updateModeSuggestions();
 }
 
 async function updateModeSuggestions(): Promise<void> {
@@ -472,6 +497,7 @@ async function openSession(): Promise<void> {
   imageStateLoaded.value = false;
   imageStateError.value = "";
   authenticated.value = true;
+  void nextTick(resizeComposer);
   connectEvents();
   void loadImageState();
   void ensureVoiceCatalog();
@@ -537,6 +563,7 @@ async function sendMessage(): Promise<void> {
   pendingAssistantId.value = null;
   appendMessage(makeMessage("user", content));
   draft.value = "";
+  void nextTick(resizeComposer);
   sending.value = true;
   taskStatus.value = "正在发送…";
   scrollToLatest();
@@ -614,6 +641,10 @@ onBeforeUnmount(() => {
     modeBlurTimer = null;
   }
   modeSuggestionRequestId += 1;
+  if (composerInput.value) {
+    composerInput.value.style.height = "";
+    composerInput.value.style.overflowY = "";
+  }
   clearSpeechState();
 });
 </script>
@@ -696,8 +727,8 @@ onBeforeUnmount(() => {
               placeholder="输入消息，Enter 发送，Shift+Enter 换行"
               :disabled="sending"
               @keydown="handleComposerKeydown"
-              @input="void updateModeSuggestions()"
-              @focus="void updateModeSuggestions()"
+              @input="handleComposerInput"
+              @focus="handleComposerFocus"
               @blur="scheduleHideModeSuggestions"
             ></textarea>
           </div>

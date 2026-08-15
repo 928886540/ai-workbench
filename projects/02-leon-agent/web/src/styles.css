@@ -633,8 +633,9 @@ h1 {
 
 .composer textarea {
   min-height: 42px;
-  max-height: 140px;
-  resize: vertical;
+  max-height: 120px;
+  overflow-y: auto;
+  resize: none;
   padding: 10px 12px;
   font-size: 16px;
   line-height: 1.45;
