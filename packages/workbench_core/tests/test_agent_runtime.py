@@ -3,8 +3,8 @@ import threading
 import time
 
 import pytest
-from workbench_core.agent import AgentRuntime, AgentTool, ToolRegistry
-from workbench_core.agent.runtime import AgentCancelled, cancellation_scope
+from workbench_core.agent import AgentCancelled, AgentRuntime, AgentTool, ToolRegistry
+from workbench_core.agent.runtime import cancellation_scope
 from workbench_core.llm import ChatTurn, ToolCall
 
 
