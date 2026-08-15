@@ -10,7 +10,7 @@
 2. **开场一句话** = 快速对齐
 3. **Codex session 续接** = 加分项，有就用，没有也能继续
 
-## 当前主线（2026-08-15）
+## 当前主线（2026-08-16）
 
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
@@ -52,11 +52,14 @@
 - Vue 迁移当前已覆盖聊天、任务、图库和设置四个视图；聊天支持 `/nsfw --model` 模式补全，
   通过 `/api/image-modes` 按名称、ID、aliases 异步过滤，支持点击、上下键、Enter、Escape 和失焦收起，
   并用输入快照/请求序号隔离迟到响应；输入框自动增高、用户上滚保留位置、回到最新按钮和错误详情折叠也已接通；
+  Agent Timeline 会收集除 `assistant.delta` 外的最近 100 条 SSE 决策事件，并支持清空、关闭和会话切换重置；
   这些路径不调用 LLM、Volink 或真实 provider。
 - 当前验证（2026-08-16）：Python 单测、Ruff、Vue `npm run typecheck`、`npm run build`、静态 Vue 契约测试，
-  以及 `tests/manual_vue_web_check.py` 的 provider-free Playwright smoke 均已通过；Vite/FastAPI 两种入口各 **16/16**。
+  以及 `tests/manual_vue_web_check.py` 的 provider-free Playwright smoke 均已通过；Vite/FastAPI 两种入口各 **18/18**。
   该脚本拦截所有 `/api/**`，不代表真实公网/手机验收；legacy 的 `tests/manual_web_check.py` 仍是另一套脚本。
 - 元数据边界：Gateway 当前没有权威 `model`/`usage` 字段；Vue 的 elapsed 是客户端观测值，tokens/实际响应模型暂不显示。
+- 流式边界：Gateway 当前没有真正发送 `assistant.delta`；Vue 已兼容该事件，但当前真实回复仍以
+  `assistant.started` / `assistant.completed` 为主。
 - ⚠️ LLM provider 已被 CC Switch 换过（`~/.codex/config.toml`，8/15 09:30）：
   `anyrouter.top` → `new-api.abrdns.com`，默认模型 `gpt-5.6-sol` → `DeepSeek-V4-Flash-0731`，目录从 17 个模型变成 96 个。
   会话里「同样的话上次能答、这次不能答」优先怀疑这里，而不是提示词。
@@ -71,7 +74,7 @@
 - ASR 尚未接入；TTS 已完成，网关使用 `POST /api/agent/tts` 和 `/api/voice/*`
 - 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
-- 下一步可选：继续 Vue 页面迁移；CLI TUI 与 Web 改造由两个 Codex 分工，提交前统一审查
+- 下一步可选：做真实 Gateway / Cloudflare / 手机端 SSE、生图和 TTS 验收；CLI TUI 与 Web 改造由两个 Codex 分工，提交前统一审查
 
 ---
 

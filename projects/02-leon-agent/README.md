@@ -26,6 +26,7 @@
 - 助手气泡支持复制、重试、编辑和朗读；编辑后的文字会成为后续朗读内容
 - iOS 有声播放使用单例播放器 + 用户手势解锁，被拦截时保留待播音频并显示开启按钮
 - Vue 3 + Vite 迁移已覆盖聊天、任务、图库和设置视图；聊天输入支持 `/nsfw --model` 模式名称补全，按名称、ID 和别名过滤
+- Agent Timeline 可查看最近 100 条 SSE 决策事件，并过滤高频 `assistant.delta` 字符增量
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读
@@ -157,7 +158,8 @@ Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 jo
 Vue 客户端已迁移聊天、任务、图库和设置四个主要视图，并复用同一套 Gateway/SSE 协议。
 聊天输入在识别 `/nsfw --model ` 前缀后按模式名称、真实 ID 和 aliases 提供异步候选，支持点击、
 上下键、Enter 选择和 Esc/失焦收起；用户上滚时会保留阅读位置并显示“回到最新”，输入框按内容自动增高，
-错误原文默认折叠；候选目录请求只走 `/api/image-modes`，不会触发 LLM 或真实 provider。
+错误原文默认折叠；Agent Timeline 收集最近 100 条 SSE 决策事件，支持清空并跳过高频 `assistant.delta`；
+候选目录请求只走 `/api/image-modes`，不会触发 LLM 或真实 provider。
 
 架构与接口边界见 [Mobile Web 架构](docs/mobile-web-architecture.md)。
 
@@ -166,15 +168,15 @@ legacy Web 客户端仍由单文件 `src/leon_agent/web/index.html` 提供（无
 前端改动需同步递增 `sw.js` 的缓存名与注册 `?v=` 版本号，否则手机会命中旧缓存。当前 Vue 迁移的边界与
 验收状态见 [Web 客户端演进评估](docs/web-client-evolution.md)。
 
-Vue 3 + Vite 迁移基座位于 `web/`，当前已覆盖聊天、任务、图库和设置视图。provider-free
-Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **16/16**；
+Vue 3 + Vite 迁移基座位于 `web/`，当前已覆盖聊天、任务、图库、设置视图和 Agent Timeline。provider-free
+Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **18/18**；
 它拦截所有 `/api/**`，不会触发真实 LLM、Volink 或图片 provider。真实 Gateway/Cloudflare/SSE 和手机验收仍待做。
 默认 `LEON_WEB_CLIENT=legacy`，构建 Vue 产物不会改变现有线上页面；完成线上验收后，设置
 `LEON_WEB_CLIENT=vue` 并重启 `leon-server` 才会由 FastAPI 托管 `web/dist/`。
 
 ## 后续路线
 
-Web 前端的 Vue3 迁移边界、模式补全、TTS/`voice.ready` 事件和浏览器回归见
+Web 前端的 Vue3 迁移边界、模式补全、Agent Timeline、TTS/`voice.ready` 事件和浏览器回归见
 [Web 客户端演进评估](docs/web-client-evolution.md)。
 
 已记录三条扩展需求：面试 MCP、Telegram Bot、Tavo 互通。详细边界与实施顺序见

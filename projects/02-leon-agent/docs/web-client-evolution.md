@@ -1,13 +1,15 @@
 # Web 客户端演进评估：是否迁 Vue3、聊天化改造、气泡工具栏、语音接入
 
 > 状态：历史设计 + 实施状态（2026-08-16）
-> 关联提交：`3aab43a fix(leon-web): 图片查看器改为可缩放相册，完成后新气泡回图`
+> 关联提交：`3aab43a fix(leon-web): 图片查看器改为可缩放相册，完成后新气泡回图`；
+> `5aba213 feat(leon-web): 迁移 Agent Timeline`
 > legacy Web 源文件：`src/leon_agent/web/index.html`（约 90KB 单文件，无构建步骤）；Vue 源码位于 `web/src/`
 >
-> 当前实施（2026-08-16）：Vue 3 + Vite 已覆盖聊天、任务、图库和设置视图；助手气泡支持复制 /
+> 当前实施（2026-08-16）：Vue 3 + Vite 已覆盖聊天、任务、图库、设置视图和 Agent Timeline；助手气泡支持复制 /
 > 真重试 / 编辑 / 朗读，Volink 提供 4 个模型和 561 个中文音色，SSE `voice.ready` 会追加可播放
-> 语音气泡；聊天输入已支持 `/nsfw --model` 模式补全、自动增高、上滚保留和错误详情折叠。ASR、tokens
-> 上屏和真实 Gateway/手机验收尚未完成；provider-free Playwright smoke 已在 Vite/FastAPI 各 16/16 通过。
+> 语音气泡；聊天输入已支持 `/nsfw --model` 模式补全、自动增高、上滚保留和错误详情折叠，
+> Agent Timeline 可查看最近 100 条 SSE 决策事件。ASR、tokens 上屏和真实 Gateway/手机验收尚未完成；
+> provider-free Playwright smoke 已在 Vite/FastAPI 各 18/18 通过。
 > `LEON_WEB_CLIENT=legacy` 仍是默认入口，Vue 仅显式 opt-in。
 
 ---
@@ -16,7 +18,7 @@
 
 | 议题 | 结论 |
 | --- | --- |
-| 现在迁 Vue3？ | **迁移进行中**。Vue 3 + Vite 已覆盖聊天、任务、图库和设置；provider-free smoke 已通过，真实验收前保持 legacy 默认。 |
+| 现在迁 Vue3？ | **迁移主体已完成**。Vue 3 + Vite 已覆盖聊天、任务、图库、设置和 Agent Timeline；provider-free smoke 已通过，真实验收前保持 legacy 默认。 |
 | 界面聊天化？ | **做**，优先级最高。纯前端改动，不动网关协议。 |
 | 气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）？ | **部分完成**。复制、真重试、编辑、朗读和前端耗时已完成；tokens 待后端 usage。 |
 | 语音？ | **TTS 已完成，ASR 待做**。Volink 密钥仅在网关；前端支持目录、手动/自动朗读、`voice.ready`、单例播放器与 iOS 解锁。 |
@@ -193,22 +195,26 @@ POST /api/agent/asr   (multipart: audio 文件)
 Vue 源码位于 `web/src/`，按职责拆成 `api`、`stores`、`views`、`components` 和语音工具层，
 并由 Vite 构建成 `web/dist/`。当前已接通：
 
-- `ChatView`：会话恢复、SSE 流式消息、发送/重试/编辑、图片完成事件、语音气泡和播放解锁；
+- `ChatView`：会话恢复、SSE 事件消费、发送/重试/编辑、图片完成事件、语音气泡和播放解锁；
 - `TasksView` / `GalleryView`：任务状态、中文模式名、图库及图片预览；
 - `SettingsView`：会话模型选择、语音目录/偏好；
 - `/nsfw --model` 补全：输入匹配命令前缀后异步读取 `GET /api/image-modes`，按 `name`、`id`、`aliases`
   过滤，支持点击、ArrowUp/ArrowDown、Enter、Escape 和失焦收起；请求序号与输入快照共同防止迟到响应覆盖新输入。
 - 聊天交互：textarea 自动增高至约五行、超出后内部滚动；用户上滚后暂停自动跟随并提供“回到最新”；
   错误气泡保留重试入口，原始错误文本放在默认折叠的原生 `details` 中。
+- Agent Timeline：记录除高频 `assistant.delta` 外的最近 100 条 SSE 决策事件，提供事件分类、详情、清空、
+  Esc/按钮关闭，并在新会话、退出和组件卸载时重置。
 
 该补全只读取 Gateway 的模式目录，不调用 LLM、Volink 或真实 provider。`voice.ready` 事件同样只消费
 Gateway 推送的音频元数据，播放器由前端单例管理。
 
 当前验证包括静态契约、TypeScript 检查、Vite build，以及
-`tests/manual_vue_web_check.py` 的 provider-free Playwright smoke（Vite/FastAPI 各 16/16）。该脚本只拦截
+`tests/manual_vue_web_check.py` 的 provider-free Playwright smoke（Vite/FastAPI 各 18/18）。该脚本只拦截
 API，不证明真实 provider、Cloudflare 缓存或手机网络行为；因此不能据此宣称 Vue 已全面替换 legacy。
 只有显式设置 `LEON_WEB_CLIENT=vue` 且存在构建产物时才托管 Vue，默认仍为 `LEON_WEB_CLIENT=legacy`。
 Gateway 当前不发送权威 `model`/`usage` 字段，Vue 只显示客户端观测耗时，不虚构 tokens 或实际响应模型。
+Gateway 当前也没有真正发送 `assistant.delta`；Vue 保留兼容分支，真实回复仍以 `assistant.started` /
+`assistant.completed` 事件为主。
 
 ---
 
@@ -232,9 +238,9 @@ Gateway 当前不发送权威 `model`/`usage` 字段，Vue 只显示客户端观
 | **W3** | 聊天化视觉 + CSS 变量主题 | W1 |
 | **W4** | 网关补 `model` / `elapsed_ms` / `usage`，tokens 上屏 | W2 |
 | **W5** | 语音：TTS 朗读（已完成）→ ASR 输入（待做） | ASR API |
-| **W6** | Vue 迁移：聊天、任务、图库、设置（已完成） | W1-W5 |
+| **W6** | Vue 迁移：聊天、任务、图库、设置、Agent Timeline（已完成） | W1-W5 |
 | **W7** | 模式补全与 `voice.ready` 事件（已完成） | W6 |
-| **W8** | provider-free 浏览器回归（Vite/FastAPI 16/16） | W6-W7 |
+| **W8** | provider-free 浏览器回归（Vite/FastAPI 18/18） | W6-W7 |
 | **W9** | 真实 Gateway/Cloudflare/手机验收，完成后再评估切换入口 | W8 |
 
 每个阶段单独一个 commit，`test_gateway.py` 同步补断言，`sw.js` 缓存版本号递增。
