@@ -159,7 +159,49 @@ def test_web_client_supports_markdown_images_and_touch_scrolling(client):
     assert "$input.addEventListener('focus'" not in html
     assert "height:100dvh" in html
     assert "font-size:16px" in html
-    assert "/sw.js?v=11" in html
+    assert "/sw.js?v=12" in html
+
+
+def test_web_client_image_viewer_is_a_zoomable_album(client):
+    html = client.get("/").text
+
+    # Every control needs an explicit z-index: the <img> has will-change:transform,
+    # so it creates a stacking context that paints over z-index:auto siblings.
+    assert ".iv-chrome{position:absolute;z-index:3}" in html
+    assert 'id="image-viewer-close" class="iv-chrome"' in html
+    # Focal-point zoom replaced the old centre-only setViewerScale().
+    assert "function zoomAt(" in html
+    assert "setViewerScale" not in html
+    # Pan bounds clamp to the real image edges, no arbitrary slack.
+    assert "+48" not in html
+    # Album navigation with wrap-around.
+    assert 'id="image-viewer-prev"' in html
+    assert 'id="image-viewer-next"' in html
+    assert 'id="image-viewer-counter"' in html
+    assert "function collectAlbum(" in html
+    assert "ivIndex=(index%ivAlbum.length+ivAlbum.length)%ivAlbum.length" in html
+
+
+def test_web_client_appends_finished_image_as_new_bubble(client):
+    html = client.get("/").text
+
+    # The skeleton is dropped and the image is appended at the bottom, instead of
+    # being swapped in place halfway up the conversation.
+    assert "const result=createImageResult(href);" in html
+    assert "$msgs.appendChild(result);" in html
+    assert "placeholder.replaceWith" not in html
+    assert "placeholder.remove()" in html
+
+
+def test_web_client_model_picker_is_tappable(client):
+    html = client.get("/").text
+
+    # <datalist> has no usable dropdown on mobile browsers.
+    assert "<datalist" not in html
+    assert 'list="model-options"' not in html
+    assert 'id="model-list"' in html
+    assert "function renderModelList(" in html
+    assert "model-option" in html
 
 
 def test_session_model_can_be_selected_and_reset(client, monkeypatch):

@@ -119,13 +119,25 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .gallery-img-wrap img{width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:pointer}
 .gallery-meta{padding:6px 8px;font-size:11px;color:var(--text2)}
 
-/* Current-page image viewer */
-#image-viewer{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.94);display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));overflow:hidden;touch-action:none}
+/* Fullscreen image album viewer */
+#image-viewer{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.94);overflow:hidden;touch-action:none}
 #image-viewer[hidden]{display:none}
-#image-viewer img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;transform-origin:center;will-change:transform;touch-action:none;user-select:none;-webkit-user-drag:none}
-#image-viewer-close{position:absolute;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:44px;height:44px;border:0;border-radius:50%;background:rgba(255,255,255,.14);color:#fff;font-size:30px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
-#image-viewer-controls{position:absolute;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:10px;z-index:2}
+/* Stage is padded so the image never sits under the chrome at scale 1. */
+#image-viewer-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
+  padding:calc(60px + env(safe-area-inset-top)) 12px calc(78px + env(safe-area-inset-bottom))}
+#image-viewer img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;transform-origin:center center;will-change:transform;touch-action:none;user-select:none;-webkit-user-drag:none}
+#image-viewer img.iv-settling{transition:transform .22s cubic-bezier(.22,.61,.36,1)}
+/* The image creates its own stacking context (will-change:transform) and comes
+   later in DOM order, so every control needs an explicit z-index to stay above it. */
+.iv-chrome{position:absolute;z-index:3}
+#image-viewer-close{top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:44px;height:44px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font-size:30px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+#image-viewer-counter{top:max(20px,calc(env(safe-area-inset-top) + 8px));left:50%;transform:translateX(-50%);color:rgba(255,255,255,.85);font-size:13px;font-variant-numeric:tabular-nums;background:rgba(255,255,255,.13);border-radius:20px;padding:5px 12px;pointer-events:none;white-space:nowrap}
+.iv-nav{top:50%;margin-top:-22px;width:44px;height:44px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font-size:26px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+#image-viewer-prev{left:max(10px,env(safe-area-inset-left))}
+#image-viewer-next{right:max(10px,env(safe-area-inset-right))}
+#image-viewer-controls{left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:10px}
 #image-viewer-controls button{width:44px;height:44px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font-size:24px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.iv-chrome[hidden]{display:none}
 
 /* Debug */
 .debug-section{background:var(--surface);border-radius:10px;padding:12px}
@@ -149,6 +161,16 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 #model-save:disabled{opacity:.5;cursor:default}
 #model-status{min-height:18px;margin-top:8px;font-size:12px;color:var(--text2)}
 #model-status.error{color:var(--red)}
+/* Tappable model list — datalist has no usable dropdown on mobile browsers. */
+#model-list{margin-top:10px;max-height:250px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;border:1px solid var(--border);border-radius:10px;background:#fff}
+#model-list:empty{display:none}
+.model-option{width:100%;border:0;border-bottom:1px solid var(--border);background:none;padding:11px 12px;display:flex;align-items:center;gap:8px;font:inherit;font-size:14px;color:var(--text);text-align:left;cursor:pointer}
+.model-option:last-child{border-bottom:0}
+.model-option:active{background:var(--surface2)}
+.model-option.selected{background:var(--blue-soft);color:var(--blue);font-weight:600}
+.model-option-id{overflow-wrap:anywhere}
+.model-option-tag{margin-left:auto;font-size:11px;font-weight:500;color:var(--text2);background:var(--surface2);border-radius:20px;padding:2px 8px;flex-shrink:0}
+.model-empty{padding:12px;font-size:13px;color:var(--text2);text-align:center}
 
 /* UX polish merged from feat/leon-ux-polish */
 #send-btn.ready{background:var(--blue);color:#fff}
@@ -369,11 +391,11 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
         <h3>模型</h3>
         <p class="settings-sub" id="model-current">加载当前模型…</p>
         <div class="settings-row">
-          <input id="model-input" list="model-options" placeholder="输入或选择模型 ID" autocomplete="off" spellcheck="false">
-          <datalist id="model-options"></datalist>
+          <input id="model-input" placeholder="输入或搜索模型 ID" autocomplete="off" spellcheck="false">
           <button id="model-refresh" type="button" aria-label="刷新模型列表" title="刷新模型列表">↻</button>
           <button id="model-save" type="button" disabled>保存</button>
         </div>
+        <div id="model-list" role="listbox" aria-label="可用模型"></div>
         <div id="model-status" role="status"></div>
       </div>
       <div class="debug-section">
@@ -397,9 +419,14 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 </div>
 
 <div id="image-viewer" role="dialog" aria-modal="true" aria-label="图片预览" hidden>
-  <button id="image-viewer-close" type="button" aria-label="关闭图片预览" title="关闭">×</button>
-  <img id="image-viewer-image" alt="图片预览">
-  <div id="image-viewer-controls">
+  <div id="image-viewer-stage">
+    <img id="image-viewer-image" alt="图片预览">
+  </div>
+  <button id="image-viewer-close" class="iv-chrome" type="button" aria-label="关闭图片预览" title="关闭">×</button>
+  <div id="image-viewer-counter" class="iv-chrome" hidden></div>
+  <button id="image-viewer-prev" class="iv-chrome iv-nav" type="button" aria-label="上一张" title="上一张" hidden>‹</button>
+  <button id="image-viewer-next" class="iv-chrome iv-nav" type="button" aria-label="下一张" title="下一张" hidden>›</button>
+  <div id="image-viewer-controls" class="iv-chrome">
     <button id="image-viewer-zoom-out" type="button" aria-label="缩小" title="缩小">−</button>
     <button id="image-viewer-reset" type="button" aria-label="还原大小" title="还原大小">↺</button>
     <button id="image-viewer-zoom-in" type="button" aria-label="放大" title="放大">+</button>
@@ -508,28 +535,52 @@ async function api(method,path,body){
 
 // Session model settings
 const $modelInput=document.getElementById('model-input');
-const $modelOptions=document.getElementById('model-options');
+const $modelList=document.getElementById('model-list');
 const $modelRefresh=document.getElementById('model-refresh');
 const $modelSave=document.getElementById('model-save');
 const $modelCurrent=document.getElementById('model-current');
 const $modelStatus=document.getElementById('model-status');
-let modelSettingsLoaded=false;
-function fillModelSettings(data){
-  $modelOptions.replaceChildren();
-  const models=data.models||[];
-  models.forEach(model=>{
-    const option=document.createElement('option');
-    option.value=model;$modelOptions.appendChild(option);
+let modelSettingsLoaded=false,modelCatalog=[],modelDefault='';
+function renderModelList(){
+  $modelList.replaceChildren();
+  if(!modelCatalog.length)return;
+  const current=$modelInput.value.trim();
+  const query=current.toLowerCase();
+  const matches=modelCatalog.filter(id=>!query||id.toLowerCase().includes(query));
+  if(!matches.length){
+    const empty=document.createElement('div');empty.className='model-empty';
+    empty.textContent='没有匹配的模型，也可以直接保存自定义 ID';
+    $modelList.appendChild(empty);return;
+  }
+  matches.forEach(id=>{
+    const button=document.createElement('button');
+    button.type='button';button.setAttribute('role','option');
+    button.className='model-option'+(id===current?' selected':'');
+    button.innerHTML=`<span class="model-option-id">${esc(id)}</span>`+(id===modelDefault?'<span class="model-option-tag">默认</span>':'');
+    button.addEventListener('click',()=>{$modelInput.value=id;renderModelList();$modelSave.disabled=false});
+    $modelList.appendChild(button);
   });
+  // The input doubles as the filter, so make it obvious when a half-typed query
+  // would be saved verbatim as a custom model ID.
+  if(current&&!modelCatalog.includes(current)){
+    const note=document.createElement('div');note.className='model-empty';
+    note.textContent='“'+current+'” 不在目录中，保存后按自定义 ID 使用';
+    $modelList.appendChild(note);
+  }
+}
+function fillModelSettings(data){
+  modelCatalog=data.models||[];modelDefault=data.default_model||'';
   $modelInput.value=data.selected_model||'';
   $modelInput.placeholder='跟随默认 · '+data.default_model;
   $modelCurrent.textContent='当前：'+data.active_model+' · '+data.base_url;
   $modelStatus.className=data.catalog_error?'error':'';
-  $modelStatus.textContent=data.catalog_error?'目录拉取失败，仍可手动输入模型 ID':'';
-  modelSettingsLoaded=true;
+  $modelStatus.textContent=data.catalog_error
+    ?'目录拉取失败，仍可手动输入模型 ID：'+data.catalog_error
+    :'共 '+modelCatalog.length+' 个可用模型，点击即可选择';
+  renderModelList();modelSettingsLoaded=true;
 }
 async function loadModelSettings(refresh=false){
-  if(!sessionId)return;
+  if(!sessionId){$modelStatus.className='error';$modelStatus.textContent='会话尚未建立，请回聊天页等待连接后重试';return}
   $modelSave.disabled=true;$modelRefresh.disabled=true;$modelStatus.className='';
   $modelStatus.textContent=modelSettingsLoaded?'正在刷新…':'正在加载…';
   try{
@@ -550,6 +601,7 @@ async function saveModelSettings(){
     $modelStatus.className='error';$modelStatus.textContent='保存失败：'+err.message;
   }finally{$modelSave.disabled=false}
 }
+$modelInput.addEventListener('input',renderModelList);
 $modelSave.addEventListener('click',saveModelSettings);
 $modelRefresh.addEventListener('click',()=>loadModelSettings(true));
 
@@ -590,42 +642,132 @@ function isImageHref(value){
     return candidates.some(candidate=>/\.(?:avif|bmp|gif|jpe?g|png|webp)$/i.test(decodeURIComponent(candidate)));
   }catch{return false}
 }
+// ---- Fullscreen image album viewer ----
 const $imageViewer=document.getElementById('image-viewer');
 const $imageViewerImage=document.getElementById('image-viewer-image');
+const $ivStage=document.getElementById('image-viewer-stage');
+const $ivCounter=document.getElementById('image-viewer-counter');
+const $ivPrev=document.getElementById('image-viewer-prev');
+const $ivNext=document.getElementById('image-viewer-next');
+const IV_MAX_SCALE=6,IV_SWIPE_RATIO=.55,IV_SWIPE_THRESHOLD=60;
+const IV_SCOPES=['#chat-messages','#gallery-grid','#iv-timeline'];
 const viewerPointers=new Map();
-let viewerScale=1,viewerX=0,viewerY=0,viewerPanStart=null,viewerPinchStart=null;
+let viewerScale=1,viewerX=0,viewerY=0,ivSwipeDX=0;
+let viewerPanStart=null,viewerPinchStart=null,viewerSwipe=null,ivMoved=false,ivLastTap=0;
+let ivAlbum=[],ivIndex=0;
+
+// Clamp against the full viewport so a zoomed image can be dragged edge to edge.
+function ivClampOffsets(){
+  if(viewerScale<=1){viewerScale=1;viewerX=0;viewerY=0;return}
+  const maxX=Math.max(0,($imageViewerImage.clientWidth*viewerScale-$imageViewer.clientWidth)/2);
+  const maxY=Math.max(0,($imageViewerImage.clientHeight*viewerScale-$imageViewer.clientHeight)/2);
+  viewerX=Math.max(-maxX,Math.min(maxX,viewerX));
+  viewerY=Math.max(-maxY,Math.min(maxY,viewerY));
+}
 function applyViewerTransform(){
-  if(viewerScale<=1){viewerScale=1;viewerX=0;viewerY=0}
-  const maxX=Math.max(0,($imageViewerImage.clientWidth*viewerScale-$imageViewer.clientWidth)/2+48);
-  const maxY=Math.max(0,($imageViewerImage.clientHeight*viewerScale-$imageViewer.clientHeight)/2+48);
-  viewerX=Math.max(-maxX,Math.min(maxX,viewerX));viewerY=Math.max(-maxY,Math.min(maxY,viewerY));
-  $imageViewerImage.style.transform=`translate3d(${viewerX}px,${viewerY}px,0) scale(${viewerScale})`;
+  ivClampOffsets();
+  $imageViewerImage.style.transform=`translate3d(${viewerX+ivSwipeDX}px,${viewerY}px,0) scale(${viewerScale})`;
 }
-function setViewerScale(value){viewerScale=Math.max(1,Math.min(6,value));applyViewerTransform()}
-function resetViewerZoom(){viewerScale=1;viewerX=0;viewerY=0;viewerPointers.clear();viewerPanStart=null;viewerPinchStart=null;applyViewerTransform()}
-function openImageViewer(value,alt='图片预览'){
+// Pin the content point under (focalX,focalY) while the scale changes:
+// with screen(p)=center+p*s+offset, holding screen(p) fixed gives
+// offset' = d - (d - offset) * (s'/s), where d = focal - center.
+function zoomAt(nextScale,focalX,focalY){
+  const target=Math.max(1,Math.min(IV_MAX_SCALE,nextScale));
+  const ratio=target/viewerScale;
+  if(ratio===1)return;
+  const rect=$imageViewerImage.getBoundingClientRect();
+  const dx=focalX-(rect.left+rect.width/2-viewerX-ivSwipeDX);
+  const dy=focalY-(rect.top+rect.height/2-viewerY);
+  viewerX=dx-(dx-viewerX)*ratio;
+  viewerY=dy-(dy-viewerY)*ratio;
+  viewerScale=target;
+  applyViewerTransform();
+}
+function zoomFromCenter(factor){
+  const rect=$imageViewer.getBoundingClientRect();
+  zoomAt(viewerScale*factor,rect.left+rect.width/2,rect.top+rect.height/2);
+}
+function resetViewerZoom(){
+  viewerScale=1;viewerX=0;viewerY=0;ivSwipeDX=0;
+  viewerPointers.clear();viewerPanStart=null;viewerPinchStart=null;viewerSwipe=null;
+  applyViewerTransform();
+}
+function ivRenderChrome(){
+  const many=ivAlbum.length>1;
+  $ivPrev.hidden=!many;$ivNext.hidden=!many;$ivCounter.hidden=!many;
+  if(many)$ivCounter.textContent=(ivIndex+1)+' / '+ivAlbum.length;
+}
+function ivShow(index){
+  if(!ivAlbum.length)return;
+  ivIndex=(index%ivAlbum.length+ivAlbum.length)%ivAlbum.length;
+  $imageViewerImage.classList.remove('iv-settling');
+  resetViewerZoom();
+  const item=ivAlbum[ivIndex];
+  $imageViewerImage.src=item.href;
+  $imageViewerImage.alt=item.alt||'图片预览';
+  ivRenderChrome();
+}
+function ivGo(step){if(ivAlbum.length>1)ivShow(ivIndex+step)}
+// The album is whatever surface the user tapped from, in the order they see it.
+function collectAlbum(trigger){
+  if(!trigger)return null;
+  let root=null;
+  for(const selector of IV_SCOPES){
+    const node=document.querySelector(selector);
+    if(node&&node.contains(trigger)){root=node;break}
+  }
+  if(!root)return null;
+  const seen=new Set(),album=[];
+  root.querySelectorAll('img').forEach(img=>{
+    const href=safeHref(img.currentSrc||img.src||'');
+    if(!href||seen.has(href))return;
+    seen.add(href);album.push({href,alt:img.alt||'图片预览'});
+  });
+  return album.length?album:null;
+}
+function openImageViewer(value,alt='图片预览',trigger=null){
   const href=safeHref(value);if(!href)return;
-  resetViewerZoom();$imageViewerImage.src=href;$imageViewerImage.alt=alt||'图片预览';$imageViewer.hidden=false;
+  const album=collectAlbum(trigger);
+  const found=album?album.findIndex(item=>item.href===href):-1;
+  if(album&&found>=0){ivAlbum=album;ivIndex=found}
+  else if(album){ivAlbum=[{href,alt},...album];ivIndex=0}
+  else{ivAlbum=[{href,alt}];ivIndex=0}
+  $imageViewer.hidden=false;
+  ivShow(ivIndex);
 }
-function closeImageViewer(){$imageViewer.hidden=true;$imageViewerImage.removeAttribute('src');resetViewerZoom()}
+function closeImageViewer(){
+  $imageViewer.hidden=true;$imageViewerImage.removeAttribute('src');
+  ivAlbum=[];ivIndex=0;resetViewerZoom();
+}
 document.getElementById('image-viewer-close').addEventListener('click',closeImageViewer);
-document.getElementById('image-viewer-zoom-in').addEventListener('click',()=>setViewerScale(viewerScale*1.35));
-document.getElementById('image-viewer-zoom-out').addEventListener('click',()=>setViewerScale(viewerScale/1.35));
+document.getElementById('image-viewer-zoom-in').addEventListener('click',()=>zoomFromCenter(1.35));
+document.getElementById('image-viewer-zoom-out').addEventListener('click',()=>zoomFromCenter(1/1.35));
 document.getElementById('image-viewer-reset').addEventListener('click',resetViewerZoom);
-$imageViewer.addEventListener('click',e=>{if(e.target===$imageViewer)closeImageViewer()});
+$ivPrev.addEventListener('click',()=>ivGo(-1));
+$ivNext.addEventListener('click',()=>ivGo(1));
+$imageViewer.addEventListener('click',e=>{if(e.target===$imageViewer||e.target===$ivStage)closeImageViewer()});
+$imageViewerImage.addEventListener('load',applyViewerTransform);
 document.addEventListener('keydown',e=>{
   if($imageViewer.hidden)return;
   if(e.key==='Escape')closeImageViewer();
-  else if(e.key==='+'||e.key==='=')setViewerScale(viewerScale*1.25);
-  else if(e.key==='-')setViewerScale(viewerScale/1.25);
+  else if(e.key==='ArrowLeft')ivGo(-1);
+  else if(e.key==='ArrowRight')ivGo(1);
+  else if(e.key==='+'||e.key==='=')zoomFromCenter(1.25);
+  else if(e.key==='-')zoomFromCenter(1/1.25);
   else if(e.key==='0')resetViewerZoom();
 });
 $imageViewerImage.addEventListener('pointerdown',e=>{
   if(e.pointerType==='mouse'&&e.button!==0)return;
-  e.preventDefault();$imageViewerImage.setPointerCapture(e.pointerId);
+  e.preventDefault();
+  $imageViewerImage.classList.remove('iv-settling');
+  $imageViewerImage.setPointerCapture(e.pointerId);
   viewerPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(viewerPointers.size===1)viewerPanStart={x:e.clientX,y:e.clientY,baseX:viewerX,baseY:viewerY};
-  if(viewerPointers.size===2){
+  if(viewerPointers.size===1){
+    ivMoved=false;
+    viewerPanStart={x:e.clientX,y:e.clientY,baseX:viewerX,baseY:viewerY};
+    viewerSwipe=viewerScale<=1?{x:e.clientX,y:e.clientY,locked:null}:null;
+  }else{
+    viewerSwipe=null;ivSwipeDX=0;ivMoved=true;
     const [a,b]=[...viewerPointers.values()];
     viewerPinchStart={distance:Math.hypot(a.x-b.x,a.y-b.y),scale:viewerScale};
   }
@@ -633,26 +775,60 @@ $imageViewerImage.addEventListener('pointerdown',e=>{
 $imageViewerImage.addEventListener('pointermove',e=>{
   if(!viewerPointers.has(e.pointerId))return;
   viewerPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(viewerPointers.size===2&&viewerPinchStart){
+  if(viewerPointers.size>=2&&viewerPinchStart){
     const [a,b]=[...viewerPointers.values()];
     const distance=Math.hypot(a.x-b.x,a.y-b.y);
-    setViewerScale(viewerPinchStart.scale*distance/Math.max(1,viewerPinchStart.distance));
-  }else if(viewerPointers.size===1&&viewerScale>1&&viewerPanStart){
+    ivMoved=true;
+    zoomAt(viewerPinchStart.scale*distance/Math.max(1,viewerPinchStart.distance),(a.x+b.x)/2,(a.y+b.y)/2);
+    return;
+  }
+  if(viewerPointers.size!==1)return;
+  if(viewerScale>1&&viewerPanStart){
+    ivMoved=true;
     viewerX=viewerPanStart.baseX+e.clientX-viewerPanStart.x;
-    viewerY=viewerPanStart.baseY+e.clientY-viewerPanStart.y;applyViewerTransform();
+    viewerY=viewerPanStart.baseY+e.clientY-viewerPanStart.y;
+    applyViewerTransform();return;
+  }
+  if(viewerSwipe&&ivAlbum.length>1){
+    const dx=e.clientX-viewerSwipe.x,dy=e.clientY-viewerSwipe.y;
+    if(viewerSwipe.locked===null&&(Math.abs(dx)>8||Math.abs(dy)>8))viewerSwipe.locked=Math.abs(dx)>Math.abs(dy);
+    if(viewerSwipe.locked){ivMoved=true;ivSwipeDX=dx*IV_SWIPE_RATIO;applyViewerTransform()}
   }
 });
 function endViewerPointer(e){
-  viewerPointers.delete(e.pointerId);viewerPinchStart=null;
+  if(!viewerPointers.has(e.pointerId))return;
+  viewerPointers.delete(e.pointerId);
+  if(viewerPointers.size<2)viewerPinchStart=null;
+  if(viewerSwipe&&viewerSwipe.locked){
+    const travelled=ivSwipeDX/IV_SWIPE_RATIO;
+    ivSwipeDX=0;
+    if(Math.abs(travelled)>IV_SWIPE_THRESHOLD){
+      ivGo(travelled<0?1:-1);
+      viewerSwipe=null;viewerPanStart=null;return;
+    }
+    $imageViewerImage.classList.add('iv-settling');applyViewerTransform();
+    setTimeout(()=>$imageViewerImage.classList.remove('iv-settling'),240);
+  }
   const remaining=[...viewerPointers.values()][0];
   viewerPanStart=remaining?{x:remaining.x,y:remaining.y,baseX:viewerX,baseY:viewerY}:null;
+  viewerSwipe=remaining&&viewerScale<=1?{x:remaining.x,y:remaining.y,locked:null}:null;
+  if(!remaining&&!ivMoved&&e.pointerType!=='mouse'){
+    const now=Date.now();
+    if(now-ivLastTap<300){ivLastTap=0;if(viewerScale>1)resetViewerZoom();else zoomAt(2.5,e.clientX,e.clientY)}
+    else ivLastTap=now;
+  }
 }
 $imageViewerImage.addEventListener('pointerup',endViewerPointer);
 $imageViewerImage.addEventListener('pointercancel',endViewerPointer);
-$imageViewer.addEventListener('wheel',e=>{e.preventDefault();setViewerScale(viewerScale*(e.deltaY<0?1.15:.87))},{passive:false});
+$imageViewerImage.addEventListener('dblclick',e=>{
+  e.preventDefault();
+  if(viewerScale>1)resetViewerZoom();else zoomAt(2.5,e.clientX,e.clientY);
+});
+$imageViewer.addEventListener('wheel',e=>{e.preventDefault();zoomAt(viewerScale*(e.deltaY<0?1.15:.87),e.clientX,e.clientY)},{passive:false});
 document.addEventListener('click',e=>{
   const link=e.target.closest('.markdown-image-link,[data-image-preview]');
-  if(!link)return;e.preventDefault();openImageViewer(link.href||link.dataset.imagePreview,e.target.alt||'图片预览');
+  if(!link)return;e.preventDefault();
+  openImageViewer(link.href||link.dataset.imagePreview,e.target.alt||'图片预览',e.target);
 });
 function renderInline(raw){
   const tokens=[];
@@ -764,11 +940,21 @@ function createImageResult(url){
 function replaceSkeletonWithImage(jobId,url){
   const href=safeHref(url);if(!href)return;
   const placeholder=imagePlaceholders[jobId];const preload=new Image();let settled=false;
+  // The skeleton was appended when the job was created, so by now the agent reply
+  // and tool cards usually sit below it. Drop it and append the image as a fresh
+  // bubble at the bottom instead of swapping it in mid-conversation.
   const show=()=>{
     if(settled)return;settled=true;
+    if(placeholder&&placeholder.isConnected)placeholder.remove();
+    delete imagePlaceholders[jobId];
     const result=createImageResult(href);
-    if(placeholder&&placeholder.isConnected)placeholder.replaceWith(result);else $msgs.appendChild(result);
-    delete imagePlaceholders[jobId];scrollBottom();
+    $msgs.appendChild(result);
+    // This is what the user has been waiting for, so jump to it even if they
+    // scrolled away, then re-anchor once the <img> reports its real height.
+    autoFollowMessages=true;scrollBottom(true);
+    const image=result.querySelector('img');
+    if(image&&!image.complete)image.addEventListener('load',()=>scrollBottom(true),{once:true});
+    else requestAnimationFrame(()=>scrollBottom(true));
   };
   preload.addEventListener('load',show,{once:true});preload.addEventListener('error',show,{once:true});preload.src=href;
 }
@@ -1004,7 +1190,7 @@ function renderGallery(){
     const el=document.createElement('div');el.className='gallery-img-wrap';
     const href=safeHref(img.url);if(!href)return;
     const image=document.createElement('img');image.src=href;image.alt=img.sourceText||'image';image.loading='lazy';
-    image.addEventListener('click',()=>openImageViewer(href,image.alt));
+    image.addEventListener('click',()=>openImageViewer(href,image.alt,image));
     const meta=document.createElement('div');meta.className='gallery-meta';meta.textContent=jobId.slice(0,12)+'…';
     el.append(image,meta);
     $g.appendChild(el);
@@ -1129,7 +1315,7 @@ async function init(){
 }
 
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=11',{scope:'/',updateViaCache:'none'})
+  navigator.serviceWorker.register('/sw.js?v=12',{scope:'/',updateViaCache:'none'})
     .then(registration=>registration.update()).catch(()=>{});
 }
 if(token){hideLogin();init()}
