@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from "vue";
 import type { ChatMessage } from "../stores/messages";
+import { activeVoiceId, voiceEnabled } from "../stores/voice";
 import { renderExplicitImages, renderMarkdown } from "../utils/markdown";
+import {
+  getSpeechError,
+  getSpeechStatus,
+  speakMessage,
+  stopSpeech,
+  unlockAudio,
+} from "../utils/speech";
 
 const props = defineProps<{ message: ChatMessage }>();
 const emit = defineEmits<{
@@ -31,6 +39,21 @@ const showToolbar = computed(
     props.message.status === "done" &&
     (Boolean(props.message.text.trim()) || props.message.images.length > 0),
 );
+
+const canSpeak = computed(
+  () =>
+    voiceEnabled.value &&
+    props.message.role === "agent" &&
+    props.message.status === "done" &&
+    Boolean(props.message.text.trim()),
+);
+const currentSpeechStatus = computed(() => getSpeechStatus(props.message.id));
+const speechLabel = computed(() => {
+  if (currentSpeechStatus.value === "loading") return "生成中…";
+  if (currentSpeechStatus.value === "playing") return "停止";
+  return "朗读";
+});
+const speechTitle = computed(() => getSpeechError(props.message.id) || speechLabel.value);
 
 function elapsedLabel(): string {
   const elapsed = props.message.meta.elapsedMs;
@@ -76,8 +99,20 @@ function cancelEditing(): void {
 }
 
 function saveEditing(): void {
+  stopSpeech(props.message.id);
   emit("edit", props.message.id, editDraft.value);
   editing.value = false;
+}
+
+function toggleSpeech(): void {
+  if (currentSpeechStatus.value !== "idle") {
+    stopSpeech(props.message.id);
+    return;
+  }
+  // This runs synchronously inside the click gesture; the TTS fetch happens
+  // afterwards and therefore cannot be trusted to unlock iOS audio by itself.
+  void unlockAudio();
+  void speakMessage(props.message.id, props.message.text, activeVoiceId());
 }
 
 function handleContentClick(event: MouseEvent): void {
@@ -91,6 +126,7 @@ function handleContentClick(event: MouseEvent): void {
 
 onBeforeUnmount(() => {
   if (copiedTimer !== null) window.clearTimeout(copiedTimer);
+  stopSpeech(props.message.id);
 });
 </script>
 
@@ -136,6 +172,21 @@ onBeforeUnmount(() => {
         <button type="button" @click="emit('retry', message.id)">重试</button>
       </div>
       <div v-else-if="showToolbar && !editing" class="message-toolbar">
+        <button
+          v-if="canSpeak"
+          class="message-speak"
+          type="button"
+          :data-state="currentSpeechStatus"
+          :title="speechTitle"
+          :aria-label="speechLabel"
+          @click="toggleSpeech"
+        >
+          <span v-if="currentSpeechStatus === 'loading'" class="speech-spinner" aria-hidden="true"></span>
+          <span v-else-if="currentSpeechStatus === 'playing'" class="speech-wave" aria-hidden="true">
+            <i></i><i></i><i></i><i></i>
+          </span>
+          <span>{{ speechLabel }}</span>
+        </button>
         <button v-if="message.text" type="button" @click="void copyText()">
           {{ copied ? "✓ 已复制" : "复制" }}
         </button>

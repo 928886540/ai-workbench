@@ -387,6 +387,73 @@ h1 {
   color: #1768b7;
 }
 
+.message-speak {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.message-speak[data-state="loading"],
+.message-speak[data-state="playing"] {
+  color: #1768b7;
+}
+
+.speech-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #c9d9e9;
+  border-top-color: #2783de;
+  border-radius: 50%;
+  animation: speech-spin 0.7s linear infinite;
+}
+
+.speech-wave {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 12px;
+}
+
+.speech-wave i {
+  width: 2px;
+  height: 9px;
+  border-radius: 1px;
+  background: currentcolor;
+  animation: speech-wave 0.9s ease-in-out infinite;
+}
+
+.speech-wave i:nth-child(2) {
+  height: 12px;
+  animation-delay: 0.15s;
+}
+
+.speech-wave i:nth-child(3) {
+  height: 7px;
+  animation-delay: 0.3s;
+}
+
+.speech-wave i:nth-child(4) {
+  height: 10px;
+  animation-delay: 0.45s;
+}
+
+@keyframes speech-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes speech-wave {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+
+  50% {
+    transform: scaleY(1);
+  }
+}
+
 .message-toolbar span {
   margin-left: auto;
 }
@@ -833,6 +900,23 @@ h1 {
 
 .settings-status[data-tone="error"] {
   color: #c23e50;
+}
+
+.audio-unlock {
+  position: fixed;
+  z-index: 30;
+  bottom: calc(82px + env(safe-area-inset-bottom));
+  left: 50%;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 22px;
+  background: #10233d;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 750;
+  box-shadow: 0 8px 28px rgb(8 18 32 / 28%);
+  transform: translateX(-50%);
 }
 
 .voice-settings__header {

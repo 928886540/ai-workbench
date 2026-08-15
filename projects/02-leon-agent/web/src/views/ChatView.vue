@@ -22,6 +22,18 @@ import {
   hydrateImageState,
   upsertImageTask,
 } from "../stores/images";
+import {
+  activeVoiceId,
+  autoplayAll,
+  clearVoiceCatalog,
+  loadVoiceCatalog,
+} from "../stores/voice";
+import {
+  audioUnlockRequired,
+  clearSpeechState,
+  speakMessage,
+  unlockAudio,
+} from "../utils/speech";
 
 const authenticated = ref(false);
 const booting = ref(true);
@@ -43,6 +55,7 @@ const pendingAssistantId = ref<string | null>(null);
 let eventSource: EventSource | null = null;
 let reconnectTimer: number | null = null;
 let lastAgentErrorAt = 0;
+const autoplayRequests = new Set<string>();
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
@@ -149,20 +162,45 @@ function pendingAssistant(): ChatMessage | null {
   return findMessage(pendingAssistantId.value);
 }
 
+function ensureVoiceCatalog(): Promise<boolean> {
+  return loadVoiceCatalog().catch(() => false);
+}
+
+function maybeAutoplay(message: ChatMessage): void {
+  if (
+    message.role !== "agent" ||
+    message.status !== "done" ||
+    !message.text.trim() ||
+    !autoplayAll.value ||
+    autoplayRequests.has(message.id)
+  ) {
+    return;
+  }
+  autoplayRequests.add(message.id);
+  void ensureVoiceCatalog().then((enabled) => {
+    if (!enabled || !autoplayAll.value) {
+      autoplayRequests.delete(message.id);
+      return;
+    }
+    void speakMessage(message.id, message.text, activeVoiceId());
+  });
+}
+
 function finishAssistant(content: string, status: "done" | "error" = "done"): void {
-  const current = pendingAssistant();
-  if (current) {
-    current.text = content;
-    current.status = status;
-    current.meta.finishedAt = Date.now();
-    current.meta.elapsedMs = current.meta.startedAt
-      ? current.meta.finishedAt - current.meta.startedAt
+  let completed = pendingAssistant();
+  if (completed) {
+    completed.text = content;
+    completed.status = status;
+    completed.meta.finishedAt = Date.now();
+    completed.meta.elapsedMs = completed.meta.startedAt
+      ? completed.meta.finishedAt - completed.meta.startedAt
       : null;
   } else if (content) {
-    appendMessage(makeMessage("agent", content, status));
+    completed = appendMessage(makeMessage("agent", content, status));
   }
   pendingAssistantId.value = null;
   taskStatus.value = "";
+  if (completed) maybeAutoplay(completed);
   scrollToLatest();
 }
 
@@ -273,6 +311,7 @@ async function openSession(): Promise<void> {
   authenticated.value = true;
   connectEvents();
   void loadImageState();
+  void ensureVoiceCatalog();
 }
 
 async function bootstrap(): Promise<void> {
@@ -318,6 +357,9 @@ function logout(): void {
   activeView.value = "chat";
   previewUrl.value = "";
   pendingAssistantId.value = null;
+  autoplayRequests.clear();
+  clearSpeechState();
+  clearVoiceCatalog();
   setConnection("已退出", "neutral");
 }
 
@@ -350,9 +392,11 @@ async function sendMessage(): Promise<void> {
         // fallback bubble instead of creating a duplicate after a mobile race.
         pendingAssistantId.value = current.id;
       }
+      maybeAutoplay(current);
     } else {
       const fallback = appendMessage(makeMessage("agent", response.answer, response.ok ? "done" : "error"));
       pendingAssistantId.value = fallback.id;
+      maybeAutoplay(fallback);
     }
   } catch (error) {
     // The Gateway publishes agent.error before returning HTTP 500. Mirror the
@@ -375,7 +419,10 @@ function handleComposerKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(() => void bootstrap());
-onBeforeUnmount(closeEvents);
+onBeforeUnmount(() => {
+  closeEvents();
+  clearSpeechState();
+});
 </script>
 
 <template>
@@ -453,6 +500,15 @@ onBeforeUnmount(closeEvents);
       <SettingsView v-else :session-id="api.sessionId" />
 
       <BottomNav :active="activeView" @select="selectView" />
+
+      <button
+        v-if="audioUnlockRequired"
+        class="audio-unlock"
+        type="button"
+        @click="void unlockAudio()"
+      >
+        🔈 点击开启语音播放
+      </button>
 
       <div
         v-if="previewUrl"

@@ -154,6 +154,37 @@ export class LeonApi {
     return this.request<VoiceCatalogResponse>(`/api/voice/catalog${suffix}`);
   }
 
+  async synthesizeSpeech(
+    text: string,
+    voiceId?: string,
+    signal?: AbortSignal,
+  ): Promise<Blob> {
+    const headers = new Headers({ "Content-Type": "application/json" });
+    if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
+    const response = await fetch("/api/agent/tts", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text, voice_id: voiceId || undefined }),
+      signal,
+    });
+    if (response.status === 401) {
+      this.logout();
+      throw new ApiError(401, "Token 已失效，请重新登录");
+    }
+    if (!response.ok) {
+      const raw = await response.text();
+      let detail = raw;
+      try {
+        const payload = JSON.parse(raw) as { detail?: string; error?: string };
+        detail = payload.detail || payload.error || raw;
+      } catch {
+        // A proxy may return plain text or HTML instead of JSON.
+      }
+      throw new ApiError(response.status, detail.replace(/<[^>]+>/g, " ").trim());
+    }
+    return response.blob();
+  }
+
   connectEvents(
     sessionId: string,
     onEvent: (event: LeonEvent) => void,
