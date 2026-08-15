@@ -217,14 +217,42 @@ h1 {
   gap: 12px;
 }
 
+.messages-stage {
+  position: relative;
+  min-height: 0;
+}
+
 .messages-panel {
   min-height: 0;
+  height: 100%;
   overflow-y: auto;
   padding: 16px 4px 12px;
   border: 1px solid #d8e6f4;
   border-radius: 20px;
   background: rgb(255 255 255 / 72%);
   scroll-behavior: smooth;
+}
+
+.scroll-to-latest {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 13px;
+  border: 1px solid #b9d4ed;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 96%);
+  color: #1768b7;
+  font-size: 12px;
+  font-weight: 750;
+  box-shadow: 0 8px 22px rgb(30 80 130 / 18%);
+}
+
+.scroll-to-latest:hover,
+.scroll-to-latest:focus-visible {
+  outline: none;
+  background: #eaf4ff;
 }
 
 .empty-state {

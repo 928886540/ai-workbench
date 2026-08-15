@@ -58,6 +58,8 @@ const previewDialog = ref<HTMLElement | null>(null);
 const messagesPanel = ref<HTMLElement | null>(null);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const modeSuggestionList = ref<HTMLElement | null>(null);
+const autoFollowMessages = ref(true);
+const showScrollToLatest = ref(false);
 const pendingAssistantId = ref<string | null>(null);
 const modeSuggestions = ref<ImageMode[]>([]);
 const modeSuggestionIndex = ref(0);
@@ -72,6 +74,7 @@ let lastAgentErrorAt = 0;
 const autoplayRequests = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 42;
 const COMPOSER_MAX_HEIGHT = 120;
+const SCROLL_FOLLOW_THRESHOLD = 72;
 
 interface ModeCompletionContext {
   prefix: string;
@@ -143,6 +146,11 @@ function selectModeSuggestion(item: ImageMode): void {
 function resizeComposer(): void {
   const textarea = composerInput.value;
   if (!textarea) return;
+  if (!textarea.value) {
+    textarea.style.height = `${COMPOSER_MIN_HEIGHT}px`;
+    textarea.style.overflowY = "hidden";
+    return;
+  }
   textarea.style.height = "auto";
   const contentHeight = Math.max(textarea.scrollHeight, COMPOSER_MIN_HEIGHT);
   const nextHeight = Math.min(contentHeight, COMPOSER_MAX_HEIGHT);
@@ -200,10 +208,36 @@ function setConnection(label: string, tone: "neutral" | "ok" | "error"): void {
   connectionTone.value = tone;
 }
 
-function scrollToLatest(): void {
+function updateMessageScrollState(): void {
+  const panel = messagesPanel.value;
+  if (!panel) return;
+  const distanceFromBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight;
+  const atLatest = distanceFromBottom <= SCROLL_FOLLOW_THRESHOLD;
+  autoFollowMessages.value = atLatest;
+  showScrollToLatest.value = !atLatest && panel.scrollHeight > panel.clientHeight;
+}
+
+function handleMessagesScroll(): void {
+  updateMessageScrollState();
+}
+
+function scrollToLatest(force = false): void {
+  if (force) {
+    autoFollowMessages.value = true;
+    showScrollToLatest.value = false;
+  }
+  if (!force && !autoFollowMessages.value) return;
   void nextTick(() => {
     const panel = messagesPanel.value;
-    if (panel) panel.scrollTop = panel.scrollHeight;
+    if (!panel) return;
+    // Keep the existing smooth-scroll CSS for user navigation, but make event
+    // driven follow-up immediate so a delta cannot expose an intermediate
+    // position and accidentally disable follow mode.
+    const previousBehavior = panel.style.scrollBehavior;
+    panel.style.scrollBehavior = "auto";
+    panel.scrollTop = panel.scrollHeight;
+    panel.style.scrollBehavior = previousBehavior;
+    updateMessageScrollState();
   });
 }
 
@@ -243,9 +277,10 @@ function refreshImageState(): void {
 }
 
 function selectView(view: WorkbenchView): void {
+  hideModeSuggestions();
   activeView.value = view;
   if (view === "tasks" || view === "gallery") void loadImageState();
-  if (view === "chat") scrollToLatest();
+  if (view === "chat") scrollToLatest(true);
 }
 
 function retryMessage(messageId: string): void {
@@ -289,7 +324,7 @@ function appendHistory(history: Array<{ role: string; content: string }>): void 
     if (item.role !== "user" && item.role !== "assistant") continue;
     appendMessage(makeMessage(item.role === "assistant" ? "agent" : "user", item.content));
   }
-  scrollToLatest();
+  scrollToLatest(true);
 }
 
 function pendingAssistant(): ChatMessage | null {
@@ -544,6 +579,8 @@ function logout(): void {
   imageStateLoaded.value = false;
   imageStateError.value = "";
   activeView.value = "chat";
+  autoFollowMessages.value = true;
+  showScrollToLatest.value = false;
   previewUrl.value = "";
   pendingAssistantId.value = null;
   autoplayRequests.clear();
@@ -566,7 +603,7 @@ async function sendMessage(): Promise<void> {
   void nextTick(resizeComposer);
   sending.value = true;
   taskStatus.value = "正在发送…";
-  scrollToLatest();
+  scrollToLatest(true);
   try {
     const response = await api.sendMessage(api.sessionId, content);
     // SSE normally supplies the completed bubble. This fallback keeps the turn
@@ -677,20 +714,36 @@ onBeforeUnmount(() => {
       </header>
 
       <section v-if="activeView === 'chat'" class="chat-view" aria-label="聊天">
-        <div ref="messagesPanel" class="messages-panel" aria-live="polite">
-          <div v-if="!messages.length" class="empty-state">
-            <strong>开始一段对话</strong>
-            <span>普通聊天和生图请求都会沿用现有 Gateway 协议。</span>
+        <div class="messages-stage">
+          <div
+            ref="messagesPanel"
+            class="messages-panel"
+            aria-live="polite"
+            @scroll="handleMessagesScroll"
+          >
+            <div v-if="!messages.length" class="empty-state">
+              <strong>开始一段对话</strong>
+              <span>普通聊天和生图请求都会沿用现有 Gateway 协议。</span>
+            </div>
+            <MessageBubble
+              v-for="message in messages"
+              :key="message.id"
+              :message="message"
+              @retry="retryMessage"
+              @edit="editMessage"
+              @preview="openPreview"
+              @media-loaded="scrollToLatest"
+            />
           </div>
-          <MessageBubble
-            v-for="message in messages"
-            :key="message.id"
-            :message="message"
-            @retry="retryMessage"
-            @edit="editMessage"
-            @preview="openPreview"
-            @media-loaded="scrollToLatest"
-          />
+          <button
+            v-if="showScrollToLatest"
+            class="scroll-to-latest"
+            type="button"
+            aria-label="回到最新消息"
+            @click="scrollToLatest(true)"
+          >
+            ↓ 回到最新
+          </button>
         </div>
 
         <p v-if="taskStatus" class="task-status">{{ taskStatus }}</p>

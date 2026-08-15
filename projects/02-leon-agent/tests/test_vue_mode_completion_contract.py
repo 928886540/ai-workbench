@@ -84,11 +84,16 @@ def test_mode_completion_renders_an_accessible_keyboard_and_touch_picker() -> No
         '@click="selectModeSuggestion(item)"',
         "{{ item.name }}",
         "{{ item.id }}",
-        '@input="void updateModeSuggestions()"',
         '@blur="scheduleHideModeSuggestions"',
     ):
         assert fragment in chat, fragment
     assert "@pointerdown.prevent" in chat or "@mousedown.prevent" in chat
+    assert '@input="void updateModeSuggestions()"' in chat or '@input="handleComposerInput"' in chat
+    if '@input="handleComposerInput"' in chat:
+        handler = chat.split("function handleComposerInput", 1)[1].split(
+            "function handleComposerFocus", 1
+        )[0]
+        assert "void updateModeSuggestions();" in handler
 
     keydown = chat.split("function handleComposerKeydown", 1)[1].split("onMounted", 1)[0]
     # Completion consumes Enter before the ordinary send branch.  Once the

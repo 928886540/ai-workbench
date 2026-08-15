@@ -481,6 +481,20 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 any(call["path"] == "/api/image-modes" for call in gateway.calls),
             )
 
+            composer.fill("第一行\n第二行\n第三行\n第四行\n第五行\n第六行")
+            expanded_height = float(
+                composer.evaluate("element => parseFloat(getComputedStyle(element).height)")
+            )
+            composer.fill("")
+            collapsed_height = float(
+                composer.evaluate("element => parseFloat(getComputedStyle(element).height)")
+            )
+            check(
+                "多行输入自动增高并限制在五行预算",
+                42 < expanded_height <= 120.5 and collapsed_height <= 43,
+                f"展开={expanded_height}px，清空={collapsed_height}px",
+            )
+
             composer.fill("普通 provider-free 消息")
             composer.press("Enter")
             agent_bubble = page.locator(".message-row[data-role='agent'] .message-content").last
@@ -497,6 +511,40 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 and message_calls[-1]["body"].get("content") == "普通 provider-free 消息",
                 repr(message_calls[-1]["body"] if message_calls else None),
             )
+
+            for index in range(24):
+                page.evaluate(
+                    "([event, data]) => window.__leonEmit(event, data)",
+                    ["assistant.notice", {"content": f"滚动占位消息 {index + 1}"}],
+                )
+            messages_panel = page.locator(".messages-panel")
+            page.locator(".message-row").nth(20).wait_for(state="visible")
+            messages_panel.evaluate(
+                "element => { const behavior = element.style.scrollBehavior; "
+                "element.style.scrollBehavior = 'auto'; element.scrollTop = 0; "
+                "element.style.scrollBehavior = behavior; "
+                "element.dispatchEvent(new Event('scroll')); }"
+            )
+            jump_to_latest = page.get_by_role("button", name="回到最新消息")
+            jump_to_latest.wait_for(state="visible")
+            scroll_before = float(messages_panel.evaluate("element => element.scrollTop"))
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["assistant.notice", {"content": "上滚后的新消息"}],
+            )
+            page.wait_for_timeout(50)
+            scroll_after = float(messages_panel.evaluate("element => element.scrollTop"))
+            check(
+                "用户上滚后新消息不会强制拉回底部",
+                scroll_after <= scroll_before + 2,
+                f"before={scroll_before}，after={scroll_after}",
+            )
+            jump_to_latest.click()
+            page.wait_for_function(
+                "() => { const panel = document.querySelector('.messages-panel'); "
+                "return panel && panel.scrollHeight - panel.scrollTop - panel.clientHeight <= 72; }"
+            )
+            check("回到最新按钮恢复自动跟随", not jump_to_latest.is_visible())
 
             voice_payload = {
                 "clip_id": "clip-vue-e2e",

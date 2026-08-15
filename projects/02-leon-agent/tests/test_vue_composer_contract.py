@@ -19,6 +19,8 @@ def test_composer_auto_grow_clamps_to_five_line_budget() -> None:
         "const COMPOSER_MIN_HEIGHT = 42;",
         "const COMPOSER_MAX_HEIGHT = 120;",
         "function resizeComposer(): void",
+        "if (!textarea.value) {",
+        "textarea.style.height = `${COMPOSER_MIN_HEIGHT}px`;",
         'textarea.style.height = "auto"',
         "Math.min(contentHeight, COMPOSER_MAX_HEIGHT)",
         'textarea.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden"',
