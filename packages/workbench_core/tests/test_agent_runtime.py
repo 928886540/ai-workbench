@@ -1,6 +1,5 @@
 import json
 import threading
-import time
 
 import pytest
 from workbench_core.agent import AgentCancelled, AgentRuntime, AgentTool, ToolRegistry
@@ -238,7 +237,6 @@ def test_agent_runtime_discards_late_blocking_llm_result() -> None:
     worker.start()
     assert started.wait(timeout=1)
     cancel_event.set()
-    time.sleep(0.02)
     assert worker.is_alive()
     release.set()
     worker.join(timeout=1)
