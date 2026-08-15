@@ -881,12 +881,15 @@ class LeonConsole:
             return False
         if message == "/new":
             self.new_session()
+            self._check_active_turn()
             return True
         if message == "/history":
             self.show_history()
+            self._check_active_turn()
             return True
         if message == "/status":
             self.show_status()
+            self._check_active_turn()
             return True
         if message == "/clear":
             ui = getattr(self, "ui", None)
@@ -895,12 +898,15 @@ class LeonConsole:
                 ui._set_status(TerminalChatUI._IDLE_STATUS)
             else:
                 self.console.clear()
+            self._check_active_turn()
             return True
         if message == "/model":
             self.show_models()
+            self._check_active_turn()
             return True
         if message.startswith("/model "):
             self.switch_model(message.removeprefix("/model "))
+            self._check_active_turn()
             return True
         if message == "/help":
             self.print(
@@ -919,6 +925,7 @@ class LeonConsole:
                     border_style="dim",
                 )
             )
+            self._check_active_turn()
             return True
         if message.startswith("/"):
             self.print(
