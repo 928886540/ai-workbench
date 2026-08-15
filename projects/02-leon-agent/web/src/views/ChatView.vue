@@ -11,10 +11,13 @@ import {
   appendMessage,
   clearMessages,
   findMessage,
+  hasVoiceClip,
+  insertMessageBefore,
   latestMessage,
   makeMessage,
   messages,
   type ChatMessage,
+  type VoiceClip,
 } from "../stores/messages";
 import {
   clearImageState,
@@ -30,7 +33,9 @@ import {
 } from "../stores/voice";
 import {
   audioUnlockRequired,
+  buildVoiceClipUrl,
   clearSpeechState,
+  playVoiceClip,
   speakMessage,
   unlockAudio,
 } from "../utils/speech";
@@ -204,6 +209,45 @@ function finishAssistant(content: string, status: "done" | "error" = "done"): vo
   scrollToLatest();
 }
 
+function parseVoiceClip(data: Record<string, unknown>): VoiceClip | null {
+  const clipId = asString(data.clip_id).trim();
+  if (!clipId) return null;
+  const rawUrl = asString(data.url).trim() || `/api/voice/clips/${encodeURIComponent(clipId)}`;
+  const url = buildVoiceClipUrl(rawUrl, api.token);
+  // Never put an untrusted URL into messages[]: MessageBubble also exposes it
+  // to a native <audio> element, which cannot attach an Authorization header.
+  if (!url) return null;
+  const rawBytes = Number(data.bytes);
+  return {
+    clipId,
+    url,
+    text: asString(data.text),
+    voiceId: asString(data.voice_id) || null,
+    voiceName: asString(data.voice_name) || "语音",
+    bytes: Number.isFinite(rawBytes) && rawBytes >= 0 ? Math.trunc(rawBytes) : 0,
+  };
+}
+
+function handleVoiceReady(data: Record<string, unknown>): void {
+  const clip = parseVoiceClip(data);
+  if (!clip || hasVoiceClip(clip.clipId)) return;
+
+  const message = makeMessage("agent", clip.text, "done");
+  // A stable id makes keyed Vue updates deterministic if the same SSE payload
+  // is replayed after a reconnect. The clip-id check above remains the source
+  // of truth for de-duplication.
+  message.id = `voice_${clip.clipId}`;
+  message.audio = clip;
+  message.voice = clip;
+  const pending = pendingAssistant();
+  insertMessageBefore(message, pending?.id || null);
+  scrollToLatest();
+
+  // This is an explicit agent request, not the user's "autoplay all answers"
+  // preference. The singleton player handles browser unlock/pending playback.
+  void playVoiceClip(message.id, clip.url, api.token);
+}
+
 function handleEvent(event: LeonEvent): void {
   const data = event.data || {};
   switch (event.event) {
@@ -225,8 +269,20 @@ function handleEvent(event: LeonEvent): void {
       scrollToLatest();
       break;
     }
+    case "assistant.delta": {
+      const delta = asString(data.delta);
+      if (!delta) break;
+      const message = pendingAssistant() || appendMessage(makeMessage("agent", "", "streaming"));
+      message.status = "streaming";
+      message.meta.startedAt ||= Date.now();
+      message.text += delta;
+      pendingAssistantId.value = message.id;
+      taskStatus.value = "正在生成…";
+      scrollToLatest();
+      break;
+    }
     case "assistant.completed":
-      finishAssistant(asString(data.content));
+      finishAssistant(asString(data.content) || pendingAssistant()?.text || "");
       break;
     case "assistant.notice":
       if (data.content) appendMessage(makeMessage("agent", asString(data.content)));
@@ -263,6 +319,9 @@ function handleEvent(event: LeonEvent): void {
       scrollToLatest();
       break;
     }
+    case "voice.ready":
+      handleVoiceReady(data);
+      break;
     default:
       break;
   }

@@ -8,11 +8,14 @@ interface SpeechOperation {
   token: symbol;
   controller: AbortController | null;
   objectUrl: string | null;
+  /** A gateway clip URL. Unlike a Blob URL, this must never be revoked. */
+  remoteUrl: string | null;
 }
 
 interface PendingSpeech {
   messageId: string;
-  objectUrl: string;
+  objectUrl: string | null;
+  remoteUrl?: string | null;
 }
 
 const SILENT_MP3 =
@@ -48,16 +51,32 @@ function revokeObjectUrl(url: string | null): void {
   if (url && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(url);
 }
 
+function sourceUrl(operation: SpeechOperation): string | null {
+  return operation.remoteUrl || operation.objectUrl;
+}
+
+function cleanupOperation(operation: SpeechOperation): void {
+  // Remote `/api/voice/clips/` URLs belong to the gateway and stay usable by
+  // the native audio control after singleton playback stops. Only local TTS
+  // Blob URLs are ours to revoke.
+  revokeObjectUrl(operation.objectUrl);
+}
+
+function cleanupPending(waiting: PendingSpeech): void {
+  revokeObjectUrl(waiting.objectUrl);
+}
+
 function finishActive(operation: SpeechOperation): void {
   if (active?.token !== operation.token) return;
   active = null;
-  revokeObjectUrl(operation.objectUrl);
+  cleanupOperation(operation);
   setStatus(operation.messageId, "idle");
 }
 
 async function playOperation(operation: SpeechOperation): Promise<boolean> {
   const audio = getPlayer();
-  if (!audio || !operation.objectUrl) {
+  const url = sourceUrl(operation);
+  if (!audio || !url) {
     finishActive(operation);
     errorState[operation.messageId] = "当前浏览器不支持音频播放";
     return false;
@@ -66,7 +85,7 @@ async function playOperation(operation: SpeechOperation): Promise<boolean> {
   const complete = (): void => finishActive(operation);
   audio.onended = complete;
   audio.onerror = complete;
-  audio.src = operation.objectUrl;
+  audio.src = url;
   audio.currentTime = 0;
   try {
     await audio.play();
@@ -79,12 +98,23 @@ async function playOperation(operation: SpeechOperation): Promise<boolean> {
     if (active?.token !== operation.token) return false;
     active = null;
     if (error instanceof DOMException && error.name === "NotAllowedError") {
-      pending = { messageId: operation.messageId, objectUrl: operation.objectUrl };
+      if (pending) cleanupPending(pending);
+      if (operation.remoteUrl) {
+        pending = {
+          messageId: operation.messageId,
+          objectUrl: operation.objectUrl,
+          remoteUrl: operation.remoteUrl,
+        };
+      } else {
+        // Keep the Blob-only shape explicit: local TTS URLs are the only
+        // pending payload that can ever need revocation.
+        pending = { messageId: operation.messageId, objectUrl: operation.objectUrl };
+      }
       audioUnlockRequired.value = true;
       setStatus(operation.messageId, "idle");
       return false;
     }
-    revokeObjectUrl(operation.objectUrl);
+    cleanupOperation(operation);
     setStatus(operation.messageId, "idle");
     errorState[operation.messageId] = error instanceof Error ? error.message : "音频播放失败";
     return false;
@@ -100,6 +130,7 @@ async function playPendingSpeech(): Promise<boolean> {
     token: Symbol(waiting.messageId),
     controller: null,
     objectUrl: waiting.objectUrl,
+    remoteUrl: waiting.remoteUrl || null,
   };
   active = operation;
   setStatus(operation.messageId, "loading");
@@ -150,7 +181,7 @@ export function stopSpeech(messageId?: string): void {
   if (pending && (!messageId || pending.messageId === messageId)) {
     const waiting = pending;
     pending = null;
-    revokeObjectUrl(waiting.objectUrl);
+    cleanupPending(waiting);
     setStatus(waiting.messageId, "idle");
   }
 
@@ -160,7 +191,7 @@ export function stopSpeech(messageId?: string): void {
     operation.controller?.abort();
     const audio = getPlayer();
     audio?.pause();
-    revokeObjectUrl(operation.objectUrl);
+    cleanupOperation(operation);
     setStatus(operation.messageId, "idle");
   }
   if (!pending) audioUnlockRequired.value = false;
@@ -185,6 +216,7 @@ export async function speakMessage(
     token: Symbol(messageId),
     controller,
     objectUrl: null,
+    remoteUrl: null,
   };
   active = operation;
   setStatus(messageId, "loading");
@@ -204,6 +236,65 @@ export async function speakMessage(
     return false;
   }
 }
+
+/**
+ * Normalize a gateway voice clip URL before placing it in an audio element.
+ * Only same-origin `/api/voice/clips/{clip_id}` paths are accepted; any
+ * caller-supplied token is replaced with the current session token.
+ */
+export function buildVoiceClipUrl(rawUrl: string, token?: string): string | null {
+  const raw = String(rawUrl || "").trim();
+  if (!raw) return null;
+  const origin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw, origin);
+  } catch {
+    return null;
+  }
+  if (
+    parsed.origin !== origin ||
+    !/^\/api\/voice\/clips\/[^/?#]+$/.test(parsed.pathname)
+  ) {
+    return null;
+  }
+  if (token !== undefined) {
+    parsed.searchParams.delete("token");
+    const cleanToken = String(token || "").trim();
+    if (cleanToken) parsed.searchParams.set("token", cleanToken);
+  }
+  parsed.hash = "";
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+/** Play an already-generated gateway clip through the shared singleton. */
+export async function playVoiceClip(
+  messageId: string,
+  url: string,
+  token?: string,
+): Promise<boolean> {
+  const safeUrl = buildVoiceClipUrl(url, token);
+  if (!safeUrl) {
+    errorState[messageId] = "语音地址不受信任";
+    setStatus(messageId, "idle");
+    return false;
+  }
+  stopSpeech();
+  delete errorState[messageId];
+  const operation: SpeechOperation = {
+    messageId,
+    token: Symbol(messageId),
+    controller: null,
+    objectUrl: null,
+    remoteUrl: safeUrl,
+  };
+  active = operation;
+  setStatus(messageId, "loading");
+  return playOperation(operation);
+}
+
+// Name used by a few callers that describe the payload as a remote clip.
+export const playRemoteClip = playVoiceClip;
 
 export function clearSpeechState(): void {
   stopSpeech();

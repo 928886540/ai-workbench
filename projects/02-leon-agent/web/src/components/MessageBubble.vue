@@ -33,10 +33,14 @@ const renderedBody = computed(() => {
   )}`;
 });
 
+const voiceClip = computed(() => props.message.audio || props.message.voice || null);
+const isVoiceMessage = computed(() => voiceClip.value !== null);
+
 const showToolbar = computed(
   () =>
     props.message.role === "agent" &&
     props.message.status === "done" &&
+    !isVoiceMessage.value &&
     (Boolean(props.message.text.trim()) || props.message.images.length > 0),
 );
 
@@ -45,6 +49,7 @@ const canSpeak = computed(
     voiceEnabled.value &&
     props.message.role === "agent" &&
     props.message.status === "done" &&
+    !isVoiceMessage.value &&
     Boolean(props.message.text.trim()),
 );
 const currentSpeechStatus = computed(() => getSpeechStatus(props.message.id));
@@ -59,6 +64,15 @@ function elapsedLabel(): string {
   const elapsed = props.message.meta.elapsedMs;
   if (elapsed === null) return "";
   return elapsed < 1000 ? `${elapsed}ms` : `${(elapsed / 1000).toFixed(1)}s`;
+}
+
+function voiceSizeLabel(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function copyText(): Promise<void> {
@@ -85,6 +99,7 @@ async function copyText(): Promise<void> {
 }
 
 function startEditing(): void {
+  if (isVoiceMessage.value) return;
   editDraft.value = props.message.text;
   editing.value = true;
   void nextTick(() => {
@@ -133,7 +148,7 @@ onBeforeUnmount(() => {
 <template>
   <article class="message-row" :data-role="message.role">
     <div class="message-stack">
-      <template v-if="editing">
+      <template v-if="editing && !isVoiceMessage">
         <textarea
           ref="editor"
           v-model="editDraft"
@@ -156,6 +171,25 @@ onBeforeUnmount(() => {
         @load.capture="emit('mediaLoaded')"
       >
         <p v-if="message.status === 'error'" class="message-text">{{ message.text }}</p>
+        <div v-else-if="voiceClip" class="voice-bubble" data-kind="voice">
+          <div class="voice-bubble__meta">
+            <span class="voice-bubble__name">🔊 {{ voiceClip.voiceName || "语音" }}</span>
+            <span v-if="voiceSizeLabel(voiceClip.bytes)" class="voice-bubble__size">
+              {{ voiceSizeLabel(voiceClip.bytes) }}
+            </span>
+          </div>
+          <audio
+            class="voice-bubble__audio"
+            controls
+            preload="metadata"
+            playsinline
+            :src="voiceClip.url"
+            @loadedmetadata="emit('mediaLoaded')"
+          ></audio>
+          <p v-if="voiceClip.text || message.text" class="voice-bubble__text">
+            {{ voiceClip.text || message.text }}
+          </p>
+        </div>
         <div
           v-else-if="message.role === 'agent' && renderedBody"
           class="message-content"
@@ -166,12 +200,12 @@ onBeforeUnmount(() => {
       </div>
 
       <div
-        v-if="message.role === 'agent' && message.status === 'error'"
+        v-if="!isVoiceMessage && message.role === 'agent' && message.status === 'error'"
         class="message-toolbar"
       >
         <button type="button" @click="emit('retry', message.id)">重试</button>
       </div>
-      <div v-else-if="showToolbar && !editing" class="message-toolbar">
+      <div v-else-if="!isVoiceMessage && showToolbar && !editing" class="message-toolbar">
         <button
           v-if="canSpeak"
           class="message-speak"

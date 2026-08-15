@@ -3,12 +3,31 @@ import { computed, ref } from "vue";
 export type MessageRole = "user" | "agent" | "system";
 export type MessageStatus = "pending" | "streaming" | "done" | "error";
 
+/**
+ * An audio clip emitted by the agent's `speak_text` tool.
+ *
+ * The gateway uses snake_case on the wire; the store keeps a small normalized
+ * object so components never have to know about the SSE payload shape.
+ */
+export interface VoiceClip {
+  clipId: string;
+  url: string;
+  text: string;
+  voiceId: string | null;
+  voiceName: string;
+  bytes: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
   text: string;
   status: MessageStatus;
   images: string[];
+  /** Canonical payload for an agent-initiated voice message. */
+  audio?: VoiceClip;
+  /** Alias retained for callers that refer to the payload as a voice clip. */
+  voice?: VoiceClip;
   meta: {
     model: string | null;
     startedAt: number | null;
@@ -52,6 +71,30 @@ export function makeMessage(
 export function appendMessage(message: ChatMessage): ChatMessage {
   messages.value.push(message);
   return message;
+}
+
+/** Insert a message before an existing message, or append when the anchor is gone. */
+export function insertMessageBefore(
+  message: ChatMessage,
+  beforeId: string | null,
+): ChatMessage {
+  if (beforeId) {
+    const index = messages.value.findIndex((item) => item.id === beforeId);
+    if (index >= 0) {
+      messages.value.splice(index, 0, message);
+      return message;
+    }
+  }
+  messages.value.push(message);
+  return message;
+}
+
+export function hasVoiceClip(clipId: string): boolean {
+  if (!clipId) return false;
+  return messages.value.some(
+    (message) =>
+      message.audio?.clipId === clipId || message.voice?.clipId === clipId,
+  );
 }
 
 export function clearMessages(): void {
