@@ -3,7 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
 import MessageBubble from "../components/MessageBubble.vue";
-import { ApiError, api, type LeonEvent } from "../api/client";
+import { ApiError, api, type ImageMode, type LeonEvent } from "../api/client";
 import GalleryView from "./GalleryView.vue";
 import SettingsView from "./SettingsView.vue";
 import TasksView from "./TasksView.vue";
@@ -56,14 +56,118 @@ const imageStateError = ref("");
 const previewUrl = ref("");
 const previewDialog = ref<HTMLElement | null>(null);
 const messagesPanel = ref<HTMLElement | null>(null);
+const composerInput = ref<HTMLTextAreaElement | null>(null);
+const modeSuggestionList = ref<HTMLElement | null>(null);
 const pendingAssistantId = ref<string | null>(null);
+const modeSuggestions = ref<ImageMode[]>([]);
+const modeSuggestionIndex = ref(0);
+const modeSuggestionsOpen = ref(false);
 let eventSource: EventSource | null = null;
 let reconnectTimer: number | null = null;
+let modeBlurTimer: number | null = null;
+let imageModeCatalog: ImageMode[] | null = null;
+let imageModeCatalogRequest: Promise<ImageMode[]> | null = null;
+let modeSuggestionRequestId = 0;
 let lastAgentErrorAt = 0;
 const autoplayRequests = new Set<string>();
 
+interface ModeCompletionContext {
+  prefix: string;
+  partial: string;
+}
+
 function asString(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function normalizeModeQuery(value: string): string {
+  return String(value || "")
+    .toLocaleLowerCase()
+    .replace(/[\s_.\-·]+/g, "");
+}
+
+function modeCompletionContext(value: string): ModeCompletionContext | null {
+  if (!/^\/nsfw\b/i.test(value)) return null;
+  const match = value.match(/^(.*(?:--model|-m))(?:=|\s+)?([^\s]*)$/i);
+  return match ? { prefix: match[1], partial: match[2] || "" } : null;
+}
+
+async function ensureImageModeCatalog(): Promise<ImageMode[]> {
+  if (imageModeCatalog) return imageModeCatalog;
+  if (!imageModeCatalogRequest) {
+    imageModeCatalogRequest = api
+      .getImageModes()
+      .then((payload) => {
+        imageModeCatalog = Array.isArray(payload.modes) ? payload.modes : [];
+        return imageModeCatalog;
+      })
+      .finally(() => {
+        imageModeCatalogRequest = null;
+      });
+  }
+  return imageModeCatalogRequest;
+}
+
+function hideModeSuggestions(): void {
+  modeSuggestionRequestId += 1;
+  modeSuggestionsOpen.value = false;
+  modeSuggestions.value = [];
+  modeSuggestionIndex.value = 0;
+}
+
+function activateModeSuggestion(index: number): void {
+  if (!modeSuggestions.value.length) return;
+  const count = modeSuggestions.value.length;
+  modeSuggestionIndex.value = (index + count) % count;
+  void nextTick(() => {
+    const buttons = modeSuggestionList.value?.querySelectorAll<HTMLButtonElement>(
+      ".mode-suggestion",
+    );
+    buttons?.[modeSuggestionIndex.value]?.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function selectModeSuggestion(item: ImageMode): void {
+  const context = modeCompletionContext(draft.value);
+  if (!context) return;
+  draft.value = `${context.prefix} ${item.name} `;
+  hideModeSuggestions();
+  void nextTick(() => composerInput.value?.focus());
+}
+
+async function updateModeSuggestions(): Promise<void> {
+  if (modeBlurTimer !== null) {
+    window.clearTimeout(modeBlurTimer);
+    modeBlurTimer = null;
+  }
+  const requestedValue = draft.value;
+  const context = modeCompletionContext(requestedValue);
+  const requestId = ++modeSuggestionRequestId;
+  if (!context) {
+    hideModeSuggestions();
+    return;
+  }
+  try {
+    const modes = await ensureImageModeCatalog();
+    if (requestId !== modeSuggestionRequestId || draft.value !== requestedValue) return;
+    const query = normalizeModeQuery(context.partial);
+    modeSuggestions.value = modes.filter((item) => {
+      const values = [item.name, item.id, ...(item.aliases || [])];
+      return !query || values.some((value) => normalizeModeQuery(value).includes(query));
+    });
+    modeSuggestionIndex.value = 0;
+    modeSuggestionsOpen.value = modeSuggestions.value.length > 0;
+  } catch {
+    if (requestId === modeSuggestionRequestId) hideModeSuggestions();
+  }
+}
+
+function scheduleHideModeSuggestions(): void {
+  if (modeBlurTimer !== null) window.clearTimeout(modeBlurTimer);
+  modeBlurTimer = window.setTimeout(() => {
+    modeBlurTimer = null;
+    hideModeSuggestions();
+  }, 120);
 }
 
 function setConnection(label: string, tone: "neutral" | "ok" | "error"): void {
@@ -423,6 +527,7 @@ function logout(): void {
 }
 
 async function sendMessage(): Promise<void> {
+  hideModeSuggestions();
   const content = draft.value.trim();
   if (!content || sending.value || !api.sessionId) return;
   const previousAgentId = latestMessage("agent")?.id || null;
@@ -471,6 +576,30 @@ async function sendMessage(): Promise<void> {
 }
 
 function handleComposerKeydown(event: KeyboardEvent): void {
+  if (event.isComposing) return;
+  if (modeSuggestionsOpen.value && modeSuggestions.value.length) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      activateModeSuggestion(modeSuggestionIndex.value + 1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      activateModeSuggestion(modeSuggestionIndex.value - 1);
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      const selected = modeSuggestions.value[modeSuggestionIndex.value];
+      if (selected) selectModeSuggestion(selected);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hideModeSuggestions();
+      return;
+    }
+  }
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     void sendMessage();
@@ -480,6 +609,11 @@ function handleComposerKeydown(event: KeyboardEvent): void {
 onMounted(() => void bootstrap());
 onBeforeUnmount(() => {
   closeEvents();
+  if (modeBlurTimer !== null) {
+    window.clearTimeout(modeBlurTimer);
+    modeBlurTimer = null;
+  }
+  modeSuggestionRequestId += 1;
   clearSpeechState();
 });
 </script>
@@ -530,14 +664,43 @@ onBeforeUnmount(() => {
 
         <p v-if="taskStatus" class="task-status">{{ taskStatus }}</p>
         <form class="composer" @submit.prevent="sendMessage">
-          <textarea
-            v-model="draft"
-            rows="1"
-            maxlength="8000"
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-            :disabled="sending"
-            @keydown="handleComposerKeydown"
-          ></textarea>
+          <div class="composer-wrap">
+            <div
+              v-if="modeSuggestionsOpen"
+              ref="modeSuggestionList"
+              class="mode-suggestions"
+              role="listbox"
+              aria-label="生图模式"
+            >
+              <button
+                v-for="(item, index) in modeSuggestions"
+                :key="item.id"
+                class="mode-suggestion"
+                :class="{ active: index === modeSuggestionIndex }"
+                type="button"
+                role="option"
+                :aria-selected="index === modeSuggestionIndex"
+                @mousedown.prevent
+                @mouseenter="activateModeSuggestion(index)"
+                @click="selectModeSuggestion(item)"
+              >
+                <span class="mode-suggestion-name">{{ item.name }}</span>
+                <span class="mode-suggestion-id">{{ item.id }}</span>
+              </button>
+            </div>
+            <textarea
+              ref="composerInput"
+              v-model="draft"
+              rows="1"
+              maxlength="8000"
+              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              :disabled="sending"
+              @keydown="handleComposerKeydown"
+              @input="void updateModeSuggestions()"
+              @focus="void updateModeSuggestions()"
+              @blur="scheduleHideModeSuggestions"
+            ></textarea>
+          </div>
           <button type="submit" :disabled="sending || !draft.trim()">
             {{ sending ? "发送中…" : "发送" }}
           </button>

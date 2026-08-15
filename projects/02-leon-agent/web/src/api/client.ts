@@ -26,6 +26,18 @@ export interface ImageStateResponse {
   errors: Record<string, string>;
 }
 
+export interface ImageMode {
+  id: string;
+  name: string;
+  aliases?: string[];
+}
+
+export interface ImageModesResponse {
+  default_mode_id: string;
+  default_mode_name: string;
+  modes: ImageMode[];
+}
+
 export interface ModelSettingsResponse {
   provider: string;
   provider_scope: string;
@@ -130,6 +142,10 @@ export class LeonApi {
     return this.request<ImageStateResponse>(
       `/api/agent/sessions/${sessionId}/image-state?limit=${safeLimit}`,
     );
+  }
+
+  async getImageModes(signal?: AbortSignal): Promise<ImageModesResponse> {
+    return this.request<ImageModesResponse>("/api/image-modes", { signal });
   }
 
   async getModelSettings(sessionId: string, refresh = false): Promise<ModelSettingsResponse> {
