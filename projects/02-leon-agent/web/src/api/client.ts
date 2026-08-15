@@ -26,6 +26,17 @@ export interface ImageStateResponse {
   errors: Record<string, string>;
 }
 
+export interface ModelSettingsResponse {
+  provider: string;
+  provider_scope: string;
+  base_url: string;
+  default_model: string;
+  selected_model: string | null;
+  active_model: string;
+  models: string[];
+  catalog_error: string | null;
+}
+
 export interface LeonEvent {
   event: string;
   session_id: string;
@@ -106,6 +117,23 @@ export class LeonApi {
     return this.request<ImageStateResponse>(
       `/api/agent/sessions/${sessionId}/image-state?limit=${safeLimit}`,
     );
+  }
+
+  async getModelSettings(sessionId: string, refresh = false): Promise<ModelSettingsResponse> {
+    const suffix = refresh ? "?refresh=true" : "";
+    return this.request<ModelSettingsResponse>(
+      `/api/agent/sessions/${sessionId}/model${suffix}`,
+    );
+  }
+
+  async setModelSettings(
+    sessionId: string,
+    model: string | null,
+  ): Promise<ModelSettingsResponse> {
+    return this.request<ModelSettingsResponse>(`/api/agent/sessions/${sessionId}/model`, {
+      method: "PUT",
+      body: JSON.stringify({ model }),
+    });
   }
 
   connectEvents(

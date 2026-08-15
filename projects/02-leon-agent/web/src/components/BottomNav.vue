@@ -1,5 +1,5 @@
 <script setup lang="ts">
-export type WorkbenchView = "chat" | "tasks" | "gallery";
+export type WorkbenchView = "chat" | "tasks" | "gallery" | "settings";
 
 defineProps<{ active: WorkbenchView }>();
 const emit = defineEmits<{ select: [view: WorkbenchView] }>();
@@ -12,6 +12,7 @@ const emit = defineEmits<{ select: [view: WorkbenchView] }>();
         { id: 'chat', icon: '💬', label: '聊天' },
         { id: 'tasks', icon: '📋', label: '任务' },
         { id: 'gallery', icon: '🖼️', label: '图库' },
+        { id: 'settings', icon: '⚙️', label: '设置' },
       ]"
       :key="item.id"
       class="bottom-nav__item"

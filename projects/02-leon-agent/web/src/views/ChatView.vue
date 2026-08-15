@@ -4,6 +4,7 @@ import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
 import { ApiError, api, type LeonEvent } from "../api/client";
 import GalleryView from "./GalleryView.vue";
+import SettingsView from "./SettingsView.vue";
 import TasksView from "./TasksView.vue";
 import {
   appendMessage,
@@ -93,8 +94,8 @@ function refreshImageState(): void {
 
 function selectView(view: WorkbenchView): void {
   activeView.value = view;
-  if (view !== "chat") void loadImageState();
-  else scrollToLatest();
+  if (view === "tasks" || view === "gallery") void loadImageState();
+  if (view === "chat") scrollToLatest();
 }
 
 function closeEvents(): void {
@@ -423,11 +424,12 @@ onBeforeUnmount(closeEvents);
         @refresh="refreshImageState"
       />
       <GalleryView
-        v-else
+        v-else-if="activeView === 'gallery'"
         :loading="imageStateLoading"
         :error="imageStateError"
         @refresh="refreshImageState"
       />
+      <SettingsView v-else :session-id="api.sessionId" />
 
       <BottomNav :active="activeView" @select="selectView" />
     </section>
