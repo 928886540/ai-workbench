@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from threading import Event
 from typing import Any
 from uuid import uuid4
 
 from workbench_core.agent import AgentTool, ToolRegistry
+from workbench_core.agent.runtime import AgentCancelled, current_cancel_event
 
 from leon_agent.leon_client import LeonImageClient
 
@@ -40,6 +42,12 @@ def _job_id(item: dict[str, Any]) -> str:
     return str(item.get("job_id") or "")
 
 
+def _check_cancelled(cancel_event: Event | None) -> None:
+    event = cancel_event if cancel_event is not None else current_cancel_event()
+    if event is not None and event.is_set():
+        raise AgentCancelled("agent turn cancelled")
+
+
 def _wait_for_image_results(
     client: LeonImageClient,
     *,
@@ -47,8 +55,10 @@ def _wait_for_image_results(
     submission: dict[str, Any],
     timeout_seconds: float = 240.0,
     poll_interval_seconds: float = 2.0,
+    cancel_event: Event | None = None,
 ) -> dict[str, Any]:
     """Wait for submitted jobs only when the caller needs a synchronous result."""
+    _check_cancelled(cancel_event)
     job_ids = {
         str(item.get("job_id"))
         for item in submission.get("jobs", [])
@@ -61,10 +71,12 @@ def _wait_for_image_results(
     latest_tasks: list[dict[str, Any]] = []
 
     while True:
+        _check_cancelled(cancel_event)
         task_result = client.get_image_tasks(
             chat_id=chat_id,
             limit=max(20, min(100, len(job_ids) * 4)),
         )
+        _check_cancelled(cancel_event)
         task_items = task_result.get("items", []) if isinstance(task_result, dict) else []
         latest_tasks = [
             item
@@ -79,10 +91,12 @@ def _wait_for_image_results(
             for job_id in job_ids
         )
         if all_terminal:
+            _check_cancelled(cancel_event)
             gallery_result = client.get_recent_images(
                 chat_id=chat_id,
                 limit=max(20, min(100, len(job_ids) * 4)),
             )
+            _check_cancelled(cancel_event)
             gallery_items = (
                 gallery_result.get("items", []) if isinstance(gallery_result, dict) else []
             )
@@ -100,6 +114,7 @@ def _wait_for_image_results(
             }
 
         if time.monotonic() >= deadline:
+            _check_cancelled(cancel_event)
             return {
                 **submission,
                 "waited_for_completion": True,
@@ -107,7 +122,13 @@ def _wait_for_image_results(
                 "tasks": latest_tasks,
                 "images": [],
             }
-        time.sleep(max(0.1, poll_interval_seconds))
+        wait_seconds = max(0.1, poll_interval_seconds)
+        event = cancel_event if cancel_event is not None else current_cancel_event()
+        if event is not None:
+            if event.wait(wait_seconds):
+                raise AgentCancelled("agent turn cancelled")
+        else:
+            time.sleep(wait_seconds)
 
 
 def create_leon_tools(
@@ -128,6 +149,7 @@ def create_leon_tools(
         character_context: str = "",
         random_workflow: bool = False,
     ) -> dict[str, Any]:
+        _check_cancelled(None)
         modes = workflow_ids or default_mode_ids
         submission = client.generate_images(
             source_text=source_text,
@@ -138,6 +160,7 @@ def create_leon_tools(
             character_context=character_context,
             random_workflow=random_workflow,
         )
+        _check_cancelled(None)
         submission.setdefault("source_text", source_text)
         submission.setdefault("workflow_ids", list(modes))
         if on_generation_submitted is not None:

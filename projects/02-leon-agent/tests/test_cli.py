@@ -1,10 +1,13 @@
+import threading
 from io import StringIO
+from types import SimpleNamespace
 
 import pytest
-from leon_agent.cli import LeonConsole, parse_args
+from leon_agent.cli import LeonConsole, TerminalChatUI, parse_args
 from leon_agent.session import SessionStore
 from rich.console import Console
 from workbench_core.agent import AgentResult
+from workbench_core.agent.runtime import cancellation_scope, current_cancel_event
 
 
 class FailingAgent:
@@ -225,3 +228,150 @@ def test_switch_model_refreshes_catalog_after_provider_change(tmp_path) -> None:
         "new-provider|https://new.example/v1",
         "new-provider-model",
     )
+
+
+def _make_process_cli(tmp_path, agent):  # noqa: ANN001
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.agent = agent
+    cli.console = Console(quiet=True)
+    cli._progress = None
+    cli._progress_task_id = None
+    cli.llm_model = "test-model"
+    cli._ensure_current_provider = lambda: None  # type: ignore[method-assign]
+    return cli
+
+
+def test_cancelled_late_cli_turn_is_not_persisted(tmp_path) -> None:  # noqa: ANN001
+    started = threading.Event()
+    release = threading.Event()
+
+    class LateAgent:
+        def run(self, message, *, history):  # noqa: ANN001, ARG002
+            started.set()
+            release.wait(timeout=2)
+            return AgentResult(answer="late")
+
+    cli = _make_process_cli(tmp_path, LateAgent())
+    cancel_event = threading.Event()
+    outcome = []
+
+    def run() -> None:
+        with cancellation_scope(cancel_event):
+            outcome.append(cli.process("迟到结果"))
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert started.wait(timeout=1)
+    cancel_event.set()
+    release.set()
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert outcome == [False]
+    assert cli.store.load_messages(cli.session_id) == []
+
+
+def test_next_cli_turn_succeeds_after_cancelled_turn(tmp_path) -> None:  # noqa: ANN001
+    started = threading.Event()
+    release = threading.Event()
+
+    class TwoTurnAgent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, message, *, history):  # noqa: ANN001, ARG002
+            self.calls += 1
+            if self.calls == 1:
+                started.set()
+                release.wait(timeout=2)
+                return AgentResult(answer="late")
+            return AgentResult(answer="fresh")
+
+    agent = TwoTurnAgent()
+    cli = _make_process_cli(tmp_path, agent)
+    cancel_event = threading.Event()
+    outcome = []
+
+    def run_first() -> None:
+        with cancellation_scope(cancel_event):
+            outcome.append(cli.process("第一轮"))
+
+    worker = threading.Thread(target=run_first)
+    worker.start()
+    assert started.wait(timeout=1)
+    cancel_event.set()
+    release.set()
+    worker.join(timeout=1)
+
+    assert outcome == [False]
+    assert cli.process("第二轮") is True
+    assert cli.store.load_messages(cli.session_id) == [
+        {"role": "user", "content": "第二轮"},
+        {"role": "assistant", "content": "fresh"},
+    ]
+
+
+def test_terminal_ui_ctrl_c_cancels_current_worker_and_ctrl_q_waits_for_exit(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    started = threading.Event()
+    release = threading.Event()
+
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+        def handle_interactive_message(self, message):  # noqa: ANN001, ARG002
+            started.set()
+            active_event = current_cancel_event()
+            assert active_event is not None
+            release.wait(timeout=2)
+            return True
+
+        def _print_startup(self) -> None:
+            return None
+
+    class FakeBuffer:
+        text = "hello"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            self.exited = False
+
+        def exit(self) -> None:
+            self.exited = True
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    owner = FakeOwner()
+    ui = TerminalChatUI(owner)
+    owner.ui = ui
+    fake_app = FakeApplication()
+    ui.app = fake_app
+
+    ui._accept(FakeBuffer())
+    worker = ui._active_thread
+    assert worker is not None
+    assert worker.daemon is False
+    assert started.wait(timeout=1)
+
+    first_event = SimpleNamespace(app=fake_app)
+    ui._handle_interrupt(first_event, exit_after=False)
+    assert ui._active_cancel_event is not None
+    assert ui._active_cancel_event.is_set()
+    assert ui.busy is True
+    assert fake_app.exited is False
+
+    ui._handle_interrupt(first_event, exit_after=True)
+    assert fake_app.exited is False
+    release.set()
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert ui.busy is False
+    assert fake_app.exited is True

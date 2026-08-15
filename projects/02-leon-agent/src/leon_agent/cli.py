@@ -7,7 +7,10 @@ import io
 import sys
 import threading
 from collections.abc import Sequence
+from contextlib import nullcontext
+from contextvars import ContextVar
 from pathlib import Path
+from time import monotonic
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -17,6 +20,11 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 from workbench_core.agent import AgentEvent, AgentResult, ToolStep
+from workbench_core.agent.runtime import (
+    AgentCancelled,
+    cancellation_scope,
+    current_cancel_event,
+)
 from workbench_core.config import Settings, get_settings, reset_settings_cache
 from workbench_core.llm import LLMClient
 
@@ -30,19 +38,41 @@ from leon_agent.tools import create_leon_tools
 
 try:
     from prompt_toolkit.application import Application
+    from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.layout import HSplit, Layout
     from prompt_toolkit.layout.dimension import Dimension
     from prompt_toolkit.widgets import Frame, Label, TextArea
 except ModuleNotFoundError:  # pragma: no cover - legacy prompt fallback remains usable
     Application = None
+    WordCompleter = None
     KeyBindings = None
     HSplit = None
     Layout = None
     Dimension = None
+    InMemoryHistory = None
     Frame = None
     Label = None
     TextArea = None
+
+
+_ACTIVE_TURN: ContextVar[tuple[int, threading.Event] | None] = ContextVar(
+    "leon_cli_active_turn",
+    default=None,
+)
+
+_CLI_COMMANDS = [
+    "/help",
+    "/new",
+    "/history",
+    "/status",
+    "/model",
+    "/clear",
+    "/nsfw",
+    "/exit",
+    "/quit",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,18 +112,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 class TerminalChatUI:
-    """Fullscreen chat surface: scrollback above, input pinned at the bottom."""
+    """Fullscreen chat surface with explicit turn ownership and cancellation."""
 
     _MAX_BLOCKS = 240
+    _IDLE_STATUS = "● 就绪 · Enter 发送 · Ctrl+C 取消 · Ctrl+Q 退出"
 
     def __init__(self, owner: LeonConsole) -> None:
         if Application is None:
             raise RuntimeError("prompt_toolkit is not installed")
         self.owner = owner
         self.blocks: list[str] = []
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.busy = False
-        self.status_text = "Enter 发送 · /help 命令 · Ctrl+Q 退出"
+        self.status_text = self._IDLE_STATUS
+        self._generation = 0
+        self._active_cancel_event: threading.Event | None = None
+        self._active_thread: threading.Thread | None = None
+        self._exit_requested = False
+        self._started_at: float | None = None
 
         self.output = TextArea(
             text="",
@@ -101,29 +137,48 @@ class TerminalChatUI:
             scrollbar=True,
             wrap_lines=True,
         )
-        self.input = TextArea(
-            height=1,
-            prompt="你 > ",
-            multiline=False,
-            accept_handler=self._accept,
+        input_kwargs = {
+            "height": 1,
+            "prompt": "❯ ",
+            "multiline": False,
+            "accept_handler": self._accept,
+        }
+        if InMemoryHistory is not None:
+            input_kwargs["history"] = InMemoryHistory()
+        if WordCompleter is not None:
+            input_kwargs["completer"] = WordCompleter(_CLI_COMMANDS, sentence=True)
+        self.input = TextArea(**input_kwargs)
+        self.header = Label(self._header_text)
+        self.status = Label(self._status_line)
+        self.footer = Label(
+            "  Enter 发送   ·   Ctrl+C 取消当前轮   ·   Ctrl+Q 取消并退出   ·   Ctrl+L 清屏"
         )
-        self.status = Label(lambda: self.status_text)
         key_bindings = KeyBindings()
 
-        @key_bindings.add("c-q")
         @key_bindings.add("c-c")
         def _(event) -> None:  # noqa: ANN001
-            event.app.exit()
+            self._handle_interrupt(event, exit_after=False)
+
+        @key_bindings.add("c-q")
+        def _(event) -> None:  # noqa: ANN001
+            self._handle_interrupt(event, exit_after=True)
+
+        @key_bindings.add("c-l")
+        def _(event) -> None:  # noqa: ANN001
+            self.clear_output()
+            self._set_status(self.status_text)
 
         root = HSplit(
             [
+                Frame(self.header, title="🦁 LEON AGENT · terminal cockpit"),
                 Frame(
                     self.output,
-                    title="💬 LEON AGENT · 上方滚动区",
+                    title="💬 会话滚动区",
                     height=Dimension(weight=1),
                 ),
                 self.status,
-                Frame(self.input, title="⌨ 底部输入框 · Enter 发送"),
+                Frame(self.input, title="⌨ 输入 · 支持 /help /model /new /clear"),
+                self.footer,
             ]
         )
         self.app = Application(
@@ -137,13 +192,38 @@ class TerminalChatUI:
     def available() -> bool:
         return Application is not None
 
+    def _header_text(self) -> str:
+        model = getattr(self.owner, "llm_model", "-") or "-"
+        provider = getattr(self.owner, "llm_provider_name", "-") or "-"
+        session = getattr(self.owner, "session_id", "-") or "-"
+        return f"  {model}  ·  {provider}  ·  session {session}"
+
+    def _status_line(self) -> str:
+        with self.lock:
+            status = self.status_text
+            started_at = self._started_at
+            busy = self.busy
+        if busy and started_at is not None:
+            return f"{status} · {monotonic() - started_at:.1f}s"
+        return status
+
     def run(self) -> None:
         self.owner.ui = self
         try:
             self.owner._print_startup()
             self.app.run()
         finally:
+            self._shutdown_worker()
             self.owner.ui = None
+
+    def _shutdown_worker(self) -> None:
+        with self.lock:
+            cancel_event = self._active_cancel_event
+            thread = self._active_thread
+        if cancel_event is not None:
+            self._set_cancel_event(cancel_event)
+        if thread is not None and thread is not threading.current_thread():
+            thread.join()
 
     def write_rich(self, *objects: object, **kwargs: object) -> None:
         buffer = io.StringIO()
@@ -171,46 +251,155 @@ class TerminalChatUI:
             self.output.buffer.cursor_position = len(rendered)
         self.app.invalidate()
 
+    def clear_output(self) -> None:
+        with self.lock:
+            self.blocks.clear()
+            self.output.text = ""
+            self.output.buffer.cursor_position = 0
+        self.app.invalidate()
+
     def write_user_message(self, message: str) -> None:
         lines = message.splitlines() or [""]
         body = "\n".join(f"│ {line}" for line in lines)
         self.write_plain(f"╭─ 🧑 你\n{body}\n╰─")
+
+    def is_current_turn(self, generation: int, cancel_event: threading.Event) -> bool:
+        with self.lock:
+            return (
+                self.busy
+                and self._generation == generation
+                and self._active_cancel_event is cancel_event
+            )
+
+    def _handle_interrupt(self, event, *, exit_after: bool) -> None:  # noqa: ANN001
+        should_exit = False
+        with self.lock:
+            cancel_event = self._active_cancel_event
+            if not self.busy or cancel_event is None:
+                should_exit = True
+        if should_exit:
+            event.app.exit()
+            return
+
+        already_requested = cancel_event.is_set()
+        self._set_cancel_event(cancel_event)
+        message = "⏹ 已请求取消当前轮；界面保持可用。"
+        status = "⏹ 取消中 · 迟到结果会被丢弃"
+        with self.lock:
+            still_current = self._active_cancel_event is cancel_event and self.busy
+            if still_current and (exit_after or already_requested):
+                self._exit_requested = True
+            if not still_current:
+                should_exit = True
+            elif self._exit_requested:
+                message = "⏹ 已请求取消；当前请求收敛后退出。"
+                status = "⏹ 取消中 · 等待当前同步边界收敛后退出"
+            elif already_requested:
+                message = "⏹ 本轮已在取消中，等待结果收敛…"
+                status = "⏹ 取消中 · 迟到结果会被丢弃"
+        if should_exit:
+            event.app.exit()
+            return
+        self.write_plain(message)
+        self._set_status(status)
+
+    def _set_cancel_event(self, cancel_event: threading.Event) -> None:
+        commit_lock = getattr(self.owner, "_commit_lock", None)
+        if commit_lock is None:
+            cancel_event.set()
+            return
+        with commit_lock:
+            cancel_event.set()
 
     def _accept(self, buffer) -> bool:  # noqa: ANN001
         message = buffer.text.strip()
         buffer.text = ""
         if not message:
             return True
-        if self.busy:
-            self.write_plain("⏳ 上一条还在处理，等 Leon 回完再发下一条。")
+        with self.lock:
+            if self.busy:
+                busy = True
+            else:
+                busy = False
+        if busy:
+            self.write_plain("⏳ 上一轮仍在处理；按 Ctrl+C 取消，或 Ctrl+Q 取消并退出。")
             return True
         self.write_user_message(message)
-        if message in {"/exit", "/quit"}:
+        if message.casefold() in {"/exit", "/quit"}:
             self.write_plain("👋 Leon Agent 已退出。")
             self.app.exit()
             return True
-        self.busy = True
-        self._set_status("Leon 正在处理这一轮…")
-        thread = threading.Thread(
-            target=self._run_message,
-            args=(message,),
-            daemon=True,
-        )
-        thread.start()
+
+        cancel_event = threading.Event()
+        with self.lock:
+            self._generation += 1
+            generation = self._generation
+            self.busy = True
+            self._active_cancel_event = cancel_event
+            self._started_at = monotonic()
+            self._exit_requested = False
+            thread = threading.Thread(
+                target=self._run_message,
+                args=(message, generation, cancel_event),
+                name=f"leon-turn-{generation}",
+                daemon=False,
+            )
+            self._active_thread = thread
+        self._set_status("◐ 处理中 · Ctrl+C 取消当前轮 · Ctrl+Q 取消并退出")
+        try:
+            thread.start()
+        except Exception:
+            with self.lock:
+                self.busy = False
+                self._active_cancel_event = None
+                self._active_thread = None
+                self._started_at = None
+            raise
         return True
 
-    def _run_message(self, message: str) -> None:
+    def _run_message(
+        self,
+        message: str,
+        generation: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        token = _ACTIVE_TURN.set((generation, cancel_event))
         try:
-            keep_running = self.owner.handle_interactive_message(message)
-            if not keep_running:
-                self.app.exit()
+            with cancellation_scope(cancel_event):
+                keep_running = self.owner.handle_interactive_message(message)
+                if not keep_running:
+                    with self.lock:
+                        self._exit_requested = True
+        except AgentCancelled:
+            if self.is_current_turn(generation, cancel_event):
+                self.write_plain("⏹ 本轮已取消；迟到的模型/工具结果已丢弃。")
         except KeyboardInterrupt:
-            self.write_plain("⚠ 本次请求已取消，Leon 仍在运行。")
+            if self.is_current_turn(generation, cancel_event):
+                self.write_plain("⏹ 本轮已取消；Leon 会话保持不变。")
         except Exception as exc:  # noqa: BLE001 - keep the terminal app alive
-            self.write_plain(f"💥 CLI 处理失败：{type(exc).__name__}: {exc}")
+            if self.is_current_turn(generation, cancel_event):
+                self.write_plain(f"💥 CLI 处理失败：{type(exc).__name__}: {exc}")
         finally:
-            self.busy = False
-            self._set_status("Enter 发送 · /help 命令 · Ctrl+Q 退出")
+            _ACTIVE_TURN.reset(token)
+            should_exit = False
+            current = False
+            with self.lock:
+                current = (
+                    self._generation == generation
+                    and self._active_cancel_event is cancel_event
+                )
+                if current:
+                    should_exit = self._exit_requested
+                    self.busy = False
+                    self._active_cancel_event = None
+                    self._active_thread = None
+                    self._started_at = None
+            if current:
+                if should_exit:
+                    self._set_status("👋 正在退出…")
+                    self.app.exit()
+                else:
+                    self._set_status(self._IDLE_STATUS)
 
     def _set_status(self, text: str) -> None:
         self.status_text = text
@@ -247,6 +436,7 @@ class LeonConsole:
         self.llm_max_retries = 0
         self._progress: Progress | None = None
         self._progress_task_id: int | None = None
+        self._commit_lock = threading.Lock()
         self.agent = self._create_agent()
 
     def _resolve_session(self, args: argparse.Namespace) -> str:
@@ -262,6 +452,21 @@ class LeonConsole:
             ui.write_rich(*objects, **kwargs)
             return
         self.console.print(*objects, **kwargs)
+
+    def _commit_context(self):
+        lock = getattr(self, "_commit_lock", None)
+        return lock if lock is not None else nullcontext()
+
+    def _check_active_turn(self) -> None:
+        cancel_event = current_cancel_event()
+        if cancel_event is not None and cancel_event.is_set():
+            raise AgentCancelled("agent turn cancelled")
+        turn = _ACTIVE_TURN.get()
+        ui = getattr(self, "ui", None)
+        if turn is not None and ui is not None:
+            generation, turn_event = turn
+            if not ui.is_current_turn(generation, turn_event):
+                raise AgentCancelled("stale agent turn")
 
     def _create_agent(self) -> LeonAgent:
         reset_settings_cache()
@@ -341,14 +546,19 @@ class LeonConsole:
         body.append(f"default={', '.join(self.config.default_mode_ids) or '未配置'}\n", style="dim")
         body.append("🧵  Session   ", style="bold green")
         body.append(f"{self.session_id}\n\n", style="bold")
-        body.append("✨ /model 选模型    🖼 /nsfw 直达生图    🕹 /history 找会话\n", style="white")
-        body.append("🚀 也可以直接说：检查环境、生成图片、查看最近 5 张图", style="dim")
+        body.append("🛑  Cancel    ", style="bold yellow")
+        body.append("协作式取消；在途同步请求按超时边界收敛\n", style="dim")
+        body.append(
+            "✨ /model 选模型    🖼 /nsfw 直达生图    🕹 /history 找会话    ℹ /status 状态\n",
+            style="white",
+        )
+        body.append("🚀 直接输入问题即可聊天；Ctrl+C 取消当前轮，Ctrl+Q 取消并退出", style="dim")
 
         self.print(
             Panel(
                 body,
                 title=title,
-                subtitle="底部输入 · Enter 发送 · /help 查看命令 · /exit 退出",
+                subtitle="Enter 发送 · /help 命令 · Ctrl+C 取消 · Ctrl+Q 退出",
                 border_style="cyan",
                 padding=(1, 2),
             )
@@ -411,6 +621,22 @@ class LeonConsole:
         self._progress_task_id = None
 
     def _on_event(self, event: AgentEvent) -> None:
+        turn = _ACTIVE_TURN.get()
+        ui = getattr(self, "ui", None)
+        if turn is not None and ui is not None:
+            generation, cancel_event = turn
+            if not ui.is_current_turn(generation, cancel_event):
+                return
+            if cancel_event.is_set() and event.kind != "cancelled":
+                return
+        if event.kind == "turn_started":
+            if ui is not None:
+                ui._set_status(f"◐ 模型思考中 · 第 {event.turn} 轮 · Ctrl+C 取消")
+            return
+        if event.kind == "cancelled":
+            if ui is not None:
+                ui._set_status("⏹ 取消中 · 迟到结果会被丢弃")
+            return
         if event.kind == "tool_started":
             if event.tool_name == "generate_images":
                 self._start_image_progress()
@@ -439,6 +665,7 @@ class LeonConsole:
 
     def _start_llm_request(self) -> None:
         """Show feedback before the provider call, including in the legacy REPL."""
+        self._check_active_turn()
         model = self.llm_model or "当前模型"
         self.print(f"[cyan]⏳[/cyan] 正在请求模型 [bold]{model}[/bold]…")
         ui = getattr(self, "ui", None)
@@ -462,32 +689,46 @@ class LeonConsole:
 
     def process(self, message: str) -> bool:
         stripped = message.strip()
-        if stripped.casefold() == "/nsfw" or stripped.casefold().startswith("/nsfw "):
-            return self._process_nsfw(stripped)
         try:
+            self._check_active_turn()
+            if stripped.casefold() == "/nsfw" or stripped.casefold().startswith("/nsfw "):
+                return self._process_nsfw(stripped)
             self._ensure_current_provider()
+            self._check_active_turn()
             history = self.store.load_messages(self.session_id)
             self._start_llm_request()
             result = self.agent.run(message, history=history)
+            self._check_active_turn()
         except KeyboardInterrupt:
             self._stop_image_progress(ok=False)
             self.print("[yellow]⚠ 本次请求已取消，Leon 仍在运行。[/yellow]")
+            return False
+        except AgentCancelled:
+            self._stop_image_progress(ok=None)
+            self.print("[yellow]⏹ 本次请求已取消，迟到结果已丢弃。[/yellow]")
             return False
         except Exception as exc:  # noqa: BLE001 - CLI should keep the session alive
             self._stop_image_progress(ok=False)
             self.print(f"[red]{self._format_request_error(exc)}[/red]")
             return False
-        self.store.add_message(self.session_id, "user", message)
-        self.store.record_result(self.session_id, result)
-        self.store.add_message(self.session_id, "assistant", result.answer)
+        with self._commit_context():
+            self._check_active_turn()
+            self.store.add_message(self.session_id, "user", message)
+            self.store.record_result(self.session_id, result)
+            self.store.add_message(self.session_id, "assistant", result.answer)
+        self._check_active_turn()
         self._print_answer(result.answer)
         return True
 
     def _process_nsfw(self, message: str) -> bool:
         try:
+            self._check_active_turn()
             mode_result = self.image_client.list_modes()
+            self._check_active_turn()
             modes = mode_result.get("modes", [])
             command = parse_nsfw_command(message, modes)
+        except AgentCancelled:
+            raise
         except Exception as exc:  # noqa: BLE001 - invalid command should not exit the REPL
             self.print(f"[red]{exc}[/red]")
             if "modes" in locals():
@@ -503,11 +744,16 @@ class LeonConsole:
         }
         self._start_image_progress()
         try:
+            self._check_active_turn()
             result = self.direct_tools.execute("generate_images", arguments)
+            self._check_active_turn()
         except KeyboardInterrupt:
             self._stop_image_progress(ok=False)
             self.print("[yellow]⚠ 本次生图已取消，Leon 仍在运行。[/yellow]")
             return False
+        except AgentCancelled:
+            self._stop_image_progress(ok=None)
+            raise
         except Exception as exc:  # noqa: BLE001 - image failure should not exit the REPL
             self._stop_image_progress(ok=False)
             self.print(f"[red]直达生图失败：{type(exc).__name__}: {exc}[/red]")
@@ -529,9 +775,12 @@ class LeonConsole:
             answer=answer,
             steps=[ToolStep("generate_images", arguments, result)],
         )
-        self.store.add_message(self.session_id, "user", message)
-        self.store.record_result(self.session_id, agent_result)
-        self.store.add_message(self.session_id, "assistant", answer)
+        with self._commit_context():
+            self._check_active_turn()
+            self.store.add_message(self.session_id, "user", message)
+            self.store.record_result(self.session_id, agent_result)
+            self.store.add_message(self.session_id, "assistant", answer)
+        self._check_active_turn()
         self._print_answer(answer)
         return True
 
@@ -544,6 +793,22 @@ class LeonConsole:
                 str(item["updated_at"]),
             )
         self.print(table)
+
+    def show_status(self) -> None:
+        body = Text()
+        body.append("模型       ", style="bold cyan")
+        body.append(f"{self.llm_model or '-'}\n")
+        body.append("Provider   ", style="bold cyan")
+        body.append(f"{self.llm_provider_name or self.llm_profile or '-'}\n")
+        body.append("会话       ", style="bold cyan")
+        body.append(f"{self.session_id}\n")
+        body.append("请求策略   ", style="bold cyan")
+        body.append(
+            f"timeout={self.llm_timeout_seconds:g}s · retries={self.llm_max_retries}\n"
+        )
+        body.append("图片后端   ", style="bold magenta")
+        body.append(f"{self.config.backend_url}")
+        self.print(Panel(body, title="当前运行状态", border_style="cyan"))
 
     def show_models(self) -> None:
         models = self._fetch_model_catalog()
@@ -610,6 +875,7 @@ class LeonConsole:
         message = message.strip()
         if not message:
             return True
+        self._check_active_turn()
         if message in {"/exit", "/quit"}:
             self.print("[dim]Leon Agent 已退出。[/dim]")
             return False
@@ -618,6 +884,17 @@ class LeonConsole:
             return True
         if message == "/history":
             self.show_history()
+            return True
+        if message == "/status":
+            self.show_status()
+            return True
+        if message == "/clear":
+            ui = getattr(self, "ui", None)
+            if ui is not None:
+                ui.clear_output()
+                ui._set_status(TerminalChatUI._IDLE_STATUS)
+            else:
+                self.console.clear()
             return True
         if message == "/model":
             self.show_models()
@@ -630,14 +907,23 @@ class LeonConsole:
                 Panel(
                     "[bold]/new[/bold] 新会话\n"
                     "[bold]/history[/bold] 会话列表\n"
+                    "[bold]/status[/bold] 当前模型、provider、会话状态\n"
                     "[bold]/model[/bold] 查看模型\n"
                     "[bold]/model <序号或模型ID>[/bold] 切换模型\n"
+                    "[bold]/clear[/bold] 清空当前终端滚动区\n"
                     "[bold]/nsfw <描述>[/bold] 跳过 LLM，直接用 NSFW 模式生图\n"
                     "[bold]/exit[/bold] 退出\n\n"
+                    "[dim]快捷键：Ctrl+C 取消当前轮 · Ctrl+Q 取消并退出 · Ctrl+L 清屏[/dim]\n\n"
                     "[dim]你也可以直接说：检查环境、生成图片、查询任务、查看最近图片。[/dim]",
                     title="Leon 命令",
                     border_style="dim",
                 )
+            )
+            return True
+        if message.startswith("/"):
+            self.print(
+                f"[yellow]未知命令：{message.split(maxsplit=1)[0]}[/yellow] · "
+                "输入 /help 查看可用命令"
             )
             return True
         self.process(message)
