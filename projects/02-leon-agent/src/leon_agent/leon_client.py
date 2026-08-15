@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import httpx
 
@@ -221,6 +221,29 @@ class LeonImageClient:
             "generation_plan_id": body.get("generation_plan_id"),
             "output_count": request.get("outputCount", len(jobs)),
             "jobs": jobs,
+        }
+
+    def cancel_image_task(self, *, job_id: str) -> dict[str, Any]:
+        """Cancel one queued or running job and interrupt its ComfyUI prompt.
+
+        The backend treats an already finished job as a no-op and answers with the
+        terminal status, so the caller can report the truth instead of an error.
+        """
+        cleaned = str(job_id or "").strip()
+        if not cleaned:
+            raise LeonImageError("job_id is required to cancel an image task")
+        response = self._json_request(
+            "POST",
+            f"/ios/async_autogen/{quote(cleaned, safe='')}/cancel",
+        )
+        if not isinstance(response, dict):
+            raise LeonImageError("Leon backend returned a non-object cancel response")
+        status = str(response.get("status") or "cancelled")
+        return {
+            "ok": True,
+            "job_id": str(response.get("job_id") or cleaned),
+            "status": status,
+            "cancelled": status == "cancelled",
         }
 
     def get_image_tasks(self, *, chat_id: str, limit: int = 20) -> dict[str, Any]:

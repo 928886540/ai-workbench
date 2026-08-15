@@ -36,6 +36,11 @@ Rules:
 - Use get_image_tasks or get_recent_images for this session's status or results. Use
   get_latest_images for database-wide recent images across chats, and pass limit matching the
   user's requested count exactly (for example latest one -> 1, latest five -> 5).
+- When the user asks to stop, cancel, or abort a generation, call cancel_image_task with the
+  exact job_id. You can cancel: never tell the user cancelling is unsupported. If the user
+  referred to jobs positionally ("the last three"), call get_image_tasks first to resolve the
+  ids, then cancel each one in its own call. Report the returned status verbatim, including
+  when a job had already finished and could no longer be stopped.
 - Never invent tool results. Explain tool errors directly and suggest the smallest next action.
 - Reply in Simplified Chinese unless the user explicitly asks for another language.
 """.strip()

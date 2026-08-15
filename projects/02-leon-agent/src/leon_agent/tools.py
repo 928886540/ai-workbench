@@ -234,5 +234,31 @@ def create_leon_tools(
                 },
                 handler=lambda limit: client.get_latest_images(limit=limit),
             ),
+            AgentTool(
+                name="cancel_image_task",
+                description=(
+                    "Cancel one queued or running image job by job_id and interrupt its "
+                    "ComfyUI prompt. Use this whenever the user asks to stop, cancel, abort, "
+                    "or 不要了 an image generation. When the user refers to tasks without "
+                    "giving ids (for example 'cancel the last three'), call get_image_tasks "
+                    "first and cancel each job_id in a separate call. Cancelling a job that "
+                    "already finished is safe: the result reports its terminal status instead "
+                    "of failing, so report that status truthfully rather than claiming success."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "job_id": {
+                            "type": "string",
+                            "description": (
+                                "Exact job_id from generate_images or get_image_tasks."
+                            ),
+                        }
+                    },
+                    "required": ["job_id"],
+                    "additionalProperties": False,
+                },
+                handler=lambda job_id: client.cancel_image_task(job_id=job_id),
+            ),
         ]
     )

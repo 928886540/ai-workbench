@@ -22,15 +22,66 @@
 - Leon 环境只读自检：19 模式、38 节点类型、39 LoRA，通过
 - 架构决策：`notes/decisions/0002-leon-agent-boundary.md`
 - 新需求计划：`notes/plans/leon-agent-expansion.md`
-- Web 图片体验已升级：全屏查看器变可缩放相册（左右切换 / 计数 / 滑动翻页 / 定点缩放），生图完成后在底部追加新气泡，模型选择改为可点击列表（SW 缓存 v12）
-- 前端演进评估（是否迁 Vue3 / 聊天化 / 气泡工具栏 / 语音）：`projects/02-leon-agent/docs/web-client-evolution.md`，结论是暂不迁 Vue3，先做 `messages[]` 重构
-- 当前验证：`pytest` 79 passed，`ruff check .` 通过，本地与公网 `/api/health` 均为 200
+- Web 图片体验已升级：全屏查看器变可缩放相册（左右切换 / 计数 / 滑动翻页 / 定点缩放），生图完成后在底部追加新气泡并自动滚到可视区，模型选择改为可点击列表
+- 前端演进评估：`projects/02-leon-agent/docs/web-client-evolution.md`
+- **前端栈决策（2026-08-15，用户拍板）：迁 Vue 3 + Vite**。评估文档里「暂不迁 Vue3」的结论已被推翻，后续以本条为准。
+  目标结构：`web/src/{api,stores,views,components}` + `vite.config.ts`，构建产物 `dist/` 交给 FastAPI 托管。
+  决策依据：JS 已 807 行 / 48 个顶层可变变量 / 65 处 DOM 查询，近期修的 4 个 bug 全是「状态与 DOM 手动同步」这一类结构性问题；
+  且组件一文件一职责后，外部 agent 改动边界清晰，不必再动 1250 行单文件。
+- 前端 W1 已完成（commit `8ba353b`）：`messages[]` + `messageIndex` 单一数据源，`createMessage/renderMessage/patchMessage/removeMessage`，
+  流式回复只产生一条消息、错误时移除半截气泡、气泡工具栏骨架（`.bubble-toolbar`）就位，SW 缓存 v13
+- 当前验证（2026-08-15 实测）：全仓库 `pytest` **80 passed**、`ruff check` 通过、
+  浏览器端到端 `tests/manual_web_check.py` **34/34 通过**（真实 Chrome + 390×844 触屏模拟）
+- ⚠️ LLM provider 已被 CC Switch 换过（`~/.codex/config.toml`，8/15 09:30）：
+  `anyrouter.top` → `new-api.abrdns.com`，默认模型 `gpt-5.6-sol` → `DeepSeek-V4-Flash-0731`，目录从 17 个模型变成 96 个。
+  会话里「同样的话上次能答、这次不能答」优先怀疑这里，而不是提示词。
+- 工具面：Leon 后端 iOS 插件层共 17 个端点，agent 原先只接了 5 个。已补 `cancel_image_task`
+  （`POST /ios/async_autogen/{job_id}/cancel`，会同时中断正在跑的 ComfyUI prompt），工具数 6 → 7。
+  仍未暴露、可按需接入：`async_cancel_matching`（批量取消）、`image_gallery/delete`（删图，破坏性）、
+  `image_tasks/hide` / `hide_history`（清理列表）、`metrics/tasks/{job_id}`（任务指标）、
+  `async_autogen/recover`（恢复）、`comic_compose` / `async_comic`（漫画模式）
 - 下一步最小动作：在 Cloudflare Dashboard 为 `/api/agent/*/events` 添加 Cache Bypass Rule，然后手机端验收 SSE 与生图闭环
-- 前端下一步（W1）：引入 `messages[]` 单一数据源与 `renderMessage` / `patchMessage`，行为不变，为气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）铺路
+- 前端下一步（W2）：按上面的决策启动 Vue 3 + Vite 迁移。先搭 `vite.config.ts` + 构建产物托管链路（含 SW / Cloudflare 隧道回归），
+  再按 `views/` 逐页搬迁；W1 的 `messages[]` 直接对应 `stores/messages.ts`，不用重写
 - 语音：等用户提供 TTS / ASR API，网关端预留 `POST /api/agent/tts` 与 `POST /api/agent/asr`
 - 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
 - 完整 TUI 后置
+
+---
+
+## 多 agent 协作约定（Codex / Notion AI / 本地 IDE 并行时）
+
+现在可能有多个 agent 同时改这个仓库，遵守下面三条，否则会互相踩：
+
+### 1. 提交前必须跑完这三条，全绿才提交
+
+```bash
+uv run pytest -q                                  # 期望：80 passed
+uv run ruff check .                               # 期望：All checks passed
+# 浏览器端到端（需网关在 127.0.0.1:8233 运行）
+export LEON_TOKEN=$(grep -E "^LEON_API_TOKEN=" .env | cut -d= -f2- | tr -d '\r\n')
+export CHROME_PATH="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+uv run --with playwright python projects/02-leon-agent/tests/manual_web_check.py   # 期望：34/34 通过
+```
+
+`pytest` 对前端只做字符串断言，**改了渲染链路必须跑第三条**，否则 ReferenceError 这类问题测不出来。
+
+> 注：`~/AppData/Local/ms-playwright` 下的浏览器已在 8/11 被清空（0 字节），
+> 所以走系统 Chrome (`CHROME_PATH`)，不要用 `p.chromium.launch()` 的默认路径。
+
+### 2. 不要留半成品在磁盘上
+
+重构如果分多步写，要么一次性补丁落地，要么改完立刻跑第 1 条。
+曾出现过「变量已改名、引用点没跟上」导致 web 客户端一生图就 ReferenceError 的中间态。
+
+### 3. 本地提交不推送 = 对 GitHub 侧 agent 不存在
+
+Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完全看不到**，
+会基于旧代码继续改并产生冲突。做完一段就推。
+
+同理，只在聊天里达成的决定（比如上面的 Vue 3 决策）**必须写进 notes/**，
+否则另一个 agent 无从知晓 —— 本文件开头那句「仓库状态 = 真记忆」就是这个意思。
 
 ---
 

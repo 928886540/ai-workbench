@@ -1,7 +1,8 @@
 from pathlib import Path
 
 import httpx
-from leon_agent.leon_client import LeonImageClient
+import pytest
+from leon_agent.leon_client import LeonImageClient, LeonImageError
 
 
 class FakeBridge:
@@ -95,3 +96,75 @@ def test_task_sync_returns_compact_items() -> None:
             "error": None,
         }
     ]
+
+
+def test_cancel_image_task_hits_the_backend_cancel_route() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"ok": True, "job_id": "job-1", "status": "cancelled"})
+
+    client = LeonImageClient(
+        backend_url="http://leon.test",
+        plugin_dir=Path("unused"),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        bridge=FakeBridge(),
+    )
+
+    result = client.cancel_image_task(job_id="job-1")
+
+    assert seen == {"method": "POST", "path": "/ios/async_autogen/job-1/cancel"}
+    assert result == {"ok": True, "job_id": "job-1", "status": "cancelled", "cancelled": True}
+
+
+def test_cancel_image_task_reports_an_already_finished_job_truthfully() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True, "job_id": "job-9", "status": "completed"})
+
+    client = LeonImageClient(
+        backend_url="http://leon.test",
+        plugin_dir=Path("unused"),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        bridge=FakeBridge(),
+    )
+
+    result = client.cancel_image_task(job_id="job-9")
+
+    # A finished job cannot be stopped; the agent must not present this as a cancellation.
+    assert result["status"] == "completed"
+    assert result["cancelled"] is False
+
+
+def test_cancel_image_task_escapes_the_job_id_path_segment() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # .path is percent-decoded; the wire format is what must stay escaped so a
+        # hostile job_id cannot walk out of its path segment.
+        seen["raw"] = request.url.raw_path.decode()
+        return httpx.Response(200, json={"ok": True, "status": "cancelled"})
+
+    client = LeonImageClient(
+        backend_url="http://leon.test",
+        plugin_dir=Path("unused"),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        bridge=FakeBridge(),
+    )
+
+    client.cancel_image_task(job_id="a/b?c")
+
+    assert seen["raw"] == "/ios/async_autogen/a%2Fb%3Fc/cancel"
+
+
+def test_cancel_image_task_rejects_a_blank_job_id() -> None:
+    client = LeonImageClient(
+        backend_url="http://leon.test",
+        plugin_dir=Path("unused"),
+        http_client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200))),
+        bridge=FakeBridge(),
+    )
+
+    with pytest.raises(LeonImageError):
+        client.cancel_image_task(job_id="   ")

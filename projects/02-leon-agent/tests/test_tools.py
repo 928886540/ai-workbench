@@ -8,6 +8,7 @@ class FakeImageClient:
     def __init__(self) -> None:
         self.generate_calls: list[dict[str, Any]] = []
         self.latest_limits: list[int] = []
+        self.cancelled: list[str] = []
 
     def list_modes(self) -> dict[str, Any]:
         return {"ok": True, "modes": []}
@@ -28,6 +29,10 @@ class FakeImageClient:
     def get_latest_images(self, *, limit: int) -> dict[str, Any]:
         self.latest_limits.append(limit)
         return {"ok": True, "items": []}
+
+    def cancel_image_task(self, *, job_id: str) -> dict[str, Any]:
+        self.cancelled.append(job_id)
+        return {"ok": True, "job_id": job_id, "status": "cancelled", "cancelled": True}
 
 
 def test_generate_tool_passes_source_text_verbatim() -> None:
@@ -91,3 +96,41 @@ def test_agent_prompt_forbids_image_prompt_rewriting() -> None:
     assert "source_text verbatim" in SYSTEM_PROMPT
     assert "Do not translate, summarize, sanitize, expand, beautify" in SYSTEM_PROMPT
     assert "Do not choose Prompt, Workflow, LoRA" in SYSTEM_PROMPT
+
+
+def test_cancel_tool_is_exposed_and_forwards_the_job_id() -> None:
+    client = FakeImageClient()
+    tools = create_leon_tools(
+        client,  # type: ignore[arg-type]
+        session_id="session-1",
+        default_mode_ids=["k2_tifa_plus"],
+    )
+
+    result = tools.execute("cancel_image_task", {"job_id": "job-7"})
+
+    assert result["ok"] is True
+    assert result["status"] == "cancelled"
+    assert client.cancelled == ["job-7"]
+
+
+def test_cancel_tool_schema_requires_a_job_id() -> None:
+    tools = create_leon_tools(
+        FakeImageClient(),  # type: ignore[arg-type]
+        session_id="session-1",
+        default_mode_ids=["k2_tifa_plus"],
+    )
+
+    spec = next(
+        item for item in tools.schemas if item["function"]["name"] == "cancel_image_task"
+    )
+    parameters = spec["function"]["parameters"]
+
+    assert parameters["required"] == ["job_id"]
+    assert parameters["properties"]["job_id"]["type"] == "string"
+    assert parameters["additionalProperties"] is False
+
+
+def test_agent_prompt_tells_the_model_it_can_cancel() -> None:
+    # The agent used to tell users cancelling was impossible because no tool existed.
+    assert "cancel_image_task" in SYSTEM_PROMPT
+    assert "never tell the user cancelling is unsupported" in SYSTEM_PROMPT
