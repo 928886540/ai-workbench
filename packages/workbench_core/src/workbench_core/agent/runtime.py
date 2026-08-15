@@ -266,6 +266,7 @@ class AgentRuntime:
                         messages.append({"role": "assistant", "content": answer})
                         self._check_cancelled(cancel_event)
                         self._emit(AgentEvent(kind="completed", turn=turn, content=answer))
+                        self._check_cancelled(cancel_event)
                         return AgentResult(
                             answer=answer,
                             steps=steps,
@@ -281,6 +282,7 @@ class AgentRuntime:
                 messages.append({"role": "assistant", "content": answer})
                 self._check_cancelled(cancel_event)
                 self._emit(AgentEvent(kind="completed", turn=turn, content=answer))
+                self._check_cancelled(cancel_event)
                 return AgentResult(answer=answer, steps=steps, turns=turn, messages=messages)
 
             self._check_cancelled(cancel_event)
@@ -294,6 +296,7 @@ class AgentRuntime:
             messages.append({"role": "assistant", "content": answer})
             self._check_cancelled(cancel_event)
             self._emit(AgentEvent(kind="completed", turn=self.max_turns, content=answer))
+            self._check_cancelled(cancel_event)
             return AgentResult(
                 answer=answer,
                 steps=steps,

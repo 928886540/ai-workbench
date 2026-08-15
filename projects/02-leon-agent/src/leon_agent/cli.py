@@ -795,19 +795,24 @@ class LeonConsole:
         self.print(table)
 
     def show_status(self) -> None:
+        model = getattr(self, "llm_model", "-") or "-"
+        provider = getattr(self, "llm_provider_name", "") or getattr(
+            self, "llm_profile", "-"
+        )
         body = Text()
         body.append("模型       ", style="bold cyan")
-        body.append(f"{self.llm_model or '-'}\n")
+        body.append(f"{model}\n")
         body.append("Provider   ", style="bold cyan")
-        body.append(f"{self.llm_provider_name or self.llm_profile or '-'}\n")
+        body.append(f"{provider or '-'}\n")
         body.append("会话       ", style="bold cyan")
         body.append(f"{self.session_id}\n")
         body.append("请求策略   ", style="bold cyan")
         body.append(
-            f"timeout={self.llm_timeout_seconds:g}s · retries={self.llm_max_retries}\n"
+            f"timeout={getattr(self, 'llm_timeout_seconds', 30):g}s · "
+            f"retries={getattr(self, 'llm_max_retries', 0)}\n"
         )
         body.append("图片后端   ", style="bold magenta")
-        body.append(f"{self.config.backend_url}")
+        body.append(f"{getattr(getattr(self, 'config', None), 'backend_url', '-')}")
         self.print(Panel(body, title="当前运行状态", border_style="cyan"))
 
     def show_models(self) -> None:

@@ -309,6 +309,28 @@ def test_agent_runtime_discards_late_blocking_tool_result() -> None:
     assert isinstance(outcome[0], AgentCancelled)
 
 
+def test_agent_runtime_does_not_return_after_completed_callback_requests_cancel() -> None:
+    cancel_event = threading.Event()
+
+    class AnswerClient:
+        def chat_turn(self, messages, tools=None, temperature=0.2):  # noqa: ANN001, ARG002
+            return ChatTurn(content="late")
+
+    def on_event(event) -> None:  # noqa: ANN001
+        if event.kind == "completed":
+            cancel_event.set()
+
+    runtime = AgentRuntime(
+        client=AnswerClient(),  # type: ignore[arg-type]
+        tools=ToolRegistry(),
+        system_prompt="Check completion boundary.",
+        on_event=on_event,
+    )
+
+    with pytest.raises(AgentCancelled):
+        runtime.run("hello", cancel_event=cancel_event)
+
+
 def test_cancellation_scope_reaches_runtime_without_changing_default_callers() -> None:
     cancel_event = threading.Event()
     cancel_event.set()
