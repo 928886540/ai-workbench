@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import CancelledError
 from contextlib import contextmanager
 from contextvars import ContextVar
+from inspect import Parameter, signature
 from threading import Event
 from typing import Any, Protocol
 
@@ -107,6 +108,20 @@ class AgentRuntime:
         if cancel_event is not None and cancel_event.is_set():
             raise AgentCancelled("agent turn cancelled")
 
+    @staticmethod
+    def _cancel_kwargs(method: Callable[..., Any], cancel_event: Event | None) -> dict[str, Any]:
+        if cancel_event is None:
+            return {}
+        try:
+            parameters = signature(method).parameters.values()
+        except (TypeError, ValueError):
+            return {"cancel_event": cancel_event}
+        supports_cancel = any(
+            parameter.name == "cancel_event" or parameter.kind == Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        return {"cancel_event": cancel_event} if supports_cancel else {}
+
     def _chat_turn(
         self,
         messages: list[dict[str, Any]],
@@ -120,8 +135,7 @@ class AgentRuntime:
             "tools": tools,
             "temperature": temperature,
         }
-        if cancel_event is not None:
-            kwargs["cancel_event"] = cancel_event
+        kwargs.update(self._cancel_kwargs(self.client.chat_turn, cancel_event))
         try:
             response = self.client.chat_turn(messages, **kwargs)
         except CancelledError as exc:
@@ -140,8 +154,7 @@ class AgentRuntime:
     ) -> str:
         self._check_cancelled(cancel_event)
         kwargs: dict[str, Any] = {"temperature": temperature}
-        if cancel_event is not None:
-            kwargs["cancel_event"] = cancel_event
+        kwargs.update(self._cancel_kwargs(self.client.chat, cancel_event))
         try:
             answer = self.client.chat(messages, **kwargs)
         except CancelledError as exc:

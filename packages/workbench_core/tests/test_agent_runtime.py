@@ -136,7 +136,6 @@ def test_agent_runtime_cancelled_before_first_llm_call() -> None:
             messages,
             tools=None,
             temperature=0.2,
-            cancel_event=None,
         ):  # noqa: ANN001, ARG002
             self.calls += 1
             raise AssertionError("cancelled turn must not call the LLM")
@@ -171,7 +170,6 @@ def test_agent_runtime_cancel_between_tool_and_next_round() -> None:
             messages,
             tools=None,
             temperature=0.2,
-            cancel_event=None,
         ):  # noqa: ANN001, ARG002
             self.calls += 1
             if self.calls == 1:
@@ -217,7 +215,7 @@ def test_agent_runtime_discards_late_blocking_llm_result() -> None:
     outcome: list[object] = []
 
     class BlockingClient:
-        def chat_turn(self, messages, tools=None, temperature=0.2, cancel_event=None):  # noqa: ANN001, ARG002
+        def chat_turn(self, messages, tools=None, temperature=0.2):  # noqa: ANN001, ARG002
             started.set()
             release.wait(timeout=2)
             return ChatTurn(content="late")
@@ -265,7 +263,6 @@ def test_agent_runtime_discards_late_blocking_tool_result() -> None:
             messages,
             tools=None,
             temperature=0.2,
-            cancel_event=None,
         ):  # noqa: ANN001, ARG002
             self.calls += 1
             arguments = json.dumps({"value": "late"})
