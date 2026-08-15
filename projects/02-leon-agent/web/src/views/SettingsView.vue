@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { ApiError, api, type ModelSettingsResponse } from "../api/client";
+import VoiceSettings from "../components/VoiceSettings.vue";
 
 const props = defineProps<{ sessionId: string }>();
 
@@ -185,5 +186,7 @@ onMounted(() => void loadSettings());
       <p class="settings-default">留空并保存：跟随当前 provider 默认模型（{{ defaultModel || "未知" }}）</p>
       <p class="settings-status" :data-tone="statusTone" role="status">{{ status }}</p>
     </article>
+
+    <VoiceSettings />
   </section>
 </template>

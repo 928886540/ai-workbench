@@ -37,6 +37,19 @@ export interface ModelSettingsResponse {
   catalog_error: string | null;
 }
 
+export interface VoiceCatalogResponse {
+  enabled: boolean;
+  default_voice_id: string;
+  models: Array<Record<string, unknown>>;
+  voices: Array<{
+    id: string;
+    name?: string | null;
+    model?: string | null;
+    languages?: string[];
+    demo?: string | null;
+  }>;
+}
+
 export interface LeonEvent {
   event: string;
   session_id: string;
@@ -134,6 +147,11 @@ export class LeonApi {
       method: "PUT",
       body: JSON.stringify({ model }),
     });
+  }
+
+  async getVoiceCatalog(refresh = false): Promise<VoiceCatalogResponse> {
+    const suffix = refresh ? "?refresh=true" : "";
+    return this.request<VoiceCatalogResponse>(`/api/voice/catalog${suffix}`);
   }
 
   connectEvents(
