@@ -101,6 +101,7 @@ def test_session_image_state_restores_tasks_and_gallery(client, monkeypatch):
                     {
                         "job_id": "job-from-task",
                         "status": "completed",
+                        "workflow_name": "k2_queen_marika",
                         "image_url": "https://images.example/task.png",
                     }
                 ]
@@ -126,6 +127,8 @@ def test_session_image_state_restores_tasks_and_gallery(client, monkeypatch):
     data = response.json()
     assert data["errors"] == {}
     assert {item["job_id"] for item in data["tasks"]} == {"job-from-task"}
+    assert data["tasks"][0]["mode_id"] == "k2_queen_marika"
+    assert data["tasks"][0]["mode_name"] == "玛莉卡"
     assert {item["job_id"] for item in data["images"]} == {
         "job-from-task",
         "job-from-gallery",
@@ -159,7 +162,13 @@ def test_web_client_supports_markdown_images_and_touch_scrolling(client):
     assert "$input.addEventListener('focus'" not in html
     assert "height:100dvh" in html
     assert "font-size:16px" in html
-    assert "/sw.js?v=15" in html
+    assert "/sw.js?v=16" in html
+    assert "function statusLabel(" in html
+    assert "排队中" in html
+    assert "任务详情" in html
+    assert "暂无任务" in html
+    assert "暂无图片" in html
+    assert "#voice-search{flex:1;min-width:0;min-height:44px" in html
 
 
 def test_web_client_image_viewer_is_a_zoomable_album(client):

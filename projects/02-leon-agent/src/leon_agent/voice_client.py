@@ -18,6 +18,7 @@ Two behaviours are easy to get wrong and are pinned by tests:
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,6 +26,47 @@ from typing import Any
 import httpx
 
 VOICE_ID_LENGTH = 24
+
+_TTS_LABELED_ID_RE = re.compile(
+    r"(?i)(?:(?:任务|生成计划|客户端任务)\s*(?:ID|编号)|"
+    r"(?:job|generation\s+plan|client\s+task)\s*id)\s*[:：]\s*[A-Za-z0-9_-]+"
+)
+_TTS_CODE_PARENS_RE = re.compile(
+    r"[（(]\s*(?=[A-Za-z0-9_-]*[_\d])[A-Za-z0-9][A-Za-z0-9_-]{5,}\s*[）)]"
+)
+_TTS_LONG_HEX_RE = re.compile(r"\b[a-fA-F0-9]{16,}\b")
+_TTS_LONG_IDENTIFIER_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_-]{19,}\b")
+_TTS_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0E\uFE0F\u200D]"
+)
+
+
+def prepare_speech_text(value: str) -> str:
+    """Remove markup and internal identifiers that TTS would pronounce literally."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"```[\s\S]*?```", " ", text)
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"https?://\S+", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*(?:提交信息|详细信息|任务信息)\s*[:：]\s*(?=\n|$)", "", text)
+    text = _TTS_LABELED_ID_RE.sub(" ", text)
+    text = _TTS_CODE_PARENS_RE.sub(" ", text)
+    text = _TTS_LONG_HEX_RE.sub(" ", text)
+    text = _TTS_LONG_IDENTIFIER_RE.sub(" ", text)
+    text = _TTS_EMOJI_RE.sub(" ", text)
+    text = re.sub(r"(?m)^\s*(?:[-*+•]\s+|[-–—]{2,}\s*$)", "", text)
+    text = re.sub(r"[`*_>#|~]", "", text)
+    lines = []
+    for line in text.split("\n"):
+        line = re.sub(r"[ \t]+", " ", line).strip(" ，")
+        line = re.sub(
+            r"([\u3400-\u9fff」』）]) (?=[\u3400-\u9fff「『（])",
+            r"\1",
+            line,
+        )
+        if line:
+            lines.append(line)
+    return re.sub(r"，{2,}", "，", "，".join(lines)).strip(" ，")
 
 
 class VoiceError(RuntimeError):
@@ -178,9 +220,9 @@ class VolinkVoiceClient:
         When `model` is omitted the voice's own model is used, because a
         mismatched pair still returns 200 while rendering the wrong voice.
         """
-        clean_text = str(text or "").strip()
+        clean_text = prepare_speech_text(text)
         if not clean_text:
-            raise VoiceError("text is required for speech synthesis")
+            raise VoiceError("text contains no speakable content")
         clean_voice = str(voice_id or "").strip()
         if not clean_voice:
             raise VoiceError("voice_id is required for speech synthesis")

@@ -1,4 +1,4 @@
-const CACHE = 'leon-v15';
+const CACHE = 'leon-v16';
 const STATIC = ['/', '/index.html', '/manifest.json', '/icon.svg'];
 self.addEventListener('install', e =>
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(STATIC)).then(() => self.skipWaiting()))

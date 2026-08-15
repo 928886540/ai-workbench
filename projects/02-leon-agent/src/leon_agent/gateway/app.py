@@ -16,6 +16,7 @@ Phase 1 scope:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -48,7 +49,9 @@ from leon_agent.leon_client import LeonImageClient
 from leon_agent.models import model_provider_scope
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
-from leon_agent.voice_client import VoiceError, VolinkVoiceClient
+from leon_agent.voice_client import VoiceError, VolinkVoiceClient, prepare_speech_text
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Process-global singletons
@@ -534,6 +537,12 @@ async def get_session_image_state(
     else:
         tasks = task_result.get("items", []) if isinstance(task_result, dict) else []
 
+    tasks = [item for item in tasks if isinstance(item, dict)]
+    for item in tasks:
+        mode_id = str(item.get("workflow_name") or "").strip()
+        item["mode_id"] = mode_id
+        item["mode_name"] = mode_display_name(mode_id) if mode_id else ""
+
     if isinstance(gallery_result, BaseException):
         errors["gallery"] = f"{type(gallery_result).__name__}: {gallery_result}"
         gallery_items: list[dict[str, Any]] = []
@@ -671,12 +680,24 @@ async def send_message(
         image_client = _create_image_client(config)
 
         def on_generation_submitted(submission: dict[str, Any]) -> None:
+            workflow_ids = [
+                str(item).strip()
+                for item in submission.get("workflow_ids", [])
+                if str(item).strip()
+            ]
+            source_text = str(submission.get("source_text") or "").strip()
             jobs = [
                 job
                 for job in submission.get("jobs", [])
                 if isinstance(job, dict) and job.get("job_id")
             ]
-            for job in jobs:
+            for index, job in enumerate(jobs):
+                fallback_mode = (
+                    workflow_ids[min(index, len(workflow_ids) - 1)]
+                    if workflow_ids
+                    else ""
+                )
+                mode_id = str(job.get("workflow_name") or fallback_mode).strip()
                 bus.publish(
                     LeonEvent(
                         event="image.task.created",
@@ -685,6 +706,9 @@ async def send_message(
                             "generation_plan_id": submission.get("generation_plan_id"),
                             "job_id": job["job_id"],
                             "status": job.get("status", "queued"),
+                            "mode_id": mode_id,
+                            "mode_name": mode_display_name(mode_id) if mode_id else "",
+                            "source_text": source_text,
                         },
                     )
                 )
@@ -970,6 +994,13 @@ async def synthesize_speech(
             client.synthesize, text=body.text, voice_id=voice_id
         )
     except VoiceError as exc:
+        logger.warning(
+            "Volink TTS failed: voice_id=%s input_chars=%d speakable_chars=%d error=%s",
+            voice_id,
+            len(body.text),
+            len(prepare_speech_text(body.text)),
+            exc,
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(
         content=audio,

@@ -116,6 +116,8 @@ def create_leon_tools(
             character_context=character_context,
             random_workflow=random_workflow,
         )
+        submission.setdefault("source_text", source_text)
+        submission.setdefault("workflow_ids", list(modes))
         if on_generation_submitted is not None:
             on_generation_submitted(submission)
         if not wait_for_image_completion:

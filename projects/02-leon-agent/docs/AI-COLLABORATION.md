@@ -124,9 +124,15 @@ expand it into global search/delete APIs. Normalize every `final_image_url` into
   request must include `lang=zh-CN`, otherwise Chinese names such as `风韵少妇` become unsearchable
   English labels.
 - `POST /api/agent/tts` accepts `text` plus optional `voice_id` and returns `audio/mpeg` directly.
+- Browser and gateway both normalize speakable text: remove Markdown list markers, emoji, URLs,
+  workflow/mode IDs, task IDs, and plan IDs; join line breaks with a natural Chinese pause. Keep this
+  behavior aligned between `speakableText()` and `prepare_speech_text()`.
 - Agent-initiated `speak_text` stores a short-lived clip, publishes `voice.ready`, and serves it from
   `GET /api/voice/clips/{clip_id}`.
 - Voice IDs are 24-character IDs, not display names, and each voice is bound to its catalog model.
+- A TTS `502` is an observed intermittent Volink upstream failure, not evidence of a local text-length
+  limit. Log the voice ID, raw/prepared character counts, and upstream error. Do not add retries unless
+  retry semantics are explicitly designed.
 - The Web client uses one reusable audio element. A blocked iOS autoplay attempt keeps the pending
   audio URL and callback until the user taps the visible unlock button; do not revoke it early.
 
@@ -143,6 +149,8 @@ Merged from `feat/leon-ux-polish`:
 - Full-screen viewer supports album navigation, pinch/double-click focal zoom, drag-to-pan, and mouse
   wheel; the redundant visible zoom controls were removed
 - Chat history, image tasks, and gallery are restored after a page refresh
+- Image tasks use the human mode name and Chinese status as primary content; internal job/plan IDs are
+  hidden inside a collapsed details section
 - The chat message area remains touch-scrollable and stops auto-following when the user scrolls up
 - Mobile keyboard layout relies on `interactive-widget=resizes-content` and `100dvh`; do not add a
   second `visualViewport.height` resize or force-scroll on textarea focus, because that creates a
@@ -150,8 +158,10 @@ Merged from `feat/leon-ux-polish`:
 - Chat and gallery images open in the current-page full-screen viewer, not a new tab/download page
 - Typing `/nsfw --model` opens a selectable mode menu above the composer
 - Assistant bubbles support copy, real retry, local edit, and TTS playback; edited text is used by TTS
-- TTS strips Markdown images and raw URLs, shows loading then animated level bars, and restores the
-  normal playback icon on completion
+- TTS strips Markdown/emoji/internal identifiers, shows loading then animated level bars, restores the
+  normal playback icon on completion, and surfaces the gateway error detail on failure
+- Voice search takes the available mobile row width and both search/refresh controls meet a 44px touch
+  target
 - Model candidates open on focus/input and collapse after a successful save
 - Error cards retry the matching previous user message directly
 - CLI image-generation progress indicator
@@ -186,8 +196,8 @@ For Web changes also verify a mobile viewport with a real browser:
 - bubble copy/retry/edit/TTS actions work after rerendering
 - TTS shows loading/playing/idle states and preserves blocked iOS audio until unlock
 
-Current baseline on 2026-08-15: `94 passed`, Ruff clean, and
-`tests/manual_web_check.py` `45/45` with system Chrome at `390x844` touch viewport.
+Current baseline on 2026-08-15: `96 passed`, Ruff clean, and
+`tests/manual_web_check.py` `51/51` with system Chrome at `390x844` touch viewport.
 
 ## Handoff Format
 

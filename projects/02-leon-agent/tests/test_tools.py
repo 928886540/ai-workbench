@@ -53,6 +53,8 @@ def test_generate_tool_passes_source_text_verbatim() -> None:
     assert client.generate_calls[0]["source_text"] == request
     assert client.generate_calls[0]["workflow_ids"] == ["k2_tifa_plus"]
     assert client.generate_calls[0]["batch_count"] == 2
+    assert result["source_text"] == request
+    assert result["workflow_ids"] == ["k2_tifa_plus"]
 
 
 def test_generate_tool_schema_is_gemini_compatible() -> None:

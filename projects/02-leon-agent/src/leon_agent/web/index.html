@@ -98,6 +98,7 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .status-badge.running{background:var(--blue-soft);color:var(--blue)}
 .status-badge.completed{background:var(--green-soft);color:var(--green)}
 .status-badge.failed{background:var(--red-soft);color:var(--red)}
+.status-badge.cancelled{background:var(--surface2);color:var(--text2)}
 
 /* Image card */
 .image-card{align-self:flex-start;border-radius:14px;overflow:hidden;border:1px solid var(--border);max-width:min(280px,85%)}
@@ -109,8 +110,11 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 #page-tasks{padding:12px;gap:8px}
 .task-item{background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:5px}
 .task-top{display:flex;align-items:center;justify-content:space-between}
-.task-id{font-size:12px;color:var(--text2);font-family:Menlo,monospace;word-break:break-all}
-.task-plan{font-size:11px;color:var(--text2)}
+.task-mode{font-size:15px;font-weight:650;color:var(--text)}
+.task-source{font-size:13px;line-height:1.45;color:var(--text2);white-space:pre-wrap;word-break:break-word}
+.task-details{margin-top:3px;font-size:11px;color:var(--text2)}
+.task-details summary{cursor:pointer;user-select:none}
+.task-detail-row{margin-top:4px;font-family:Menlo,monospace;word-break:break-all}
 
 /* Gallery */
 #page-gallery{padding:12px;flex-direction:column;gap:8px}
@@ -177,6 +181,9 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .switch input:disabled + .switch-track{opacity:.45;cursor:default}
 #voice-list{margin-top:10px;max-height:250px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;border:1px solid var(--border);border-radius:10px;background:#fff}
 #voice-list:empty{display:none}
+#voice-search{flex:1;min-width:0;min-height:44px;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--text);padding:10px 12px;font:inherit;font-size:16px}
+#voice-refresh{width:44px;height:44px;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--text2);font-size:22px;cursor:pointer;flex-shrink:0}
+#voice-list{max-height:min(52dvh,420px)}
 .voice-option{width:100%;border:0;border-bottom:1px solid var(--border);background:none;padding:10px 12px;display:flex;align-items:center;gap:8px;font:inherit;font-size:14px;color:var(--text);text-align:left;cursor:pointer}
 .voice-option:last-child{border-bottom:0}
 .voice-option.selected{background:var(--blue-soft);color:var(--blue);font-weight:600}
@@ -364,6 +371,7 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .tl-badge.running{background:rgba(39,131,222,.25);color:#5E9FE8}
 .tl-badge.completed{background:rgba(70,161,113,.25);color:#72BC8F}
 .tl-badge.failed{background:rgba(229,100,88,.25);color:#E97366}
+.tl-badge.cancelled{background:rgba(255,255,255,.1);color:rgba(255,255,255,.5)}
 
 /* Bottom nav */
 #nav{height:var(--nav-h);display:flex;border-top:1px solid var(--border);background:#fff;padding-bottom:env(safe-area-inset-bottom)}
@@ -1024,13 +1032,25 @@ function stopVoice(){
 // particular used to be spelled out URL character by character.
 function speakableText(raw){
   return String(raw||'')
+    .replace(/\r\n?/g,'\n')
     .replace(/```[\s\S]*?```/g,' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g,' ')
     .replace(/\[([^\]]+)\]\([^)]*\)/g,'$1')
     .replace(/https?:\/\/\S+/gi,' ')
-    .replace(/[`*_>#|]/g,'')
-    .replace(/\s{2,}/g,' ')
-    .trim();
+    .replace(/\s*(?:提交信息|详细信息|任务信息)\s*[:：]\s*(?=\n|$)/g,'')
+    .replace(/(?:(?:任务|生成计划|客户端任务)\s*(?:ID|编号)|(?:job|generation\s+plan|client\s+task)\s*id)\s*[:：]\s*[A-Za-z0-9_-]+/gi,' ')
+    .replace(/[（(]\s*(?=[A-Za-z0-9_-]*[_\d])[A-Za-z0-9][A-Za-z0-9_-]{5,}\s*[）)]/g,' ')
+    .replace(/\b[a-fA-F0-9]{16,}\b/g,' ')
+    .replace(/\b[A-Za-z][A-Za-z0-9_-]{19,}\b/g,' ')
+    .replace(/[\u{1F000}-\u{1FAFF}\u2600-\u27BF\uFE0E\uFE0F\u200D]/gu,' ')
+    .replace(/^\s*(?:[-*+•]\s+|[-–—]{2,}\s*$)/gm,'')
+    .replace(/[`*_>#|~]/g,'')
+    .split('\n')
+    .map(line=>line.replace(/[ \t]+/g,' ').replace(/([\u3400-\u9fff」』）]) (?=[\u3400-\u9fff「『（])/g,'$1').replace(/^[ ，]+|[ ，]+$/g,''))
+    .filter(Boolean)
+    .join('，')
+    .replace(/，{2,}/g,'，')
+    .replace(/^[ ，]+|[ ，]+$/g,'');
 }
 const voiceState={enabled:false,models:[],voices:[],voiceId:'',loaded:false};
 let voicePrefs={voiceId:'',favorites:[],autoplayAll:false};
@@ -1120,7 +1140,17 @@ async function requestTts(text){
   if(token)headers['Authorization']='Bearer '+token;
   const r=await fetch(BASE_URL+'/api/agent/tts',{method:'POST',headers,
     body:JSON.stringify({text,voice_id:activeVoiceId()||undefined})});
-  if(!r.ok)throw new Error('TTS '+r.status);
+  if(!r.ok){
+    const contentType=r.headers.get('content-type')||'';
+    let detail='';
+    if(contentType.includes('application/json')){
+      const payload=await r.json();detail=String(payload.detail||payload.error||'').trim();
+    }else{
+      const body=(await r.text()).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+      detail=body.slice(0,160);
+    }
+    throw new Error(detail||`TTS ${r.status}${r.statusText?' '+r.statusText:''}`);
+  }
   return URL.createObjectURL(await r.blob());
 }
 async function speakMessage(msg,button){
@@ -1137,8 +1167,10 @@ async function speakMessage(msg,button){
     await playVoice(url,{onState:state=>{
       if(state==='idle'){button.classList.remove('busy');button.innerHTML=ICON_SPEAK;URL.revokeObjectURL(url)}
     }});
-  }catch{
-    button.classList.remove('busy');button.innerHTML=ICON_SPEAK;button.title='朗读失败';
+  }catch(err){
+    const detail=err instanceof Error?err.message:String(err);
+    button.classList.remove('busy');button.innerHTML=ICON_SPEAK;button.title='朗读失败：'+detail;
+    $voiceStatus.textContent='朗读失败：'+detail;
   }
 }
 function startEditingMessage(msg){
@@ -1200,8 +1232,10 @@ async function autoSpeak(msg){
         URL.revokeObjectURL(url);
       }
     }});
-  }catch{
-    if(button){button.classList.remove('busy');button.innerHTML=ICON_SPEAK;button.title='朗读失败'}
+  }catch(err){
+    const detail=err instanceof Error?err.message:String(err);
+    if(button){button.classList.remove('busy');button.innerHTML=ICON_SPEAK;button.title='朗读失败：'+detail}
+    $voiceStatus.textContent='朗读失败：'+detail;
   }
 }
 $voiceSearch.addEventListener('input',renderVoiceList);
@@ -1379,6 +1413,19 @@ function addErrorCard(message){
 const $tlOverlay  = document.getElementById('timeline-overlay');
 const $ivTimeline = document.getElementById('iv-timeline');
 const $tlToggle   = document.getElementById('timeline-toggle');
+
+function statusKey(status){
+  const value=String(status||'').trim().toLowerCase();
+  if(value==='queued'||value==='pending')return 'queued';
+  if(value==='running'||value==='processing')return 'running';
+  if(value==='completed'||value==='done'||value==='success')return 'completed';
+  if(value==='failed'||value==='error')return 'failed';
+  if(value==='cancelled'||value==='canceled')return 'cancelled';
+  return value||'queued';
+}
+function statusLabel(status){
+  return {queued:'排队中',running:'生成中',completed:'已完成',failed:'失败',cancelled:'已取消'}[statusKey(status)]||String(status||'未知');
+}
 let tlMode = false;
 let currentIvToolEntry = null;
 
@@ -1477,23 +1524,27 @@ function handleEvent(ev){
     case 'tool.started':
       hideThinking();
       ivTools++;currentToolCard=addToolCard(ev.data.tool_name,'running',ev.data.input);scrollBottom();
-      currentIvToolEntry=addTlEntry('tool','Tool Call',`Calling <code>${esc(ev.data.tool_name)}</code><span class="tl-badge running">running</span>`,ev.timestamp);
+      currentIvToolEntry=addTlEntry('tool','工具调用',`正在调用 <code>${esc(ev.data.tool_name)}</code><span class="tl-badge running">${statusLabel('running')}</span>`,ev.timestamp);
       updateIvStats();break;
 
     case 'tool.finished':{
       const ok=ev.data.ok!==false;
       if(currentToolCard)updateToolCard(currentToolCard,ok?'done':'failed',ev.data.output);
-      if(currentIvToolEntry){const b=currentIvToolEntry.querySelector('.tl-badge');if(b){b.className='tl-badge '+(ok?'completed':'failed');b.textContent=ok?'done':'failed'}}
+      if(currentIvToolEntry){const status=ok?'completed':'failed',b=currentIvToolEntry.querySelector('.tl-badge');if(b){b.className='tl-badge '+status;b.textContent=statusLabel(status)}}
       break;
     }
 
     case 'image.task.created':
-      tasks[ev.data.job_id]={status:ev.data.status||'queued',planId:ev.data.generation_plan_id};
+      tasks[ev.data.job_id]={
+        status:ev.data.status||'queued',planId:ev.data.generation_plan_id,
+        modeId:ev.data.mode_id||'',modeName:ev.data.mode_name||'',sourceText:ev.data.source_text||''
+      };
       if(currentToolCard)addTaskMeta(currentToolCard,ev.data);
       if(currentIvToolEntry){
         const c=currentIvToolEntry.querySelector('.tl-content');
         const row=document.createElement('div');row.style.marginTop='4px';
-        row.innerHTML=`job: <code>${esc(String(ev.data.job_id))}</code><span class="tl-badge queued" id="iv-badge-${esc(ev.data.job_id)}">${ev.data.status||'queued'}</span>`;
+        const status=statusKey(ev.data.status);
+        row.innerHTML=`${esc(ev.data.mode_name||ev.data.mode_id||'生图任务')}<span class="tl-badge ${status}" id="iv-badge-${esc(ev.data.job_id)}">${statusLabel(status)}</span>`;
         c.appendChild(row);
       }
       break;
@@ -1501,7 +1552,7 @@ function handleEvent(ev){
     case 'image.task.updated':
       if(tasks[ev.data.job_id])tasks[ev.data.job_id].status=ev.data.status;
       if(currentToolCard)updateBadge(currentToolCard,ev.data.job_id,ev.data.status);
-      {const ivb=document.getElementById('iv-badge-'+ev.data.job_id);if(ivb){ivb.className='tl-badge '+ev.data.status;ivb.textContent=ev.data.status}}
+      {const status=statusKey(ev.data.status),ivb=document.getElementById('iv-badge-'+ev.data.job_id);if(ivb){ivb.className='tl-badge '+status;ivb.textContent=statusLabel(status)}}
       break;
 
     case 'image.completed':
@@ -1555,12 +1606,14 @@ function iconFor(s){return s==='running'?'<div class="spinner"></div>':s==='done
 function addTaskMeta(card,data){
   const m=card.querySelector('.tool-meta');
   const r=document.createElement('span');
-  r.innerHTML=`job: <code>${esc(String(data.job_id||''))}</code> &nbsp;<span class="status-badge ${data.status||'queued'}" id="badge-${esc(data.job_id)}">${data.status||'queued'}</span>`;
+  const status=statusKey(data.status);
+  r.innerHTML=`${esc(data.mode_name||data.mode_id||'生图任务')} &nbsp;<span class="status-badge ${status}" id="badge-${esc(data.job_id)}">${statusLabel(status)}</span>`;
   m.appendChild(r);
 }
 function updateBadge(card,jobId,status){
   const b=card.querySelector('#badge-'+jobId);
-  if(b){b.className='status-badge '+status;b.textContent=status}
+  const key=statusKey(status);
+  if(b){b.className='status-badge '+key;b.textContent=statusLabel(key)}
 }
 function scrollBottom(force=false){
   if(!force&&!autoFollowMessages)return;
@@ -1594,10 +1647,16 @@ async function loadImageState(){
 function renderTasks(){
   const $l=document.getElementById('tasks-list');$l.innerHTML='';
   const entries=Object.entries(tasks).reverse();
-  if(!entries.length){$l.innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><p>${imageStateLoading?'正在加载任务…':imageStateError?'任务加载失败':'No tasks yet'}</p></div>`;return}
+  if(!entries.length){$l.innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><p>${imageStateLoading?'正在加载任务…':imageStateError?'任务加载失败':'暂无任务'}</p></div>`;return}
   entries.forEach(([jobId,t])=>{
     const el=document.createElement('div');el.className='task-item';
-    el.innerHTML=`<div class="task-top"><span class="task-id">${esc(jobId)}</span><span class="status-badge ${t.status}">${t.status}</span></div>${t.planId?`<div class="task-plan">plan: ${esc(t.planId)}</div>`:''}`;
+    const status=statusKey(t.status);
+    const modeName=t.mode_name||t.modeName||t.workflow_name||t.mode_id||t.modeId||'未知模式';
+    const sourceText=t.source_text||t.sourceText||'';
+    const planId=t.generation_plan_id||t.planId||'';
+    el.innerHTML=`<div class="task-top"><span class="task-mode">${esc(modeName)}</span><span class="status-badge ${status}">${statusLabel(status)}</span></div>`+
+      `${sourceText?`<div class="task-source">${esc(sourceText)}</div>`:''}`+
+      `<details class="task-details"><summary>任务详情</summary><div class="task-detail-row">任务 ID：${esc(jobId)}</div>${planId?`<div class="task-detail-row">生成计划 ID：${esc(planId)}</div>`:''}</details>`;
     $l.appendChild(el);
   });
 }
@@ -1606,7 +1665,7 @@ function renderTasks(){
 function renderGallery(){
   const $g=document.getElementById('gallery-grid');$g.innerHTML='';
   const entries=Object.entries(images).reverse();
-  if(!entries.length){$g.innerHTML=`<div class="empty-state"><div class="empty-icon">🖼️</div><p>${imageStateLoading?'正在加载图库…':imageStateError?'图库加载失败':'No images yet'}</p></div>`;return}
+  if(!entries.length){$g.innerHTML=`<div class="empty-state"><div class="empty-icon">🖼️</div><p>${imageStateLoading?'正在加载图库…':imageStateError?'图库加载失败':'暂无图片'}</p></div>`;return}
   entries.forEach(([jobId,img])=>{
     const el=document.createElement('div');el.className='gallery-img-wrap';
     const href=safeHref(img.url);if(!href)return;
@@ -1724,7 +1783,7 @@ async function init(){
 }
 
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=15',{scope:'/',updateViaCache:'none'})
+  navigator.serviceWorker.register('/sw.js?v=16',{scope:'/',updateViaCache:'none'})
     .then(registration=>registration.update()).catch(()=>{});
 }
 if(token){hideLogin();init()}

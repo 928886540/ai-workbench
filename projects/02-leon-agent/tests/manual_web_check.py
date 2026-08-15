@@ -43,6 +43,20 @@ with sync_playwright() as p:
 
     # ---------------- Bug 3: model picker ----------------
     page.click('.nav-item[data-page="settings"]')
+    voice_search = page.locator("#voice-search").bounding_box()
+    voice_refresh = page.locator("#voice-refresh").bounding_box()
+    check(
+        "语音搜索框在手机上占据主要行宽",
+        voice_search is not None and voice_search["width"] >= 250 and voice_search["height"] >= 44,
+        repr(voice_search),
+    )
+    check(
+        "语音刷新按钮达到 44px 触控尺寸",
+        voice_refresh is not None
+        and voice_refresh["width"] >= 44
+        and voice_refresh["height"] >= 44,
+        repr(voice_refresh),
+    )
     page.click("#model-input")
     page.wait_for_selector("#model-list .model-option", timeout=30000)
     count = page.locator("#model-list .model-option").count()
@@ -350,6 +364,46 @@ with sync_playwright() as p:
     check("自动朗读播放期间显示波形", actions["wave"])
     check("自动朗读结束恢复普通图标", actions["idle"])
 
+    tts_sample = (
+        "✅ 已用「玛莉卡」模式（k2queenmarika）提交生成一张极光旅游照片～  提交信息：\n"
+        "- 任务状态：排队中\n"
+        "- 任务 ID：2668cea0b6124e1983e10128ff6c4d72\n"
+        "- 生成计划 ID：leonpluginmsu3fzdyrjid8hoi "
+        "等渲染完成后我会把图片给你看，也可以随时问我查看进度～"
+    )
+    cleaned = page.evaluate("raw => speakableText(raw)", tts_sample)
+    check(
+        "TTS 清洗列表横杠、模式 ID 与任务 ID",
+        cleaned
+        == "已用「玛莉卡」模式提交生成一张极光旅游照片～，任务状态：排队中，"
+        "等渲染完成后我会把图片给你看，也可以随时问我查看进度～",
+        cleaned,
+    )
+
+    page.click('.nav-item[data-page="tasks"]')
+    task_ui = page.evaluate(
+        """() => {
+        Object.keys(tasks).forEach(key=>delete tasks[key]);
+        tasks['2668cea0b6124e1983e10128ff6c4d72']={
+          status:'running',modeName:'玛莉卡',modeId:'k2_queen_marika',
+          sourceText:'生成一张极光旅游照片',planId:'leonpluginmsu3fzdyrjid8hoi'
+        };
+        renderTasks();
+        const card=document.querySelector('.task-item');
+        const details=card.querySelector('details');
+        const collapsed=card.innerText;
+        details.open=true;
+        return {collapsed,expanded:card.innerText};
+      }"""
+    )
+    check("任务卡主信息显示生图模式", "玛莉卡" in task_ui["collapsed"])
+    check("任务状态显示中文", "生成中" in task_ui["collapsed"])
+    check(
+        "长任务 ID 默认收进折叠详情",
+        "2668cea0b6124e1983e10128ff6c4d72" not in task_ui["collapsed"]
+        and "2668cea0b6124e1983e10128ff6c4d72" in task_ui["expanded"],
+    )
+
     blocked = page.evaluate(
         """async () => {
         stopVoice();
@@ -400,7 +454,7 @@ with sync_playwright() as p:
     )
 
     Path(".tmp").mkdir(exist_ok=True)
-    page.screenshot(path=".tmp/leon-web-mobile-v15.png", full_page=True)
+    page.screenshot(path=".tmp/leon-web-mobile-v16.png", full_page=True)
 
     browser.close()
 
