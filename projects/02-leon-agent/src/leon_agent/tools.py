@@ -95,6 +95,7 @@ def create_leon_tools(
     default_mode_ids: list[str],
     wait_for_image_completion: bool = True,
     on_generation_submitted: Callable[[dict[str, Any]], None] | None = None,
+    speak_handler: Callable[[str, str | None], dict[str, Any]] | None = None,
 ) -> ToolRegistry:
     chat_id = f"leon-agent:{session_id}"
 
@@ -125,7 +126,7 @@ def create_leon_tools(
             submission=submission,
         )
 
-    return ToolRegistry(
+    registry = ToolRegistry(
         [
             AgentTool(
                 name="list_image_modes",
@@ -262,3 +263,39 @@ def create_leon_tools(
             ),
         ]
     )
+    # Voice is optional: the gateway injects a handler only when a TTS key is
+    # configured, so a deployment without one never advertises a tool it cannot run.
+    if speak_handler is not None:
+        registry.register(
+            AgentTool(
+                name="speak_text",
+                description=(
+                    "Speak text out loud as a voice message in the chat. Use it when the "
+                    "user asks you to sing, read aloud, talk, or reply with voice (for "
+                    "example 给我唱首歌 / 用语音说 / 念一下). Put the exact words to be "
+                    "spoken in text — for a song, that is the lyrics themselves, not a "
+                    "description of them. Keep it under roughly 300 characters. Do not "
+                    "call this for ordinary text questions."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "The exact words to speak aloud.",
+                        },
+                        "voice_id": {
+                            "type": "string",
+                            "description": (
+                                "Optional 24-character voice id. Omit to use the "
+                                "session's configured voice."
+                            ),
+                        },
+                    },
+                    "required": ["text"],
+                    "additionalProperties": False,
+                },
+                handler=lambda text, voice_id=None: speak_handler(text, voice_id),
+            )
+        )
+    return registry

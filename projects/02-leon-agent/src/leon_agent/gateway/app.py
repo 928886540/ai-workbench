@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -46,6 +48,7 @@ from leon_agent.leon_client import LeonImageClient
 from leon_agent.models import model_provider_scope
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
+from leon_agent.voice_client import VoiceError, VolinkVoiceClient
 
 # ---------------------------------------------------------------------------
 # Process-global singletons
@@ -806,6 +809,7 @@ async def send_message(
             on_event=on_event,
             wait_for_image_completion=False,
             on_generation_submitted=on_generation_submitted,
+            speak_handler=_session_speak_factory(config, session_id, bus.publish),
         )
 
         result = await asyncio.to_thread(agent.run, body.content, history=history)
@@ -876,6 +880,157 @@ async def session_events(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Voice (TTS)
+# ---------------------------------------------------------------------------
+
+
+class VoiceClipStore:
+    """Hold rendered mp3 bytes in memory so the browser never sees the API key.
+
+    Clips are small (~50KB) and short-lived: the newest `max_count` survive and
+    anything older than `ttl_seconds` is dropped on access.
+    """
+
+    def __init__(self, *, max_count: int = 200, ttl_seconds: float = 3600.0) -> None:
+        self.max_count = max_count
+        self.ttl_seconds = ttl_seconds
+        self._clips: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
+
+    def put(self, audio: bytes) -> str:
+        clip_id = uuid4().hex
+        self._clips[clip_id] = (time.monotonic(), audio)
+        while len(self._clips) > self.max_count:
+            self._clips.popitem(last=False)
+        return clip_id
+
+    def get(self, clip_id: str) -> bytes | None:
+        entry = self._clips.get(clip_id)
+        if entry is None:
+            return None
+        created_at, audio = entry
+        if time.monotonic() - created_at > self.ttl_seconds:
+            self._clips.pop(clip_id, None)
+            return None
+        return audio
+
+
+_voice_clips = VoiceClipStore()
+_voice_client_cache: dict[str, VolinkVoiceClient] = {}
+
+
+def _get_voice_client(config: LeonSettings) -> VolinkVoiceClient:
+    if not config.voice_enabled:
+        raise HTTPException(status_code=503, detail="Voice is not configured (VOLINK_API_KEY)")
+    key = config.volink_api_key.get_secret_value()
+    cached = _voice_client_cache.get(key)
+    if cached is None:
+        cached = VolinkVoiceClient(api_key=key, base_url=config.volink_base_url)
+        _voice_client_cache[key] = cached
+    return cached
+
+
+class SpeakRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    voice_id: str | None = Field(default=None, max_length=64)
+
+
+@app.get("/api/voice/catalog", tags=["voice"], dependencies=[Depends(verify_token)])
+async def get_voice_catalog(
+    refresh: bool = Query(default=False),
+    config: LeonSettings = Depends(get_config),
+):
+    if not config.voice_enabled:
+        return {"enabled": False, "models": [], "voices": [], "default_voice_id": ""}
+    client = _get_voice_client(config)
+    try:
+        catalog = await asyncio.to_thread(client.catalog, refresh=refresh)
+    except VoiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "enabled": True,
+        "default_voice_id": config.volink_default_voice_id,
+        **catalog,
+    }
+
+
+@app.post("/api/agent/tts", tags=["voice"], dependencies=[Depends(verify_token)])
+async def synthesize_speech(
+    body: SpeakRequest,
+    config: LeonSettings = Depends(get_config),
+):
+    client = _get_voice_client(config)
+    voice_id = (body.voice_id or config.volink_default_voice_id).strip()
+    try:
+        audio = await asyncio.to_thread(
+            client.synthesize, text=body.text, voice_id=voice_id
+        )
+    except VoiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=audio,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/voice/clips/{clip_id}", tags=["voice"])
+async def get_voice_clip(clip_id: str, request: Request):
+    # Audio elements cannot send an Authorization header, so this route accepts
+    # the same ?token= query the SSE stream already relies on.
+    if not _request_has_valid_token(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    audio = _voice_clips.get(clip_id)
+    if audio is None:
+        raise HTTPException(status_code=404, detail="Clip expired or not found")
+    return Response(
+        content=audio,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-store", "Accept-Ranges": "none"},
+    )
+
+
+def _session_speak_factory(
+    config: LeonSettings,
+    session_id: str,
+    bus_publish: Callable[[LeonEvent], None],
+) -> Callable[[str, str | None], dict[str, Any]] | None:
+    """Build the speak_text handler, or None when voice is not configured."""
+    if not config.voice_enabled:
+        return None
+    client = _get_voice_client(config)
+
+    def speak(text: str, voice_id: str | None = None) -> dict[str, Any]:
+        target = (voice_id or config.volink_default_voice_id).strip()
+        audio = client.synthesize(text=text, voice_id=target)
+        clip_id = _voice_clips.put(audio)
+        voice = client.resolve_voice(target) or {}
+        bus_publish(
+            LeonEvent(
+                event="voice.ready",
+                session_id=session_id,
+                data={
+                    "clip_id": clip_id,
+                    "url": f"/api/voice/clips/{clip_id}",
+                    "text": text,
+                    "voice_id": target,
+                    "voice_name": voice.get("name") or "",
+                    "bytes": len(audio),
+                },
+            )
+        )
+        # The audio itself already reached the client over SSE; the model only
+        # needs to know it worked so it does not repeat the text.
+        return {
+            "ok": True,
+            "spoken": True,
+            "voice_name": voice.get("name") or "",
+            "characters": len(text),
+        }
+
+    return speak
 
 
 # ---------------------------------------------------------------------------

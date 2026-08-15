@@ -42,6 +42,9 @@ Rules:
   ids, then cancel each one in its own call. Report the returned status verbatim, including
   when a job had already finished and could no longer be stopped.
 - Never invent tool results. Explain tool errors directly and suggest the smallest next action.
+- When speak_text is available and the user asks you to sing, read aloud, or answer with voice,
+  call speak_text with the exact words to speak, then keep your text reply to one short line.
+  The audio itself is delivered to the chat, so do not paste the spoken text again in full.
 - Reply in Simplified Chinese unless the user explicitly asks for another language.
 """.strip()
 
@@ -58,6 +61,7 @@ class LeonAgent:
         on_event: Callable[[AgentEvent], None] | None = None,
         wait_for_image_completion: bool = True,
         on_generation_submitted: Callable[[dict[str, Any]], None] | None = None,
+        speak_handler: Callable[[str, str | None], dict[str, Any]] | None = None,
     ) -> None:
         tools = create_leon_tools(
             image_client,
@@ -65,6 +69,7 @@ class LeonAgent:
             default_mode_ids=default_mode_ids,
             wait_for_image_completion=wait_for_image_completion,
             on_generation_submitted=on_generation_submitted,
+            speak_handler=speak_handler,
         )
         self.runtime = AgentRuntime(
             client=llm_client,

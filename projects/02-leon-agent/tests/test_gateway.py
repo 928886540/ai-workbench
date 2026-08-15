@@ -159,7 +159,7 @@ def test_web_client_supports_markdown_images_and_touch_scrolling(client):
     assert "$input.addEventListener('focus'" not in html
     assert "height:100dvh" in html
     assert "font-size:16px" in html
-    assert "/sw.js?v=13" in html
+    assert "/sw.js?v=14" in html
 
 
 def test_web_client_image_viewer_is_a_zoomable_album(client):

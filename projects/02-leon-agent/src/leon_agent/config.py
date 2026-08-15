@@ -42,10 +42,34 @@ class LeonSettings(BaseSettings):
     bridge_timeout_seconds: float = Field(default=20.0, alias="LEON_BRIDGE_TIMEOUT_SECONDS")
     api_token: SecretStr | None = Field(default=None, alias="LEON_API_TOKEN")
 
+    # Volink TTS. The key stays server-side: audio is proxied so the browser
+    # never sees it.
+    volink_api_key: SecretStr | None = Field(default=None, alias="VOLINK_API_KEY")
+    volink_base_url: str = Field(
+        default="https://api.volink.org/v1",
+        alias="VOLINK_BASE_URL",
+    )
+    # 风韵少妇 / sensetime-sensenova-tts-v1
+    volink_default_voice_id: str = Field(
+        default="689334e84d3396ad1d28ee9e",
+        alias="VOLINK_DEFAULT_VOICE_ID",
+    )
+    voice_clip_ttl_seconds: float = Field(default=3600.0, alias="LEON_VOICE_CLIP_TTL_SECONDS")
+    voice_clip_max_count: int = Field(default=200, alias="LEON_VOICE_CLIP_MAX_COUNT")
+
     @field_validator("backend_url", "public_image_base_url")
     @classmethod
     def normalize_base_url(cls, value: str) -> str:
         return value.strip().rstrip("/")
+
+    @field_validator("volink_base_url")
+    @classmethod
+    def normalize_volink_base_url(cls, value: str) -> str:
+        return value.strip().rstrip("/")
+
+    @property
+    def voice_enabled(self) -> bool:
+        return bool(self.volink_api_key and self.volink_api_key.get_secret_value().strip())
 
     @property
     def active_plugin_dir(self) -> Path:

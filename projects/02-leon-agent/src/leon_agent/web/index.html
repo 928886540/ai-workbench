@@ -171,6 +171,38 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .model-option-id{overflow-wrap:anywhere}
 .model-option-tag{margin-left:auto;font-size:11px;font-weight:500;color:var(--text2);background:var(--surface2);border-radius:20px;padding:2px 8px;flex-shrink:0}
 .model-empty{padding:12px;font-size:13px;color:var(--text2);text-align:center}
+/* Voice */
+.settings-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)}
+.settings-toggle:last-of-type{border-bottom:0}
+.settings-toggle-label{font-size:14px}
+.settings-toggle-hint{font-size:11px;color:var(--text2);margin-top:2px}
+.switch{position:relative;width:46px;height:28px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.switch-track{position:absolute;inset:0;background:var(--surface2);border-radius:28px;transition:background .18s;cursor:pointer}
+.switch-track::after{content:'';position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .18s}
+.switch input:checked + .switch-track{background:var(--blue)}
+.switch input:checked + .switch-track::after{transform:translateX(18px)}
+.switch input:disabled + .switch-track{opacity:.45;cursor:default}
+#voice-list{margin-top:10px;max-height:250px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;border:1px solid var(--border);border-radius:10px;background:#fff}
+#voice-list:empty{display:none}
+.voice-option{width:100%;border:0;border-bottom:1px solid var(--border);background:none;padding:10px 12px;display:flex;align-items:center;gap:8px;font:inherit;font-size:14px;color:var(--text);text-align:left;cursor:pointer}
+.voice-option:last-child{border-bottom:0}
+.voice-option.selected{background:var(--blue-soft);color:var(--blue);font-weight:600}
+.voice-option-main{flex:1;min-width:0}
+.voice-option-name{overflow-wrap:anywhere}
+.voice-option-model{font-size:11px;color:var(--text2);font-weight:400;margin-top:1px}
+.voice-demo{flex-shrink:0;width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:#fff;color:var(--text2);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.voice-star{flex-shrink:0;width:30px;height:30px;border:0;background:none;font-size:15px;cursor:pointer;line-height:1;opacity:.35}
+.voice-star.on{opacity:1}
+.voice-section-label{padding:7px 12px;font-size:11px;font-weight:600;color:var(--text2);background:var(--surface);border-bottom:1px solid var(--border)}
+/* Voice bubbles + toolbar button */
+.bubble-speak{border:0;background:none;padding:2px 4px;font-size:13px;color:var(--text2);cursor:pointer;line-height:1;border-radius:6px}
+.bubble-speak:active{background:var(--surface2)}
+.bubble-speak.busy{opacity:.5;cursor:default}
+.voice-bubble{align-self:flex-start;max-width:min(300px,88%);background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:9px 11px;display:flex;flex-direction:column;gap:6px}
+.voice-bubble audio{width:100%;height:34px}
+.voice-bubble-meta{font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px}
+.voice-bubble-text{font-size:13px;line-height:1.4;color:var(--text);word-break:break-word}
 
 /* UX polish merged from feat/leon-ux-polish */
 #send-btn.ready{background:var(--blue);color:#fff}
@@ -398,6 +430,25 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
         <div id="model-list" role="listbox" aria-label="可用模型"></div>
         <div id="model-status" role="status"></div>
       </div>
+      <div class="settings-section" id="voice-section">
+        <h3>语音</h3>
+        <p class="settings-sub" id="voice-current">加载语音配置…</p>
+        <div class="settings-toggle">
+          <div>
+            <div class="settings-toggle-label">自动朗读每条回复</div>
+            <div class="settings-toggle-hint">关闭后仍可点气泡上的 🔊，Agent 主动发的语音也照常播放</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="voice-autoplay-all"><span class="switch-track"></span>
+          </label>
+        </div>
+        <div class="settings-row" style="margin-top:10px">
+          <input id="voice-search" placeholder="搜索音色名 / 模型" autocomplete="off" spellcheck="false">
+          <button id="voice-refresh" type="button" aria-label="刷新音色列表" title="刷新音色列表">↻</button>
+        </div>
+        <div id="voice-list" role="listbox" aria-label="音色"></div>
+        <div id="voice-status" role="status" style="min-height:18px;margin-top:8px;font-size:12px;color:var(--text2)"></div>
+      </div>
       <div class="debug-section">
         <h3>连接信息</h3>
         <pre id="debug-info">加载中…</pre>
@@ -515,7 +566,7 @@ document.querySelectorAll('.nav-item').forEach(btn=>{
     document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+t));
     if(t==='tasks'){renderTasks();loadImageState()}
     if(t==='gallery'){renderGallery();loadImageState()}
-    if(t==='settings'){updateDebugInfo();loadModelSettings()}
+    if(t==='settings'){updateDebugInfo();loadModelSettings();loadVoiceCatalog()}
   });
 });
 
@@ -881,6 +932,154 @@ function renderMd(raw){
   return html.join('');
 }
 
+// ---- Voice (TTS) ----
+const VOICE_PREF_KEY='leon_voice_prefs';
+const $voiceSection=document.getElementById('voice-section');
+const $voiceCurrent=document.getElementById('voice-current');
+const $voiceSearch=document.getElementById('voice-search');
+const $voiceRefresh=document.getElementById('voice-refresh');
+const $voiceList=document.getElementById('voice-list');
+const $voiceStatus=document.getElementById('voice-status');
+const $voiceAutoplayAll=document.getElementById('voice-autoplay-all');
+const voiceState={enabled:false,models:[],voices:[],voiceId:'',loaded:false};
+let voicePrefs={voiceId:'',favorites:[],autoplayAll:false};
+let currentAudio=null,demoAudio=null;
+try{voicePrefs={...voicePrefs,...JSON.parse(localStorage.getItem(VOICE_PREF_KEY)||'{}')}}catch{}
+function saveVoicePrefs(){localStorage.setItem(VOICE_PREF_KEY,JSON.stringify(voicePrefs))}
+function voiceById(id){return voiceState.voices.find(v=>v.id===id)||null}
+function isFavorite(id){return voicePrefs.favorites.includes(id)}
+function toggleFavorite(id){
+  const at=voicePrefs.favorites.indexOf(id);
+  if(at>=0)voicePrefs.favorites.splice(at,1);else voicePrefs.favorites.unshift(id);
+  saveVoicePrefs();renderVoiceList();
+}
+function activeVoiceId(){return voicePrefs.voiceId||voiceState.voiceId}
+// Only one clip plays at a time: a new one always interrupts the old.
+function playAudio(url,{onEnd}={}){
+  if(currentAudio){currentAudio.pause();currentAudio=null}
+  const audio=new Audio(url);currentAudio=audio;
+  audio.addEventListener('ended',()=>{if(currentAudio===audio)currentAudio=null;if(onEnd)onEnd()},{once:true});
+  return audio.play().catch(()=>{if(onEnd)onEnd()});
+}
+function voiceRow(v){
+  const row=document.createElement('div');row.className='voice-option'+(v.id===activeVoiceId()?' selected':'');
+  row.setAttribute('role','option');
+  const star=document.createElement('button');
+  star.type='button';star.className='voice-star'+(isFavorite(v.id)?' on':'');star.textContent='★';
+  star.title=isFavorite(v.id)?'取消常用':'设为常用';
+  star.addEventListener('click',e=>{e.stopPropagation();toggleFavorite(v.id)});
+  const main=document.createElement('button');
+  main.type='button';main.className='voice-option-main';
+  main.style.cssText='border:0;background:none;text-align:left;font:inherit;color:inherit;cursor:pointer;padding:0';
+  main.innerHTML=`<div class="voice-option-name">${esc(v.name||v.id)}</div>`+
+                 `<div class="voice-option-model">${esc((v.model||'').split('/').pop())}</div>`;
+  main.addEventListener('click',()=>{
+    voicePrefs.voiceId=v.id;saveVoicePrefs();renderVoiceList();
+    $voiceCurrent.textContent='当前音色：'+(v.name||v.id)+' · '+(v.model||'');
+  });
+  row.append(star,main);
+  if(v.demo){
+    const demo=document.createElement('button');
+    demo.type='button';demo.className='voice-demo';demo.textContent='▶';demo.title='试听';
+    demo.addEventListener('click',e=>{
+      e.stopPropagation();
+      if(demoAudio){demoAudio.pause();demoAudio=null}
+      demoAudio=new Audio(v.demo);demoAudio.play().catch(()=>{});
+    });
+    row.appendChild(demo);
+  }
+  return row;
+}
+function renderVoiceList(){
+  $voiceList.replaceChildren();
+  if(!voiceState.enabled||!voiceState.voices.length)return;
+  const query=$voiceSearch.value.trim().toLowerCase();
+  const match=v=>!query||(v.name||'').toLowerCase().includes(query)||(v.model||'').toLowerCase().includes(query);
+  const favs=voiceState.voices.filter(v=>isFavorite(v.id)&&match(v));
+  const rest=voiceState.voices.filter(v=>!isFavorite(v.id)&&match(v));
+  const section=(label,items)=>{
+    if(!items.length)return;
+    const head=document.createElement('div');head.className='voice-section-label';head.textContent=label;
+    $voiceList.appendChild(head);
+    items.forEach(v=>$voiceList.appendChild(voiceRow(v)));
+  };
+  section('常用',favs);
+  // 561 voices would make the page unusable, so browsing is search-driven.
+  if(query)section(`搜索结果 (${rest.length})`,rest.slice(0,60));
+  else if(!favs.length)section('推荐',rest.slice(0,20));
+  if(!favs.length&&!query)$voiceStatus.textContent=`共 ${voiceState.voices.length} 个音色，搜索名称或模型可查看全部，★ 收藏为常用`;
+}
+async function loadVoiceCatalog(refresh=false){
+  $voiceStatus.textContent=voiceState.loaded?'正在刷新…':'正在加载…';
+  try{
+    const data=await api('GET','/api/voice/catalog'+(refresh?'?refresh=true':''));
+    voiceState.enabled=!!data.enabled;
+    voiceState.models=data.models||[];voiceState.voices=data.voices||[];
+    voiceState.voiceId=data.default_voice_id||'';voiceState.loaded=true;
+    if(!voiceState.enabled){
+      $voiceCurrent.textContent='未配置 VOLINK_API_KEY，语音功能已关闭';
+      $voiceStatus.textContent='';$voiceList.replaceChildren();
+      $voiceAutoplayAll.disabled=true;return;
+    }
+    const active=voiceById(activeVoiceId());
+    $voiceCurrent.textContent=active
+      ? '当前音色：'+(active.name||active.id)+' · '+(active.model||'')
+      : '当前音色：跟随服务端默认';
+    $voiceAutoplayAll.disabled=false;$voiceAutoplayAll.checked=!!voicePrefs.autoplayAll;
+    $voiceStatus.textContent='';renderVoiceList();
+  }catch(err){
+    $voiceStatus.textContent='加载失败：'+err.message;
+  }
+}
+async function speakMessage(msg,button){
+  if(!voiceState.enabled||button.classList.contains('busy'))return;
+  button.classList.add('busy');
+  try{
+    const headers={'Content-Type':'application/json'};
+    if(token)headers['Authorization']='Bearer '+token;
+    const r=await fetch(BASE_URL+'/api/agent/tts',{method:'POST',headers,
+      body:JSON.stringify({text:msg.text,voice_id:activeVoiceId()||undefined})});
+    if(!r.ok)throw new Error(r.status+'');
+    const url=URL.createObjectURL(await r.blob());
+    await playAudio(url,{onEnd:()=>URL.revokeObjectURL(url)});
+  }catch{button.title='朗读失败'}
+  finally{button.classList.remove('busy')}
+}
+function addVoiceBubble(data){
+  const wrap=document.createElement('div');wrap.className='voice-bubble';
+  const url=BASE_URL+data.url+(token?'?token='+encodeURIComponent(token):'');
+  const meta=document.createElement('div');meta.className='voice-bubble-meta';
+  meta.textContent='🔊 '+(data.voice_name||'语音')+' · '+Math.round((data.bytes||0)/1024)+'KB';
+  const audio=document.createElement('audio');audio.controls=true;audio.src=url;audio.preload='auto';
+  wrap.append(meta,audio);
+  if(data.text){
+    const text=document.createElement('div');text.className='voice-bubble-text';text.textContent=data.text;
+    wrap.appendChild(text);
+  }
+  $msgs.appendChild(wrap);
+  autoFollowMessages=true;scrollBottom(true);
+  // An agent-initiated clip is always played: the user asked for voice.
+  if(currentAudio){currentAudio.pause();currentAudio=null}
+  currentAudio=audio;audio.play().catch(()=>{});
+  return wrap;
+}
+async function autoSpeak(msg){
+  try{
+    const headers={'Content-Type':'application/json'};
+    if(token)headers['Authorization']='Bearer '+token;
+    const r=await fetch(BASE_URL+'/api/agent/tts',{method:'POST',headers,
+      body:JSON.stringify({text:msg.text,voice_id:activeVoiceId()||undefined})});
+    if(!r.ok)return;
+    const url=URL.createObjectURL(await r.blob());
+    playAudio(url,{onEnd:()=>URL.revokeObjectURL(url)});
+  }catch{}
+}
+$voiceSearch.addEventListener('input',renderVoiceList);
+$voiceRefresh.addEventListener('click',()=>loadVoiceCatalog(true));
+$voiceAutoplayAll.addEventListener('change',()=>{
+  voicePrefs.autoplayAll=$voiceAutoplayAll.checked;saveVoicePrefs();
+});
+
 let twQueue=[],twBubble=null,twFrame=null,twFinalText=null;
 function twReset(){
   if(twFrame)cancelAnimationFrame(twFrame);
@@ -976,15 +1175,23 @@ function renderBubbleBody(msg){
   return bubble;
 }
 function renderBubbleToolbar(msg){
-  // W2 adds 复制 / 重试 / 耗时 here; W1 only moves the existing error retry in.
-  if(msg.kind!=='error')return null;
+  if(msg.kind==='error'){
+    const bar=document.createElement('div');bar.className='bubble-toolbar';
+    const retry=document.createElement('button');
+    retry.type='button';retry.className='error-retry-btn';retry.textContent='重试';
+    retry.addEventListener('click',()=>{
+      if(lastUserText){$input.value=lastUserText;updateComposerState();$input.focus()}
+    });
+    bar.appendChild(retry);return bar;
+  }
+  // Finished agent text can be spoken on demand once a TTS key is configured.
+  if(msg.role!=='agent'||msg.kind!=='text'||msg.status!=='done'||!msg.text.trim())return null;
+  if(!voiceState.enabled)return null;
   const bar=document.createElement('div');bar.className='bubble-toolbar';
-  const retry=document.createElement('button');
-  retry.type='button';retry.className='error-retry-btn';retry.textContent='重试';
-  retry.addEventListener('click',()=>{
-    if(lastUserText){$input.value=lastUserText;updateComposerState();$input.focus()}
-  });
-  bar.appendChild(retry);return bar;
+  const speak=document.createElement('button');
+  speak.type='button';speak.className='bubble-speak';speak.title='朗读';speak.textContent='🔊';
+  speak.addEventListener('click',()=>speakMessage(msg,speak));
+  bar.appendChild(speak);return bar;
 }
 function patchMessage(id){
   const msg=getMessage(id),node=messageNode(id);if(!msg||!node)return null;
@@ -1112,6 +1319,9 @@ function handleEvent(ev){
         finished.meta.model=ev.data.model||finished.meta.model;
         finished.meta.finishedAt=Date.now();
         finished.meta.elapsedMs=finished.meta.finishedAt-finished.meta.startedAt;
+        // The bubble was rendered while streaming, so re-render to attach 🔊.
+        patchMessage(finished.id);
+        if(voiceState.enabled&&voicePrefs.autoplayAll&&finished.text.trim())autoSpeak(finished);
       }
       currentBubble=null;currentMessageId=null;
       if(content)addTlEntry('agent','Agent Response',esc(content),ev.timestamp);
@@ -1162,6 +1372,11 @@ function handleEvent(ev){
       replaceSkeletonWithImage(ev.data.job_id,ev.data.image_url);
       {const href=safeHref(ev.data.image_url);if(href)addTlEntry('image','Image Ready',`<a href="${esc(href)}" data-image-preview="${esc(href)}" style="color:#B09FCC">查看大图<br><img src="${esc(href)}" alt="generated"></a>`,ev.timestamp)}
       updateIvStats();break;
+
+    case 'voice.ready':
+      addVoiceBubble(ev.data||{});
+      addTlEntry('agent','Voice',esc((ev.data&&ev.data.text)||''),ev.timestamp);
+      break;
 
     case 'agent.error':{
       const msg=ev.data.error||'Unknown error';
@@ -1383,7 +1598,7 @@ async function init(){
 }
 
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=13',{scope:'/',updateViaCache:'none'})
+  navigator.serviceWorker.register('/sw.js?v=14',{scope:'/',updateViaCache:'none'})
     .then(registration=>registration.update()).catch(()=>{});
 }
 if(token){hideLogin();init()}
