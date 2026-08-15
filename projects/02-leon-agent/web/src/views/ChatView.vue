@@ -2,6 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
+import MessageBubble from "../components/MessageBubble.vue";
 import { ApiError, api, type LeonEvent } from "../api/client";
 import GalleryView from "./GalleryView.vue";
 import SettingsView from "./SettingsView.vue";
@@ -35,6 +36,8 @@ const activeView = ref<WorkbenchView>("chat");
 const imageStateLoading = ref(false);
 const imageStateLoaded = ref(false);
 const imageStateError = ref("");
+const previewUrl = ref("");
+const previewDialog = ref<HTMLElement | null>(null);
 const messagesPanel = ref<HTMLElement | null>(null);
 const pendingAssistantId = ref<string | null>(null);
 let eventSource: EventSource | null = null;
@@ -96,6 +99,32 @@ function selectView(view: WorkbenchView): void {
   activeView.value = view;
   if (view === "tasks" || view === "gallery") void loadImageState();
   if (view === "chat") scrollToLatest();
+}
+
+function retryMessage(messageId: string): void {
+  if (sending.value) return;
+  const index = messages.value.findIndex((message) => message.id === messageId);
+  for (let cursor = (index >= 0 ? index : messages.value.length) - 1; cursor >= 0; cursor -= 1) {
+    const candidate = messages.value[cursor];
+    if (candidate.role !== "user" || !candidate.text.trim()) continue;
+    draft.value = candidate.text.trim();
+    void sendMessage();
+    return;
+  }
+}
+
+function editMessage(messageId: string, text: string): void {
+  const message = findMessage(messageId);
+  if (message) message.text = text;
+}
+
+function openPreview(url: string): void {
+  previewUrl.value = url;
+  void nextTick(() => previewDialog.value?.focus());
+}
+
+function closePreview(): void {
+  previewUrl.value = "";
 }
 
 function closeEvents(): void {
@@ -287,6 +316,7 @@ function logout(): void {
   imageStateLoaded.value = false;
   imageStateError.value = "";
   activeView.value = "chat";
+  previewUrl.value = "";
   pendingAssistantId.value = null;
   setConnection("已退出", "neutral");
 }
@@ -381,24 +411,15 @@ onBeforeUnmount(closeEvents);
             <strong>开始一段对话</strong>
             <span>普通聊天和生图请求都会沿用现有 Gateway 协议。</span>
           </div>
-          <article
+          <MessageBubble
             v-for="message in messages"
             :key="message.id"
-            class="message-row"
-            :data-role="message.role"
-          >
-            <div class="message-bubble" :data-status="message.status">
-              <p v-if="message.text" class="message-text">{{ message.text }}</p>
-              <p v-if="message.status === 'pending'" class="thinking">思考中…</p>
-              <img
-                v-for="image in message.images"
-                :key="image"
-                class="message-image"
-                :src="image"
-                alt="生成图片"
-              />
-            </div>
-          </article>
+            :message="message"
+            @retry="retryMessage"
+            @edit="editMessage"
+            @preview="openPreview"
+            @media-loaded="scrollToLatest"
+          />
         </div>
 
         <p v-if="taskStatus" class="task-status">{{ taskStatus }}</p>
@@ -432,6 +453,25 @@ onBeforeUnmount(closeEvents);
       <SettingsView v-else :session-id="api.sessionId" />
 
       <BottomNav :active="activeView" @select="selectView" />
+
+      <div
+        v-if="previewUrl"
+        ref="previewDialog"
+        class="image-viewer"
+        tabindex="0"
+        role="dialog"
+        aria-modal="true"
+        aria-label="图片预览"
+        @click.self="closePreview"
+        @keydown.escape="closePreview"
+      >
+        <button class="image-viewer__close" type="button" aria-label="关闭" @click="closePreview">
+          ×
+        </button>
+        <figure class="image-viewer__figure">
+          <img :src="previewUrl" alt="图片预览" />
+        </figure>
+      </div>
     </section>
   </main>
 </template>
