@@ -546,6 +546,27 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             )
             check("回到最新按钮恢复自动跟随", not jump_to_latest.is_visible())
 
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["agent.error", {"error": "HTTP 424 upstream_error\ntrace-id=fake"}],
+            )
+            error_details = page.locator(".message-error__details").last
+            error_details.wait_for(state="visible")
+            raw_error = error_details.locator(".message-error__raw")
+            check(
+                "错误气泡默认只显示摘要",
+                not bool(error_details.evaluate("element => element.open"))
+                and "查看错误详情" in error_details.inner_text(),
+            )
+            error_details.locator("summary").click()
+            raw_error.wait_for(state="visible")
+            check(
+                "展开后可查看原始错误且保留重试入口",
+                bool(error_details.evaluate("element => element.open"))
+                and "HTTP 424 upstream_error" in raw_error.inner_text()
+                and page.get_by_role("button", name="重试").last.is_visible(),
+            )
+
             voice_payload = {
                 "clip_id": "clip-vue-e2e",
                 "url": "/api/voice/clips/clip-vue-e2e",

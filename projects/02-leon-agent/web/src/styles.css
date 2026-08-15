@@ -311,6 +311,51 @@ h1 {
   color: #c23e50;
 }
 
+.message-error {
+  display: grid;
+  gap: 6px;
+}
+
+.message-error__summary,
+.message-error__hint {
+  margin: 0;
+}
+
+.message-error__summary {
+  font-weight: 700;
+}
+
+.message-error__hint {
+  color: #8f4a55;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.message-error__details {
+  font-size: 12px;
+}
+
+.message-error__details summary {
+  width: fit-content;
+  cursor: pointer;
+  user-select: none;
+}
+
+.message-error__raw {
+  max-height: 180px;
+  margin: 8px 0 0;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff6f7;
+  color: #7a202f;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .message-text {
   margin: 0;
   white-space: pre-wrap;

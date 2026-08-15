@@ -170,7 +170,14 @@ onBeforeUnmount(() => {
         @click="handleContentClick"
         @load.capture="emit('mediaLoaded')"
       >
-        <p v-if="message.status === 'error'" class="message-text">{{ message.text }}</p>
+        <div v-if="message.status === 'error'" class="message-error" role="alert">
+          <p class="message-error__summary">请求失败</p>
+          <p class="message-error__hint">可以重试，或展开查看原始错误。</p>
+          <details class="message-error__details">
+            <summary>查看错误详情</summary>
+            <pre class="message-error__raw">{{ message.text }}</pre>
+          </details>
+        </div>
         <div v-else-if="voiceClip" class="voice-bubble" data-kind="voice">
           <div class="voice-bubble__meta">
             <span class="voice-bubble__name">🔊 {{ voiceClip.voiceName || "语音" }}</span>
