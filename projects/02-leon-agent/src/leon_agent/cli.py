@@ -575,6 +575,10 @@ class LeonConsole:
             )
             return
 
+        # The cached numeric catalog belongs to one provider scope. Refresh the
+        # scope before resolving a numeric shortcut so a CC Switch change cannot
+        # map an index from the previous provider into the new session selection.
+        self._ensure_current_provider()
         catalog = self.model_catalog
         if candidate.isdigit() and not catalog:
             catalog = self._fetch_model_catalog()
@@ -584,7 +588,6 @@ class LeonConsole:
             self.show_models()
             return
 
-        self._ensure_current_provider()
         settings = self._resolve_llm_settings()
         scope = model_provider_scope(profile=settings.profile, base_url=settings.active_base_url)
         self.store.set_model_selection(

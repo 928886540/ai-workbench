@@ -180,3 +180,48 @@ def test_switch_model_accepts_custom_model_id(tmp_path) -> None:  # noqa: ANN001
         "DeepSeek-V4-Pro",
     )
     assert cli.llm_model == "DeepSeek-V4-Pro"
+
+
+def test_switch_model_refreshes_catalog_after_provider_change(tmp_path) -> None:  # noqa: ANN001
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.console = Console(quiet=True)
+    cli.model_selection = None
+    cli.model_catalog = ["old-provider-model"]
+    cli.llm_scope = "old-provider|https://old.example/v1"
+    calls = []
+
+    def fake_ensure_current_provider() -> None:
+        calls.append("ensure")
+        cli.model_catalog = []
+        cli.llm_scope = "new-provider|https://new.example/v1"
+
+    def fake_fetch_model_catalog() -> list[str]:
+        calls.append("fetch")
+        cli.model_catalog = ["new-provider-model"]
+        return cli.model_catalog
+
+    cli._ensure_current_provider = fake_ensure_current_provider  # type: ignore[method-assign]
+    cli._fetch_model_catalog = fake_fetch_model_catalog  # type: ignore[method-assign]
+
+    class FakeSettings:
+        profile = "new-provider"
+        active_base_url = "https://new.example/v1"
+
+    cli._resolve_llm_settings = lambda: FakeSettings()  # type: ignore[method-assign]
+
+    def fake_create_agent():
+        cli.llm_model = cli.model_selection[1]
+        cli.llm_profile = cli.model_selection[0]
+        return object()
+
+    cli._create_agent = fake_create_agent  # type: ignore[method-assign]
+
+    cli.switch_model("1")
+
+    assert calls[:2] == ["ensure", "fetch"]
+    assert cli.store.get_model_selection(cli.session_id) == (
+        "new-provider|https://new.example/v1",
+        "new-provider-model",
+    )
