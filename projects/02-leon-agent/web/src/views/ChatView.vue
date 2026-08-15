@@ -58,6 +58,9 @@ const previewDialog = ref<HTMLElement | null>(null);
 const messagesPanel = ref<HTMLElement | null>(null);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const modeSuggestionList = ref<HTMLElement | null>(null);
+const timelinePanel = ref<HTMLElement | null>(null);
+const timelineOpen = ref(false);
+const timelineEntries = ref<TimelineEntry[]>([]);
 const autoFollowMessages = ref(true);
 const showScrollToLatest = ref(false);
 const pendingAssistantId = ref<string | null>(null);
@@ -75,14 +78,138 @@ const autoplayRequests = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 42;
 const COMPOSER_MAX_HEIGHT = 120;
 const SCROLL_FOLLOW_THRESHOLD = 72;
+const MAX_TIMELINE_ENTRIES = 100;
+let timelineSequence = 0;
 
 interface ModeCompletionContext {
   prefix: string;
   partial: string;
 }
 
+type TimelineKind =
+  | "session"
+  | "user"
+  | "assistant"
+  | "tool"
+  | "image"
+  | "voice"
+  | "error"
+  | "event";
+
+interface TimelineEntry {
+  id: number;
+  event: string;
+  kind: TimelineKind;
+  label: string;
+  detail: string;
+  time: string;
+}
+
 function asString(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function timelineKind(eventName: string): TimelineKind {
+  if (eventName.startsWith("session.")) return "session";
+  if (eventName.startsWith("user.")) return "user";
+  if (eventName.startsWith("assistant.")) return "assistant";
+  if (eventName.startsWith("tool.")) return "tool";
+  if (eventName.startsWith("image.")) return "image";
+  if (eventName.startsWith("voice.")) return "voice";
+  if (eventName === "agent.error") return "error";
+  return "event";
+}
+
+function timelineLabel(eventName: string): string {
+  const labels: Record<string, string> = {
+    "session.connected": "会话连接",
+    "user.message": "用户消息",
+    "assistant.started": "助手开始",
+    "assistant.completed": "助手回复",
+    "assistant.notice": "助手提示",
+    "tool.started": "工具开始",
+    "tool.finished": "工具完成",
+    "image.task.created": "图片任务创建",
+    "image.task.updated": "图片任务更新",
+    "image.completed": "图片完成",
+    "voice.ready": "语音就绪",
+    "agent.error": "请求错误",
+  };
+  return labels[eventName] || eventName;
+}
+
+function timelineValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function timelineDetail(event: LeonEvent): string {
+  const data = event.data || {};
+  const preferred = [
+    "content",
+    "error",
+    "tool_name",
+    "mode_name",
+    "mode_id",
+    "status",
+    "voice_name",
+    "job_id",
+  ];
+  const parts = preferred
+    .filter((key) => data[key] !== undefined && data[key] !== null && data[key] !== "")
+    .map((key) => `${key}: ${timelineValue(data[key])}`);
+  if (!parts.length) {
+    for (const [key, value] of Object.entries(data)) {
+      parts.push(`${key}: ${timelineValue(value)}`);
+    }
+  }
+  return parts.join("\n").slice(0, 1200);
+}
+
+function timelineTime(timestamp?: string): string {
+  const date = timestamp ? new Date(timestamp) : new Date();
+  return Number.isNaN(date.getTime())
+    ? "--:--:--"
+    : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function recordTimelineEvent(event: LeonEvent): void {
+  // Deltas can arrive many times per answer; the started/completed entries are
+  // enough to show the turn without turning the trace into a character log.
+  if (event.event === "assistant.delta") return;
+  timelineEntries.value.push({
+    id: ++timelineSequence,
+    event: event.event,
+    kind: timelineKind(event.event),
+    label: timelineLabel(event.event),
+    detail: timelineDetail(event),
+    time: timelineTime(event.timestamp),
+  });
+  if (timelineEntries.value.length > MAX_TIMELINE_ENTRIES) {
+    timelineEntries.value.splice(0, timelineEntries.value.length - MAX_TIMELINE_ENTRIES);
+  }
+}
+
+function clearTimeline(close = false): void {
+  timelineEntries.value = [];
+  timelineSequence = 0;
+  if (close) timelineOpen.value = false;
+}
+
+function toggleTimeline(): void {
+  timelineOpen.value = !timelineOpen.value;
+  if (timelineOpen.value) {
+    void nextTick(() => timelinePanel.value?.focus());
+  }
+}
+
+function closeTimeline(): void {
+  timelineOpen.value = false;
 }
 
 function normalizeModeQuery(value: string): string {
@@ -414,6 +541,7 @@ function handleVoiceReady(data: Record<string, unknown>): void {
 
 function handleEvent(event: LeonEvent): void {
   const data = event.data || {};
+  recordTimelineEvent(event);
   switch (event.event) {
     case "session.connected":
       setConnection("Gateway 已连接", "ok");
@@ -513,6 +641,7 @@ function connectEvents(): void {
 }
 
 async function openSession(): Promise<void> {
+  clearTimeline(true);
   let session: { messages: Array<{ role: string; content: string }> } | null = null;
   if (api.sessionId) {
     try {
@@ -571,6 +700,7 @@ async function login(): Promise<void> {
 
 function logout(): void {
   closeEvents();
+  clearTimeline(true);
   api.logout();
   authenticated.value = false;
   clearMessages();
@@ -673,6 +803,7 @@ function handleComposerKeydown(event: KeyboardEvent): void {
 onMounted(() => void bootstrap());
 onBeforeUnmount(() => {
   closeEvents();
+  clearTimeline(true);
   if (modeBlurTimer !== null) {
     window.clearTimeout(modeBlurTimer);
     modeBlurTimer = null;
@@ -708,10 +839,61 @@ onBeforeUnmount(() => {
           <h1>Leon Agent</h1>
         </div>
         <div class="header-actions">
+          <button
+            class="ghost-button timeline-toggle"
+            type="button"
+            aria-controls="timeline-panel"
+            :aria-expanded="timelineOpen"
+            @click="toggleTimeline"
+          >
+            时间线
+          </button>
           <AppStatus :label="connectionLabel" :tone="connectionTone" />
           <button class="ghost-button" type="button" @click="logout">退出</button>
         </div>
       </header>
+
+      <aside
+        v-if="timelineOpen"
+        id="timeline-panel"
+        ref="timelinePanel"
+        class="timeline-panel"
+        tabindex="-1"
+        role="dialog"
+        aria-modal="false"
+        aria-label="Agent Timeline"
+        @keydown.escape="closeTimeline"
+      >
+        <div class="timeline-panel__header">
+          <div>
+            <h2>Agent Timeline</h2>
+            <p>最近的 SSE 决策事件</p>
+          </div>
+          <div class="timeline-panel__actions">
+            <button type="button" @click="clearTimeline()">清空</button>
+            <button type="button" aria-label="关闭时间线" @click="closeTimeline">×</button>
+          </div>
+        </div>
+        <ol v-if="timelineEntries.length" class="timeline-list">
+          <li
+            v-for="entry in timelineEntries"
+            :key="entry.id"
+            class="timeline-entry"
+            :data-kind="entry.kind"
+          >
+            <span class="timeline-entry__dot" aria-hidden="true"></span>
+            <div class="timeline-entry__body">
+              <div class="timeline-entry__title">
+                <strong>{{ entry.label }}</strong>
+                <time>{{ entry.time }}</time>
+              </div>
+              <small>{{ entry.event }}</small>
+              <pre v-if="entry.detail" class="timeline-entry__detail">{{ entry.detail }}</pre>
+            </div>
+          </li>
+        </ol>
+        <p v-else class="timeline-empty">暂无事件</p>
+      </aside>
 
       <section v-if="activeView === 'chat'" class="chat-view" aria-label="聊天">
         <div class="messages-stage">

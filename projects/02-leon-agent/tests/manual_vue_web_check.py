@@ -462,6 +462,32 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 sum(call["path"] == "/api/health" for call in gateway.calls) >= 2,
             )
 
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["tool.started", {"tool_name": "fake_tool", "input": {"kind": "smoke"}}],
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["tool.finished", {"tool_name": "fake_tool", "ok": True}],
+            )
+            timeline_toggle = page.get_by_role("button", name="时间线")
+            timeline_toggle.click()
+            timeline_panel = page.locator("#timeline-panel")
+            timeline_panel.wait_for(state="visible")
+            timeline_entries = timeline_panel.locator(".timeline-entry")
+            check(
+                "Agent Timeline 收集 SSE 决策事件",
+                timeline_entries.count() >= 3
+                and "工具开始" in timeline_panel.inner_text()
+                and "fake_tool" in timeline_panel.inner_text(),
+            )
+            timeline_panel.get_by_role("button", name="清空").click()
+            check(
+                "Timeline 支持清空并保留空态",
+                timeline_panel.get_by_text("暂无事件").is_visible(),
+            )
+            timeline_panel.get_by_role("button", name="关闭时间线").click()
+
             composer = page.locator("textarea[placeholder^='输入消息']")
             composer.fill("/nsfw --model ")
             suggestions = page.locator(".mode-suggestions .mode-suggestion")
