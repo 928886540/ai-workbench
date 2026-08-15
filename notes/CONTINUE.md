@@ -36,6 +36,7 @@
 - 任务页现在优先显示中文生图模式、原始描述和中文状态；内部 job/plan ID 默认收进“任务详情”折叠区
 - Volink `502` 已确认是偶发上游失败，不是 166 字文本过长：相同原文在本地和公网均实测过 `200 audio/mpeg`。
   网关现在记录 voice ID、原始/净化字符数和上游错误，Web 会显示 `detail`；未加入无依据的自动重试
+- SSE `voice.ready` 已接入 Vue 聊天：事件会追加带音频元数据的助手气泡，复用单例播放器并遵守 iOS 用户手势解锁与待播恢复
 - 可通过 `LEON_SYSTEM_PROMPT_FILE` 读取 UTF-8 TXT 并追加到 Agent system prompt；本机文件位于被 Git 忽略的
   `data/system-prompts/双人成行预设.txt`，CLI 与 Web Gateway 都已接入
 - Web 修复（2026-08-15）：旧 session 聊天记录恢复渲染、任务/图库按 `created_at` 最新优先、
@@ -48,9 +49,14 @@
 - Vue W2 基座已落地：`projects/02-leon-agent/web/` 提供 Vue 3 + Vite、API client、
   `stores/messages.ts`、ChatView 和 PWA 资产；`LEON_WEB_CLIENT=legacy` 默认保持旧页面，
   显式切为 `vue` 且存在 `web/dist/index.html` 后 FastAPI 才托管新产物。
-- 当前验证（2026-08-16 实测）：全仓库 Python `pytest` **104 passed**、`ruff check .` 通过，
-  Web `npm run typecheck` 与 `npm run build` 通过；
-  浏览器端到端 `tests/manual_web_check.py` **56/56 通过**（真实 Chrome + 390×844 触屏模拟）
+- Vue 迁移当前已覆盖聊天、任务、图库和设置四个视图；聊天支持 `/nsfw --model` 模式补全，
+  通过 `/api/image-modes` 按名称、ID、aliases 异步过滤，支持点击、上下键、Enter、Escape 和失焦收起，
+  并用输入快照/请求序号隔离迟到响应；输入框自动增高、用户上滚保留位置、回到最新按钮和错误详情折叠也已接通；
+  这些路径不调用 LLM、Volink 或真实 provider。
+- 当前验证（2026-08-16）：Python 单测、Ruff、Vue `npm run typecheck`、`npm run build`、静态 Vue 契约测试，
+  以及 `tests/manual_vue_web_check.py` 的 provider-free Playwright smoke 均已通过；Vite/FastAPI 两种入口各 **16/16**。
+  该脚本拦截所有 `/api/**`，不代表真实公网/手机验收；legacy 的 `tests/manual_web_check.py` 仍是另一套脚本。
+- 元数据边界：Gateway 当前没有权威 `model`/`usage` 字段；Vue 的 elapsed 是客户端观测值，tokens/实际响应模型暂不显示。
 - ⚠️ LLM provider 已被 CC Switch 换过（`~/.codex/config.toml`，8/15 09:30）：
   `anyrouter.top` → `new-api.abrdns.com`，默认模型 `gpt-5.6-sol` → `DeepSeek-V4-Flash-0731`，目录从 17 个模型变成 96 个。
   会话里「同样的话上次能答、这次不能答」优先怀疑这里，而不是提示词。
@@ -59,10 +65,9 @@
   仍未暴露、可按需接入：`async_cancel_matching`（批量取消）、`image_gallery/delete`（删图，破坏性）、
   `image_tasks/hide` / `hide_history`（清理列表）、`metrics/tasks/{job_id}`（任务指标）、
   `async_autogen/recover`（恢复）、`comic_compose` / `async_comic`（漫画模式）
-- 下一步最小动作：在 Cloudflare Dashboard 为 `/api/agent/*/events` 添加 Cache Bypass Rule，然后手机端验收 SSE 与生图闭环
-- 前端下一步（W2 后续）：在 Vue 基座上按 `views/` 逐页搬迁聊天、任务、图库和设置；
-  先保持 legacy 默认，完成浏览器回归后再切 `LEON_WEB_CLIENT=vue`；W1 的 `messages[]`
-  直接对应 `stores/messages.ts`，不用重写
+- 下一步最小动作：为 `/api/agent/*/events` 添加 Cloudflare Cache Bypass Rule，再做真实 Gateway/手机端 SSE、生图和 TTS 闭环验收
+- Vue 页面迁移主体已完成，先保持 `LEON_WEB_CLIENT=legacy` 默认；真实公网/移动端验收通过后再考虑切换入口。
+  W1 的 `messages[]` 直接对应 `stores/messages.ts`，不用重写
 - ASR 尚未接入；TTS 已完成，网关使用 `POST /api/agent/tts` 和 `/api/voice/*`
 - 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
@@ -74,15 +79,18 @@
 
 现在可能有多个 agent 同时改这个仓库，遵守下面三条，否则会互相踩：
 
-### 1. 提交前必须跑完这三条，全绿才提交
+### 1. 提交前验证门槛（Vue provider-free smoke 已建立）
 
-```bash
-uv run pytest -q                                  # 期望：97 passed
+```powershell
+uv run pytest -q                                  # 期望：全绿
 uv run ruff check .                               # 期望：All checks passed
-# 浏览器端到端（需网关在 127.0.0.1:8233 运行）
-export LEON_TOKEN=$(grep -E "^LEON_API_TOKEN=" .env | cut -d= -f2- | tr -d '\r\n')
-export CHROME_PATH="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-uv run --with playwright python projects/02-leon-agent/tests/manual_web_check.py   # 期望：56/56 通过
+# Vue provider-free 浏览器回归（自动启动 Vite preview；不请求真实 provider）
+$env:CHROME_PATH="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+uv run --with playwright python projects/02-leon-agent/tests/manual_vue_web_check.py
+# 也可验证真实 FastAPI Vue 静态入口（API 仍由 Playwright fake）
+uv run --with playwright python projects/02-leon-agent/tests/manual_vue_web_check.py --server fastapi --port 8250
+# legacy 页面仍使用旧脚本，需已启动网关和 token；不要把它当 Vue 回归
+uv run --with playwright python projects/02-leon-agent/tests/manual_web_check.py
 ```
 
 `pytest` 对前端只做字符串断言，**改了渲染链路必须跑第三条**，否则 ReferenceError 这类问题测不出来。

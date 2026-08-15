@@ -22,8 +22,10 @@
 - 模型选择改为可点击列表（不再依赖手机浏览器不友好的 `<datalist>`）
 - Volink TTS 已接入：4 个模型 / 561 个中文音色，支持搜索、收藏、试听、手动朗读与自动朗读
 - TTS 会在前后端清理 Markdown 列表符号、emoji、链接、模式 ID 和任务 ID，换行转成自然停顿
+- SSE 的 `voice.ready` 事件会在聊天中追加可播放的语音气泡；播放器支持单例复用、iOS 用户手势解锁和待播恢复
 - 助手气泡支持复制、重试、编辑和朗读；编辑后的文字会成为后续朗读内容
 - iOS 有声播放使用单例播放器 + 用户手势解锁，被拦截时保留待播音频并显示开启按钮
+- Vue 3 + Vite 迁移已覆盖聊天、任务、图库和设置视图；聊天输入支持 `/nsfw --model` 模式名称补全，按名称、ID 和别名过滤
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读
@@ -142,7 +144,7 @@ uv run leon-server --help
 
 ## Mobile Web Client
 
-5 个阶段均已完成：HTTP Gateway、SSE 事件流、手机 PWA 聊天、任务/图库视图，以及运行时间线。
+legacy Web 客户端的 5 个阶段均已完成：HTTP Gateway、SSE 事件流、手机 PWA 聊天、任务/图库视图，以及运行时间线。
 Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 job id，并在后台跟踪状态和完成图片；CLI 仍保留
 同步等待图片结果的体验。图片完成后 Gateway 会主动持久化并推送一条带图片的助手消息，Web
 聊天气泡直接显示图片，不需要再次询问 LLM。Web 设置页可为当前 session 选择模型，或恢复跟随 Codex 配置中的
@@ -152,18 +154,27 @@ Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 jo
 “任务详情”中展开。TTS 的 `502` 代表 Volink 上游失败，不是本项目的文本长度限制；网关会记录
 原始字符数、净化后字符数和上游错误，Web 会显示返回的 `detail`，当前不做无依据的自动重试。
 
+Vue 客户端已迁移聊天、任务、图库和设置四个主要视图，并复用同一套 Gateway/SSE 协议。
+聊天输入在识别 `/nsfw --model ` 前缀后按模式名称、真实 ID 和 aliases 提供异步候选，支持点击、
+上下键、Enter 选择和 Esc/失焦收起；用户上滚时会保留阅读位置并显示“回到最新”，输入框按内容自动增高，
+错误原文默认折叠；候选目录请求只走 `/api/image-modes`，不会触发 LLM 或真实 provider。
+
 架构与接口边界见 [Mobile Web 架构](docs/mobile-web-architecture.md)。
 
-Web 客户端只有一份源文件 `src/leon_agent/web/index.html`（无构建步骤），`tests/test_gateway.py` 直接对服务端返回的 HTML 做字符串断言。每次前端改动需同步递增 `sw.js` 的缓存名与注册 `?v=` 版本号，否则手机会命中旧缓存。后续 Vue3 迁移的结论见
-[Web 客户端演进评估](docs/web-client-evolution.md)。
+legacy Web 客户端仍由单文件 `src/leon_agent/web/index.html` 提供（无构建步骤），`tests/test_gateway.py`
+直接对服务端返回的 HTML 做字符串断言；Vue 客户端的源码位于 `web/src/`，两者并行维护。每次 legacy
+前端改动需同步递增 `sw.js` 的缓存名与注册 `?v=` 版本号，否则手机会命中旧缓存。当前 Vue 迁移的边界与
+验收状态见 [Web 客户端演进评估](docs/web-client-evolution.md)。
 
-Vue 3 + Vite 迁移基座位于 `web/`。默认 `LEON_WEB_CLIENT=legacy`，因此构建 Vue
-产物不会改变现有线上页面；本地构建并验收后，设置 `LEON_WEB_CLIENT=vue` 并重启
-`leon-server` 才会由 FastAPI 托管 `web/dist/`。
+Vue 3 + Vite 迁移基座位于 `web/`，当前已覆盖聊天、任务、图库和设置视图。provider-free
+Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **16/16**；
+它拦截所有 `/api/**`，不会触发真实 LLM、Volink 或图片 provider。真实 Gateway/Cloudflare/SSE 和手机验收仍待做。
+默认 `LEON_WEB_CLIENT=legacy`，构建 Vue 产物不会改变现有线上页面；完成线上验收后，设置
+`LEON_WEB_CLIENT=vue` 并重启 `leon-server` 才会由 FastAPI 托管 `web/dist/`。
 
 ## 后续路线
 
-Web 前端下一阶段的 Vue3 迁移与组件拆分见
+Web 前端的 Vue3 迁移边界、模式补全、TTS/`voice.ready` 事件和浏览器回归见
 [Web 客户端演进评估](docs/web-client-evolution.md)。
 
 已记录三条扩展需求：面试 MCP、Telegram Bot、Tavo 互通。详细边界与实施顺序见
