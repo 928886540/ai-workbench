@@ -204,6 +204,8 @@ class TerminalChatUI:
             keep_running = self.owner.handle_interactive_message(message)
             if not keep_running:
                 self.app.exit()
+        except KeyboardInterrupt:
+            self.write_plain("⚠ 本次请求已取消，Leon 仍在运行。")
         except Exception as exc:  # noqa: BLE001 - keep the terminal app alive
             self.write_plain(f"💥 CLI 处理失败：{type(exc).__name__}: {exc}")
         finally:
@@ -241,6 +243,8 @@ class LeonConsole:
         self.llm_base_url = ""
         self.llm_source = ""
         self.llm_config_label = ""
+        self.llm_timeout_seconds = 0.0
+        self.llm_max_retries = 0
         self._progress: Progress | None = None
         self._progress_task_id: int | None = None
         self.agent = self._create_agent()
@@ -277,6 +281,8 @@ class LeonConsole:
         self.llm_base_url = llm_settings.active_base_url
         self.llm_source = llm_settings.llm_source
         self.llm_config_label = self._llm_config_label(llm_settings)
+        self.llm_timeout_seconds = llm_settings.llm_timeout_seconds
+        self.llm_max_retries = llm_settings.llm_max_retries
         self.llm_scope = scope
         self.image_client = LeonImageClient(
             backend_url=self.config.backend_url,
@@ -325,6 +331,11 @@ class LeonConsole:
         body.append(f"{self.llm_base_url}\n", style="white")
         body.append("📄  Config    ", style="bold cyan")
         body.append(f"{self.llm_source} · {self.llm_config_label}\n", style="dim")
+        body.append("⏱  Request   ", style="bold cyan")
+        body.append(
+            f"timeout={self.llm_timeout_seconds:g}s · retries={self.llm_max_retries}\n",
+            style="dim",
+        )
         body.append("🎨  Images    ", style="bold magenta")
         body.append(f"{self.config.backend_url}  ", style="white")
         body.append(f"default={', '.join(self.config.default_mode_ids) or '未配置'}\n", style="dim")
@@ -426,18 +437,45 @@ class LeonConsole:
             )
         )
 
+    def _start_llm_request(self) -> None:
+        """Show feedback before the provider call, including in the legacy REPL."""
+        model = self.llm_model or "当前模型"
+        self.print(f"[cyan]⏳[/cyan] 正在请求模型 [bold]{model}[/bold]…")
+        ui = getattr(self, "ui", None)
+        if ui is not None:
+            ui._set_status(f"正在请求模型 {model}…")
+
+    def _format_request_error(self, exc: Exception) -> str:
+        error_type = type(exc).__name__
+        detail = str(exc).strip()
+        if error_type in {"APITimeoutError", "TimeoutError", "ReadTimeout"}:
+            timeout = getattr(self, "llm_timeout_seconds", 30.0)
+            retries = getattr(self, "llm_max_retries", 0)
+            return (
+                f"模型请求超时（{timeout:g}s，自动重试 {retries} 次），"
+                "请检查 provider、模型 ID 或网络后重试。"
+            )
+        if error_type in {"APIConnectionError", "ConnectError", "ReadError"}:
+            return "模型 provider 连接失败，请检查 base URL/网络后重试。"
+        suffix = f": {detail}" if detail else ""
+        return f"请求失败：{error_type}{suffix}"
+
     def process(self, message: str) -> bool:
         stripped = message.strip()
         if stripped.casefold() == "/nsfw" or stripped.casefold().startswith("/nsfw "):
             return self._process_nsfw(stripped)
-        self._ensure_current_provider()
-        history = self.store.load_messages(self.session_id)
         try:
+            self._ensure_current_provider()
+            history = self.store.load_messages(self.session_id)
+            self._start_llm_request()
             result = self.agent.run(message, history=history)
+        except KeyboardInterrupt:
+            self._stop_image_progress(ok=False)
+            self.print("[yellow]⚠ 本次请求已取消，Leon 仍在运行。[/yellow]")
+            return False
         except Exception as exc:  # noqa: BLE001 - CLI should keep the session alive
             self._stop_image_progress(ok=False)
-            error = f"请求失败：{type(exc).__name__}: {exc}"
-            self.print(f"[red]{error}[/red]")
+            self.print(f"[red]{self._format_request_error(exc)}[/red]")
             return False
         self.store.add_message(self.session_id, "user", message)
         self.store.record_result(self.session_id, result)
@@ -466,6 +504,10 @@ class LeonConsole:
         self._start_image_progress()
         try:
             result = self.direct_tools.execute("generate_images", arguments)
+        except KeyboardInterrupt:
+            self._stop_image_progress(ok=False)
+            self.print("[yellow]⚠ 本次生图已取消，Leon 仍在运行。[/yellow]")
+            return False
         except Exception as exc:  # noqa: BLE001 - image failure should not exit the REPL
             self._stop_image_progress(ok=False)
             self.print(f"[red]直达生图失败：{type(exc).__name__}: {exc}[/red]")

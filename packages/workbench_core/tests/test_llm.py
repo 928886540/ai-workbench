@@ -44,6 +44,30 @@ def test_custom_model_override_is_sent_in_request(monkeypatch) -> None:  # noqa:
     assert captured["model"] == "DeepSeek-V4-Pro"
 
 
+def test_client_passes_timeout_and_retry_policy_to_openai(monkeypatch) -> None:  # noqa: ANN001
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            captured.update(kwargs)
+
+    monkeypatch.setattr("workbench_core.llm.OpenAI", FakeOpenAI)
+    settings = Settings(
+        _env_file=None,
+        LLM_SOURCE="env",
+        LLM_BASE_URL="https://provider.example/v1",
+        LLM_API_KEY="sk-test",
+        LLM_MODEL="default-model",
+        LLM_TIMEOUT_SECONDS=17,
+        LLM_MAX_RETRIES=0,
+    )
+
+    LLMClient(settings)
+
+    assert captured["timeout"] == 17
+    assert captured["max_retries"] == 0
+
+
 def test_list_models_uses_active_provider_catalog(monkeypatch) -> None:  # noqa: ANN001
     class FakeModels:
         def list(self):

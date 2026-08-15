@@ -45,8 +45,10 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = Field(default=None, alias="LLM_API_KEY")
     llm_model: str | None = Field(default=None, alias="LLM_MODEL")
 
-    llm_timeout_seconds: float = Field(default=90.0, alias="LLM_TIMEOUT_SECONDS")
-    llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
+    # A stalled provider must not silently multiply traffic on low-RPM gateways.
+    # Keep both values overrideable for installations that need a different policy.
+    llm_timeout_seconds: float = Field(default=30.0, ge=0.1, alias="LLM_TIMEOUT_SECONDS")
+    llm_max_retries: int = Field(default=0, ge=0, alias="LLM_MAX_RETRIES")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     _ccs_provider: CCSProvider | None = PrivateAttr(default=None)

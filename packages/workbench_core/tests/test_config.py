@@ -24,6 +24,19 @@ def test_env_source_settings() -> None:
     assert settings.require_api_key() == "sk-test"
 
 
+def test_llm_request_defaults_are_safe_for_low_rpm_providers() -> None:
+    settings = Settings(
+        _env_file=None,
+        LLM_SOURCE="env",
+        LLM_BASE_URL="http://localhost:9/v1",
+        LLM_API_KEY="sk-test",
+        LLM_MODEL="test-model",
+    )
+
+    assert settings.llm_timeout_seconds == 30.0
+    assert settings.llm_max_retries == 0
+
+
 def test_toml_source_reads_active_codex_provider(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(

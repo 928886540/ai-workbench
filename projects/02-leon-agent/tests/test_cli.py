@@ -1,12 +1,25 @@
+from io import StringIO
+
 import pytest
 from leon_agent.cli import LeonConsole, parse_args
 from leon_agent.session import SessionStore
 from rich.console import Console
+from workbench_core.agent import AgentResult
 
 
 class FailingAgent:
     def run(self, message, *, history):  # noqa: ANN001, ARG002
         raise RuntimeError("upstream failed")
+
+
+class InterruptingAgent:
+    def run(self, message, *, history):  # noqa: ANN001, ARG002
+        raise KeyboardInterrupt
+
+
+class SuccessfulAgent:
+    def run(self, message, *, history):  # noqa: ANN001, ARG002
+        return AgentResult(answer="ok")
 
 
 def test_resume_command_maps_positional_session_id() -> None:
@@ -50,6 +63,39 @@ def test_failed_cli_turn_is_not_persisted(tmp_path) -> None:  # noqa: ANN001
 
     assert cli.process("这次会失败") is False
     assert cli.store.load_messages(cli.session_id) == []
+
+
+def test_keyboard_interrupt_cancels_turn_without_traceback(tmp_path) -> None:  # noqa: ANN001
+    output = StringIO()
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.agent = InterruptingAgent()
+    cli.console = Console(file=output, force_terminal=False)
+    cli._progress = None
+    cli._progress_task_id = None
+    cli.llm_model = "test-model"
+    cli._ensure_current_provider = lambda: None  # type: ignore[method-assign]
+
+    assert cli.process("中断我") is False
+    assert "本次请求已取消" in output.getvalue()
+    assert cli.store.load_messages(cli.session_id) == []
+
+
+def test_cli_prints_feedback_before_provider_call(tmp_path) -> None:  # noqa: ANN001
+    output = StringIO()
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.agent = SuccessfulAgent()
+    cli.console = Console(file=output, force_terminal=False)
+    cli._progress = None
+    cli._progress_task_id = None
+    cli.llm_model = "test-model"
+    cli._ensure_current_provider = lambda: None  # type: ignore[method-assign]
+
+    assert cli.process("你好") is True
+    assert "正在请求模型" in output.getvalue()
 
 
 def test_nsfw_command_bypasses_llm_and_defaults_to_marika(tmp_path) -> None:  # noqa: ANN001

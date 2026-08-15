@@ -43,7 +43,9 @@
 - CLI 已完成第一版全屏 TUI：交互终端使用上方滚动区 + 底部 Enter 输入框，启动面板展示
   model/provider/base URL/config source；非 TTY 继续使用 Rich fallback。`generate_images` 工具
   采用 `return_direct`，图片任务完成后直接输出结果，避免再发一轮 provider 请求（低 RPM provider 必须如此）。
-- 当前验证（2026-08-15 实测）：全仓库 `pytest` **97 passed**、`ruff check .` 通过、
+- CLI 普通聊天会在 provider 请求前立即显示状态；默认 LLM 超时降为 30 秒、自动重试关闭，
+  `Ctrl+C` 只取消当前轮且不再输出 traceback，适配 RPM=5 的中转 provider。
+- 当前验证（2026-08-15 实测）：全仓库 `pytest` **101 passed**、`ruff check .` 通过、
   浏览器端到端 `tests/manual_web_check.py` **56/56 通过**（真实 Chrome + 390×844 触屏模拟）
 - ⚠️ LLM provider 已被 CC Switch 换过（`~/.codex/config.toml`，8/15 09:30）：
   `anyrouter.top` → `new-api.abrdns.com`，默认模型 `gpt-5.6-sol` → `DeepSeek-V4-Flash-0731`，目录从 17 个模型变成 96 个。
