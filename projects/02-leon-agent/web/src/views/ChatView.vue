@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
+import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
 import { ApiError, api, type LeonEvent } from "../api/client";
+import GalleryView from "./GalleryView.vue";
+import TasksView from "./TasksView.vue";
 import {
   appendMessage,
   clearMessages,
@@ -11,6 +14,12 @@ import {
   messages,
   type ChatMessage,
 } from "../stores/messages";
+import {
+  clearImageState,
+  completeImageTask,
+  hydrateImageState,
+  upsertImageTask,
+} from "../stores/images";
 
 const authenticated = ref(false);
 const booting = ref(true);
@@ -21,6 +30,10 @@ const sending = ref(false);
 const connectionLabel = ref("未连接");
 const connectionTone = ref<"neutral" | "ok" | "error">("neutral");
 const taskStatus = ref("");
+const activeView = ref<WorkbenchView>("chat");
+const imageStateLoading = ref(false);
+const imageStateLoaded = ref(false);
+const imageStateError = ref("");
 const messagesPanel = ref<HTMLElement | null>(null);
 const pendingAssistantId = ref<string | null>(null);
 let eventSource: EventSource | null = null;
@@ -41,6 +54,47 @@ function scrollToLatest(): void {
     const panel = messagesPanel.value;
     if (panel) panel.scrollTop = panel.scrollHeight;
   });
+}
+
+function eventTime(timestamp?: string): number {
+  const parsed = timestamp ? Date.parse(timestamp) : NaN;
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+async function loadImageState(force = false): Promise<void> {
+  const sessionId = api.sessionId;
+  if (
+    !sessionId ||
+    imageStateLoading.value ||
+    (!force && imageStateLoaded.value)
+  ) {
+    return;
+  }
+  imageStateLoading.value = true;
+  imageStateError.value = "";
+  try {
+    const state = await api.getImageState(sessionId);
+    if (api.sessionId !== sessionId) return;
+    hydrateImageState(state.tasks || [], state.images || []);
+    imageStateError.value = Object.values(state.errors || {}).join("；");
+    imageStateLoaded.value = true;
+  } catch (error) {
+    if (api.sessionId === sessionId) {
+      imageStateError.value = error instanceof Error ? error.message : "无法加载图片状态";
+    }
+  } finally {
+    if (api.sessionId === sessionId) imageStateLoading.value = false;
+  }
+}
+
+function refreshImageState(): void {
+  void loadImageState(true);
+}
+
+function selectView(view: WorkbenchView): void {
+  activeView.value = view;
+  if (view !== "chat") void loadImageState();
+  else scrollToLatest();
 }
 
 function closeEvents(): void {
@@ -121,16 +175,23 @@ function handleEvent(event: LeonEvent): void {
       taskStatus.value = asString(data.ok) === "false" ? "工具执行失败" : "工具已完成";
       break;
     case "image.task.created":
+      upsertImageTask({ ...data, created_at: eventTime(event.timestamp) });
       taskStatus.value = "图片任务已提交，等待完成…";
       break;
     case "image.task.updated":
+      upsertImageTask(data);
       taskStatus.value = `图片任务：${asString(data.status) || "处理中"}`;
       break;
     case "image.completed": {
       const imageUrl = asString(data.image_url);
       if (!imageUrl) break;
-      const target = latestMessage("agent") || appendMessage(makeMessage("agent"));
-      target.images.push(imageUrl);
+      const jobId = asString(data.job_id);
+      if (jobId) completeImageTask(jobId, imageUrl, eventTime(event.timestamp));
+      if (!messages.value.some((message) => message.images.includes(imageUrl))) {
+        const target = appendMessage(makeMessage("agent"));
+        target.images.push(imageUrl);
+      }
+      taskStatus.value = "";
       scrollToLatest();
       break;
     }
@@ -175,8 +236,13 @@ async function openSession(): Promise<void> {
     session = { messages: [] };
   }
   appendHistory(session.messages);
+  clearImageState();
+  imageStateLoading.value = false;
+  imageStateLoaded.value = false;
+  imageStateError.value = "";
   authenticated.value = true;
   connectEvents();
+  void loadImageState();
 }
 
 async function bootstrap(): Promise<void> {
@@ -215,6 +281,11 @@ function logout(): void {
   api.logout();
   authenticated.value = false;
   clearMessages();
+  clearImageState();
+  imageStateLoading.value = false;
+  imageStateLoaded.value = false;
+  imageStateError.value = "";
+  activeView.value = "chat";
   pendingAssistantId.value = null;
   setConnection("已退出", "neutral");
 }
@@ -291,7 +362,7 @@ onBeforeUnmount(closeEvents);
       <p v-else-if="booting" class="form-hint">正在检查 Gateway…</p>
     </section>
 
-    <section v-else class="chat-app" aria-label="Leon Agent 聊天">
+    <section v-else class="chat-app" aria-label="Leon Agent 工作台">
       <header class="chat-header">
         <div>
           <p class="eyebrow">LEON AGENT · VUE 3</p>
@@ -303,32 +374,62 @@ onBeforeUnmount(closeEvents);
         </div>
       </header>
 
-      <div ref="messagesPanel" class="messages-panel" aria-live="polite">
-        <div v-if="!messages.length" class="empty-state">
-          <strong>开始一段对话</strong>
-          <span>普通聊天和生图请求都会沿用现有 Gateway 协议。</span>
-        </div>
-        <article v-for="message in messages" :key="message.id" class="message-row" :data-role="message.role">
-          <div class="message-bubble" :data-status="message.status">
-            <p v-if="message.text" class="message-text">{{ message.text }}</p>
-            <p v-if="message.status === 'pending'" class="thinking">思考中…</p>
-            <img v-for="image in message.images" :key="image" class="message-image" :src="image" alt="生成图片" />
+      <section v-if="activeView === 'chat'" class="chat-view" aria-label="聊天">
+        <div ref="messagesPanel" class="messages-panel" aria-live="polite">
+          <div v-if="!messages.length" class="empty-state">
+            <strong>开始一段对话</strong>
+            <span>普通聊天和生图请求都会沿用现有 Gateway 协议。</span>
           </div>
-        </article>
-      </div>
+          <article
+            v-for="message in messages"
+            :key="message.id"
+            class="message-row"
+            :data-role="message.role"
+          >
+            <div class="message-bubble" :data-status="message.status">
+              <p v-if="message.text" class="message-text">{{ message.text }}</p>
+              <p v-if="message.status === 'pending'" class="thinking">思考中…</p>
+              <img
+                v-for="image in message.images"
+                :key="image"
+                class="message-image"
+                :src="image"
+                alt="生成图片"
+              />
+            </div>
+          </article>
+        </div>
 
-      <p v-if="taskStatus" class="task-status">{{ taskStatus }}</p>
-      <form class="composer" @submit.prevent="sendMessage">
-        <textarea
-          v-model="draft"
-          rows="1"
-          maxlength="8000"
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-          :disabled="sending"
-          @keydown="handleComposerKeydown"
-        ></textarea>
-        <button type="submit" :disabled="sending || !draft.trim()">{{ sending ? "发送中…" : "发送" }}</button>
-      </form>
+        <p v-if="taskStatus" class="task-status">{{ taskStatus }}</p>
+        <form class="composer" @submit.prevent="sendMessage">
+          <textarea
+            v-model="draft"
+            rows="1"
+            maxlength="8000"
+            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+            :disabled="sending"
+            @keydown="handleComposerKeydown"
+          ></textarea>
+          <button type="submit" :disabled="sending || !draft.trim()">
+            {{ sending ? "发送中…" : "发送" }}
+          </button>
+        </form>
+      </section>
+
+      <TasksView
+        v-else-if="activeView === 'tasks'"
+        :loading="imageStateLoading"
+        :error="imageStateError"
+        @refresh="refreshImageState"
+      />
+      <GalleryView
+        v-else
+        :loading="imageStateLoading"
+        :error="imageStateError"
+        @refresh="refreshImageState"
+      />
+
+      <BottomNav :active="activeView" @select="selectView" />
     </section>
   </main>
 </template>

@@ -20,6 +20,12 @@ export interface MessageResponse {
   ok: boolean;
 }
 
+export interface ImageStateResponse {
+  tasks: Array<Record<string, unknown>>;
+  images: Array<Record<string, unknown>>;
+  errors: Record<string, string>;
+}
+
 export interface LeonEvent {
   event: string;
   session_id: string;
@@ -93,6 +99,13 @@ export class LeonApi {
       method: "POST",
       body: JSON.stringify({ content }),
     });
+  }
+
+  async getImageState(sessionId: string, limit = 100): Promise<ImageStateResponse> {
+    const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
+    return this.request<ImageStateResponse>(
+      `/api/agent/sessions/${sessionId}/image-state?limit=${safeLimit}`,
+    );
   }
 
   connectEvents(
