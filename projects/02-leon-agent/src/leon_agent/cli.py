@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import io
+import sys
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -24,6 +27,22 @@ from leon_agent.leon_client import LeonImageClient
 from leon_agent.models import model_provider_scope, resolve_model_id
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
+
+try:
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import HSplit, Layout
+    from prompt_toolkit.layout.dimension import Dimension
+    from prompt_toolkit.widgets import Frame, Label, TextArea
+except ModuleNotFoundError:  # pragma: no cover - legacy prompt fallback remains usable
+    Application = None
+    KeyBindings = None
+    HSplit = None
+    Layout = None
+    Dimension = None
+    Frame = None
+    Label = None
+    TextArea = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,9 +81,144 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
+class TerminalChatUI:
+    """Fullscreen chat surface: scrollback above, input pinned at the bottom."""
+
+    _MAX_BLOCKS = 240
+
+    def __init__(self, owner: LeonConsole) -> None:
+        if Application is None:
+            raise RuntimeError("prompt_toolkit is not installed")
+        self.owner = owner
+        self.blocks: list[str] = []
+        self.lock = threading.Lock()
+        self.busy = False
+        self.status_text = "Enter 发送 · /help 命令 · Ctrl+Q 退出"
+
+        self.output = TextArea(
+            text="",
+            read_only=True,
+            scrollbar=True,
+            wrap_lines=True,
+        )
+        self.input = TextArea(
+            height=1,
+            prompt="你 > ",
+            multiline=False,
+            accept_handler=self._accept,
+        )
+        self.status = Label(lambda: self.status_text)
+        key_bindings = KeyBindings()
+
+        @key_bindings.add("c-q")
+        @key_bindings.add("c-c")
+        def _(event) -> None:  # noqa: ANN001
+            event.app.exit()
+
+        root = HSplit(
+            [
+                Frame(
+                    self.output,
+                    title="💬 LEON AGENT · 上方滚动区",
+                    height=Dimension(weight=1),
+                ),
+                self.status,
+                Frame(self.input, title="⌨ 底部输入框 · Enter 发送"),
+            ]
+        )
+        self.app = Application(
+            layout=Layout(root, focused_element=self.input),
+            key_bindings=key_bindings,
+            full_screen=True,
+            mouse_support=True,
+        )
+
+    @staticmethod
+    def available() -> bool:
+        return Application is not None
+
+    def run(self) -> None:
+        self.owner.ui = self
+        try:
+            self.owner._print_startup()
+            self.app.run()
+        finally:
+            self.owner.ui = None
+
+    def write_rich(self, *objects: object, **kwargs: object) -> None:
+        buffer = io.StringIO()
+        render_console = Console(
+            file=buffer,
+            width=100,
+            color_system=None,
+            force_terminal=False,
+        )
+        render_console.print(*objects, **kwargs)
+        text = buffer.getvalue().rstrip()
+        if text:
+            self.write_plain(text)
+
+    def write_plain(self, text: str) -> None:
+        cleaned = text.rstrip()
+        if not cleaned:
+            return
+        with self.lock:
+            self.blocks.append(cleaned)
+            if len(self.blocks) > self._MAX_BLOCKS:
+                self.blocks = self.blocks[-self._MAX_BLOCKS :]
+            rendered = "\n\n".join(self.blocks).rstrip() + "\n"
+            self.output.text = rendered
+            self.output.buffer.cursor_position = len(rendered)
+        self.app.invalidate()
+
+    def write_user_message(self, message: str) -> None:
+        lines = message.splitlines() or [""]
+        body = "\n".join(f"│ {line}" for line in lines)
+        self.write_plain(f"╭─ 🧑 你\n{body}\n╰─")
+
+    def _accept(self, buffer) -> bool:  # noqa: ANN001
+        message = buffer.text.strip()
+        buffer.text = ""
+        if not message:
+            return True
+        if self.busy:
+            self.write_plain("⏳ 上一条还在处理，等 Leon 回完再发下一条。")
+            return True
+        self.write_user_message(message)
+        if message in {"/exit", "/quit"}:
+            self.write_plain("👋 Leon Agent 已退出。")
+            self.app.exit()
+            return True
+        self.busy = True
+        self._set_status("Leon 正在处理这一轮…")
+        thread = threading.Thread(
+            target=self._run_message,
+            args=(message,),
+            daemon=True,
+        )
+        thread.start()
+        return True
+
+    def _run_message(self, message: str) -> None:
+        try:
+            keep_running = self.owner.handle_interactive_message(message)
+            if not keep_running:
+                self.app.exit()
+        except Exception as exc:  # noqa: BLE001 - keep the terminal app alive
+            self.write_plain(f"💥 CLI 处理失败：{type(exc).__name__}: {exc}")
+        finally:
+            self.busy = False
+            self._set_status("Enter 发送 · /help 命令 · Ctrl+Q 退出")
+
+    def _set_status(self, text: str) -> None:
+        self.status_text = text
+        self.app.invalidate()
+
+
 class LeonConsole:
     def __init__(self, args: argparse.Namespace) -> None:
         self.console = Console()
+        self.ui: TerminalChatUI | None = None
         config = LeonSettings()
         updates = {}
         if args.backend_url:
@@ -81,6 +235,12 @@ class LeonConsole:
         self.model_selection = self.store.get_model_selection(self.session_id)
         self.model_catalog: list[str] = []
         self.llm_scope = ""
+        self.llm_model = ""
+        self.llm_profile = ""
+        self.llm_provider_name = ""
+        self.llm_base_url = ""
+        self.llm_source = ""
+        self.llm_config_label = ""
         self._progress: Progress | None = None
         self._progress_task_id: int | None = None
         self.agent = self._create_agent()
@@ -91,6 +251,13 @@ class LeonConsole:
                 raise ValueError(f"Session not found: {args.session}")
             return args.session
         return self.store.create_session()
+
+    def print(self, *objects: object, **kwargs: object) -> None:
+        ui = getattr(self, "ui", None)
+        if ui is not None:
+            ui.write_rich(*objects, **kwargs)
+            return
+        self.console.print(*objects, **kwargs)
 
     def _create_agent(self) -> LeonAgent:
         reset_settings_cache()
@@ -106,6 +273,10 @@ class LeonConsole:
         llm_client = LLMClient(llm_settings, model_override=model_override)
         self.llm_model = llm_client.model
         self.llm_profile = llm_client.profile
+        self.llm_provider_name = self._provider_name_from_profile(llm_client.profile)
+        self.llm_base_url = llm_settings.active_base_url
+        self.llm_source = llm_settings.llm_source
+        self.llm_config_label = self._llm_config_label(llm_settings)
         self.llm_scope = scope
         self.image_client = LeonImageClient(
             backend_url=self.config.backend_url,
@@ -128,31 +299,45 @@ class LeonConsole:
             additional_system_prompt=self.config.read_additional_system_prompt(),
         )
 
+    @staticmethod
+    def _provider_name_from_profile(profile: str) -> str:
+        return profile.split(":", 1)[1] if ":" in profile else profile
+
+    @staticmethod
+    def _llm_config_label(settings: Settings) -> str:
+        if settings.llm_source == "toml":
+            return str(settings.codex_config_path)
+        if settings.llm_source == "ccs":
+            return f"CC Switch / {settings.ccs_app}"
+        return ".env / environment"
+
     def _print_startup(self) -> None:
         title = Text("LEON AGENT", style="bold cyan")
-        title.append("  /  interactive runtime", style="dim")
+        title.append("  /  terminal cockpit", style="dim")
 
         body = Text()
-        body.append("会话  ", style="dim")
-        body.append(f"{self.session_id}\n", style="bold")
-        body.append("后端  ", style="dim")
-        body.append(f"{self.config.backend_url}\n")
-        body.append("模型  ", style="dim")
-        body.append(f"{self.llm_model} ({self.llm_profile})\n")
-        body.append("生图  ", style="dim")
-        body.append(", ".join(self.config.default_mode_ids) or "未配置", style="green")
-        body.append("\n\n")
-        body.append("直接聊天，或用自然语言让 Agent 调用工具。\n", style="white")
-        body.append("例如：", style="dim")
-        body.append("“检查生图环境，然后生成一张雨夜东京街景”\n", style="italic")
-        body.append("提示：", style="yellow")
-        body.append(" 生图任务可能需要一些时间；Agent 会显示工具调用和任务状态。", style="dim")
+        body.append("🧠  Model     ", style="bold cyan")
+        body.append(f"{self.llm_model}\n", style="bold")
+        body.append("🔌  Provider  ", style="bold cyan")
+        body.append(f"{self.llm_provider_name}  ", style="white")
+        body.append(f"({self.llm_profile})\n", style="dim")
+        body.append("🌐  LLM URL   ", style="bold cyan")
+        body.append(f"{self.llm_base_url}\n", style="white")
+        body.append("📄  Config    ", style="bold cyan")
+        body.append(f"{self.llm_source} · {self.llm_config_label}\n", style="dim")
+        body.append("🎨  Images    ", style="bold magenta")
+        body.append(f"{self.config.backend_url}  ", style="white")
+        body.append(f"default={', '.join(self.config.default_mode_ids) or '未配置'}\n", style="dim")
+        body.append("🧵  Session   ", style="bold green")
+        body.append(f"{self.session_id}\n\n", style="bold")
+        body.append("✨ /model 选模型    🖼 /nsfw 直达生图    🕹 /history 找会话\n", style="white")
+        body.append("🚀 也可以直接说：检查环境、生成图片、查看最近 5 张图", style="dim")
 
-        self.console.print(
+        self.print(
             Panel(
                 body,
                 title=title,
-                subtitle="/help 命令  ·  /new 新会话  ·  /model 模型  ·  /exit 退出",
+                subtitle="底部输入 · Enter 发送 · /help 查看命令 · /exit 退出",
                 border_style="cyan",
                 padding=(1, 2),
             )
@@ -178,15 +363,18 @@ class LeonConsole:
         try:
             models = LLMClient(settings, model_override=self.llm_model).list_models()
         except Exception as exc:  # noqa: BLE001 - manual model entry remains available
-            self.console.print(
-                f"[yellow]模型列表拉取失败：{type(exc).__name__}: {exc}[/yellow]"
-            )
+            self.print(f"[yellow]模型列表拉取失败：{type(exc).__name__}: {exc}[/yellow]")
             models = []
         self.model_catalog = models
         return models
 
     def _start_image_progress(self) -> None:
         self._stop_image_progress()
+        ui = getattr(self, "ui", None)
+        if ui is not None:
+            ui.write_plain("🎨 正在生成图片…")
+            ui._set_status("Leon 正在等图片任务完成…")
+            return
         self._progress = Progress(
             SpinnerColumn(),
             TextColumn("[cyan]{task.description}"),
@@ -197,6 +385,11 @@ class LeonConsole:
         self._progress_task_id = self._progress.add_task("正在生成图片…", total=None)
 
     def _stop_image_progress(self, *, ok: bool | None = None) -> None:
+        ui = getattr(self, "ui", None)
+        if ui is not None:
+            if ok is not None:
+                ui.write_plain("✅ 图片生成完成" if ok else "❌ 图片生成失败")
+            return
         if self._progress is None:
             return
         if self._progress_task_id is not None and ok is not None:
@@ -211,7 +404,7 @@ class LeonConsole:
             if event.tool_name == "generate_images":
                 self._start_image_progress()
                 return
-            self.console.print(
+            self.print(
                 f"[cyan]●[/cyan] [bold]调用工具[/bold] [cyan]{event.tool_name}[/cyan]"
             )
         elif event.kind == "tool_finished":
@@ -219,9 +412,19 @@ class LeonConsole:
             if event.tool_name == "generate_images":
                 self._stop_image_progress(ok=ok)
             if ok:
-                self.console.print(f"[green]✓[/green] [dim]{event.tool_name} 完成[/dim]")
+                self.print(f"[green]✓[/green] [dim]{event.tool_name} 完成[/dim]")
             else:
-                self.console.print(f"[red]✗[/red] [dim]{event.tool_name} 失败[/dim]")
+                self.print(f"[red]✗[/red] [dim]{event.tool_name} 失败[/dim]")
+
+    def _print_answer(self, answer: str) -> None:
+        self.print(
+            Panel(
+                Markdown(answer),
+                title="🤖 Leon",
+                border_style="green",
+                padding=(0, 1),
+            )
+        )
 
     def process(self, message: str) -> bool:
         stripped = message.strip()
@@ -234,12 +437,12 @@ class LeonConsole:
         except Exception as exc:  # noqa: BLE001 - CLI should keep the session alive
             self._stop_image_progress(ok=False)
             error = f"请求失败：{type(exc).__name__}: {exc}"
-            self.console.print(f"[red]{error}[/red]")
+            self.print(f"[red]{error}[/red]")
             return False
         self.store.add_message(self.session_id, "user", message)
         self.store.record_result(self.session_id, result)
         self.store.add_message(self.session_id, "assistant", result.answer)
-        self.console.print(Markdown(result.answer))
+        self._print_answer(result.answer)
         return True
 
     def _process_nsfw(self, message: str) -> bool:
@@ -248,12 +451,12 @@ class LeonConsole:
             modes = mode_result.get("modes", [])
             command = parse_nsfw_command(message, modes)
         except Exception as exc:  # noqa: BLE001 - invalid command should not exit the REPL
-            self.console.print(f"[red]{exc}[/red]")
+            self.print(f"[red]{exc}[/red]")
             if "modes" in locals():
-                self.console.print(Markdown(format_mode_catalog(modes)))
+                self.print(Markdown(format_mode_catalog(modes)))
             return False
         if command is None:
-            self.console.print(Markdown(format_mode_catalog(modes)))
+            self.print(Markdown(format_mode_catalog(modes)))
             return True
         arguments = {
             "source_text": command.source_text,
@@ -265,12 +468,12 @@ class LeonConsole:
             result = self.direct_tools.execute("generate_images", arguments)
         except Exception as exc:  # noqa: BLE001 - image failure should not exit the REPL
             self._stop_image_progress(ok=False)
-            self.console.print(f"[red]直达生图失败：{type(exc).__name__}: {exc}[/red]")
+            self.print(f"[red]直达生图失败：{type(exc).__name__}: {exc}[/red]")
             return False
         ok = bool(result.get("ok"))
         self._stop_image_progress(ok=ok)
         if not ok:
-            self.console.print(f"[red]直达生图失败：{result.get('error') or '未知错误'}[/red]")
+            self.print(f"[red]直达生图失败：{result.get('error') or '未知错误'}[/red]")
             return False
         images = [
             item.get("image_url")
@@ -287,7 +490,7 @@ class LeonConsole:
         self.store.add_message(self.session_id, "user", message)
         self.store.record_result(self.session_id, agent_result)
         self.store.add_message(self.session_id, "assistant", answer)
-        self.console.print(Markdown(answer))
+        self._print_answer(answer)
         return True
 
     def show_history(self) -> None:
@@ -298,11 +501,11 @@ class LeonConsole:
                 str(item["message_count"]),
                 str(item["updated_at"]),
             )
-        self.console.print(table)
+        self.print(table)
 
     def show_models(self) -> None:
         models = self._fetch_model_catalog()
-        self.console.print(
+        self.print(
             f"当前模型：[bold]{self.llm_model}[/bold]  provider={self.llm_profile}"
         )
         table = Table("#", "Model", "Current")
@@ -310,10 +513,10 @@ class LeonConsole:
             table.add_row(str(index), model_id, "*" if model_id == self.llm_model else "")
         if self.llm_model not in models:
             table.add_row("自定义", self.llm_model, "*")
-        self.console.print(table)
+        self.print(table)
         if not models:
-            self.console.print("[dim]供应商未返回模型列表，仍可直接输入完整模型 ID。[/dim]")
-        self.console.print("使用 /model <序号或模型ID> 切换，/model default 恢复默认。")
+            self.print("[dim]供应商未返回模型列表，仍可直接输入完整模型 ID。[/dim]")
+        self.print("使用 /model <序号或模型ID> 切换，/model default 恢复默认。")
 
     def switch_model(self, value: str) -> None:
         candidate = value.strip()
@@ -325,7 +528,7 @@ class LeonConsole:
             )
             self.model_selection = None
             self.agent = self._create_agent()
-            self.console.print(
+            self.print(
                 f"[green]已恢复默认模型[/green] {self.llm_model} ({self.llm_profile})"
             )
             return
@@ -335,7 +538,7 @@ class LeonConsole:
             catalog = self._fetch_model_catalog()
         model_id = resolve_model_id(candidate, catalog)
         if model_id is None:
-            self.console.print(f"[red]未知模型：{candidate}[/red]")
+            self.print(f"[red]未知模型：{candidate}[/red]")
             self.show_models()
             return
 
@@ -349,15 +552,59 @@ class LeonConsole:
         )
         self.model_selection = (scope, model_id)
         self.agent = self._create_agent()
-        self.console.print(f"[green]已切换模型[/green] {self.llm_model} ({self.llm_profile})")
+        self.print(f"[green]已切换模型[/green] {self.llm_model} ({self.llm_profile})")
 
     def new_session(self) -> None:
         self.session_id = self.store.create_session()
         self.model_selection = None
         self.agent = self._create_agent()
-        self.console.print(f"[green]✓[/green] 新会话 [bold]{self.session_id}[/bold]")
+        self.print(f"[green]✓[/green] 新会话 [bold]{self.session_id}[/bold]")
+
+    def handle_interactive_message(self, message: str) -> bool:
+        """Handle one command or chat turn for either terminal frontend."""
+        message = message.strip()
+        if not message:
+            return True
+        if message in {"/exit", "/quit"}:
+            self.print("[dim]Leon Agent 已退出。[/dim]")
+            return False
+        if message == "/new":
+            self.new_session()
+            return True
+        if message == "/history":
+            self.show_history()
+            return True
+        if message == "/model":
+            self.show_models()
+            return True
+        if message.startswith("/model "):
+            self.switch_model(message.removeprefix("/model "))
+            return True
+        if message == "/help":
+            self.print(
+                Panel(
+                    "[bold]/new[/bold] 新会话\n"
+                    "[bold]/history[/bold] 会话列表\n"
+                    "[bold]/model[/bold] 查看模型\n"
+                    "[bold]/model <序号或模型ID>[/bold] 切换模型\n"
+                    "[bold]/nsfw <描述>[/bold] 跳过 LLM，直接用 NSFW 模式生图\n"
+                    "[bold]/exit[/bold] 退出\n\n"
+                    "[dim]你也可以直接说：检查环境、生成图片、查询任务、查看最近图片。[/dim]",
+                    title="Leon 命令",
+                    border_style="dim",
+                )
+            )
+            return True
+        self.process(message)
+        return True
 
     def interactive(self) -> None:
+        if TerminalChatUI.available() and sys.stdin.isatty() and sys.stdout.isatty():
+            TerminalChatUI(self).run()
+            return
+        self._legacy_interactive()
+
+    def _legacy_interactive(self) -> None:
         self._print_startup()
         while True:
             try:
@@ -367,37 +614,8 @@ class LeonConsole:
                 return
             if not message:
                 continue
-            if message in {"/exit", "/quit"}:
-                self.console.print("[dim]Leon Agent 已退出。[/dim]")
+            if not self.handle_interactive_message(message):
                 return
-            if message == "/new":
-                self.new_session()
-                continue
-            if message == "/history":
-                self.show_history()
-                continue
-            if message == "/model":
-                self.show_models()
-                continue
-            if message.startswith("/model "):
-                self.switch_model(message.removeprefix("/model "))
-                continue
-            if message == "/help":
-                self.console.print(
-                    Panel(
-                        "[bold]/new[/bold] 新会话\n"
-                        "[bold]/history[/bold] 会话列表\n"
-                        "[bold]/model[/bold] 查看模型\n"
-                        "[bold]/model <序号或模型ID>[/bold] 切换模型\n"
-                        "[bold]/nsfw <描述>[/bold] 跳过 LLM，直接用 NSFW 模式生图\n"
-                        "[bold]/exit[/bold] 退出\n\n"
-                        "[dim]你也可以直接说：检查环境、生成图片、查询任务、查看最近图片。[/dim]",
-                        title="Leon 命令",
-                        border_style="dim",
-                    )
-                )
-                continue
-            self.process(message)
 
 
 def main() -> None:

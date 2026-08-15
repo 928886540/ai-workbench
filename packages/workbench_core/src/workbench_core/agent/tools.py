@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 ToolHandler = Callable[..., dict[str, Any]]
+DirectAnswerFormatter = Callable[[dict[str, Any], dict[str, Any]], str | None]
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,8 @@ class AgentTool:
     description: str
     parameters: dict[str, Any]
     handler: ToolHandler
+    return_direct: bool = False
+    answer_formatter: DirectAnswerFormatter | None = None
 
     @property
     def schema(self) -> dict[str, Any]:
@@ -59,3 +62,21 @@ class ToolRegistry:
             return {"ok": False, "error": f"Invalid arguments for {name}: {exc}"}
         except Exception as exc:  # noqa: BLE001 - tools are an external execution boundary
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    def direct_answer(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str | None:
+        """Return a tool-owned answer when the model need not be called again."""
+        tool = self._tools.get(name)
+        if tool is None or not tool.return_direct:
+            return None
+        if tool.answer_formatter is not None:
+            answer = tool.answer_formatter(arguments, result)
+        else:
+            answer = result.get("answer")
+        if answer is None:
+            return None
+        return str(answer).strip() or None

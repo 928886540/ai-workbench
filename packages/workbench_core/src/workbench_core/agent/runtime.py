@@ -16,6 +16,13 @@ class ToolExecutor(Protocol):
 
     def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]: ...
 
+    def direct_answer(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str | None: ...
+
 
 EventHandler = Callable[[AgentEvent], None]
 
@@ -89,6 +96,8 @@ class AgentRuntime:
 
             if response.has_tool_calls:
                 messages.append(response.raw_message)
+                direct_answers: list[str] = []
+                direct_answer_resolver = getattr(self.tools, "direct_answer", None)
                 for call in response.tool_calls:
                     arguments = parse_tool_arguments(call.arguments)
                     self._emit(
@@ -108,6 +117,13 @@ class AgentRuntime:
                     else:
                         result = self.tools.execute(call.name, arguments)
                     steps.append(ToolStep(call.name, arguments, result))
+                    direct_answer = (
+                        direct_answer_resolver(call.name, arguments, result)
+                        if direct_answer_resolver is not None
+                        else None
+                    )
+                    if direct_answer:
+                        direct_answers.append(direct_answer)
                     self._emit(
                         AgentEvent(
                             kind="tool_finished",
@@ -123,6 +139,16 @@ class AgentRuntime:
                             "tool_call_id": call.id,
                             "content": _compact_result(result, self.result_limit),
                         }
+                    )
+                if direct_answers:
+                    answer = "\n\n".join(direct_answers)
+                    messages.append({"role": "assistant", "content": answer})
+                    self._emit(AgentEvent(kind="completed", turn=turn, content=answer))
+                    return AgentResult(
+                        answer=answer,
+                        steps=steps,
+                        turns=turn,
+                        messages=messages,
                     )
                 continue
 

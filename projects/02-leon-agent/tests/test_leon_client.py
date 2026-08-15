@@ -70,6 +70,7 @@ def test_task_sync_returns_compact_items() -> None:
                         "status": "running",
                         "workflowName": "k2_tifa",
                         "sourceText": "雨夜街头",
+                        "queued_at_ms": 1770000000000,
                         "unusedLargeField": "ignored",
                     }
                 ]
@@ -93,6 +94,7 @@ def test_task_sync_returns_compact_items() -> None:
             "workflow_name": "k2_tifa",
             "source_text": "雨夜街头",
             "image_url": None,
+            "created_at": 1770000000000,
             "error": None,
         }
     ]

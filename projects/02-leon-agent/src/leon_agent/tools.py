@@ -14,6 +14,28 @@ from leon_agent.leon_client import LeonImageClient
 TERMINAL_IMAGE_STATUSES = {"completed", "failed", "cancelled", "canceled"}
 
 
+def _format_generation_answer(
+    arguments: dict[str, Any],
+    result: dict[str, Any],
+) -> str:
+    """Render a completed image tool result without another provider round-trip."""
+    if not result.get("ok"):
+        return f"图片生成失败：{result.get('error') or '未知错误'}"
+
+    images = [
+        item.get("image_url")
+        for item in result.get("images", [])
+        if isinstance(item, dict) and item.get("image_url")
+    ]
+    if images:
+        return "图片生成好了。\n\n" + "\n".join(f"- {url}" for url in images)
+    if result.get("timed_out"):
+        return "图片任务已提交，但等待完成超时；稍后可以查询任务状态。"
+    if result.get("waited_for_completion") is False:
+        return "图片任务已提交，正在后台生成；稍后可以查询任务状态。"
+    return "图片任务已完成，但暂时没有拿到图片地址。"
+
+
 def _job_id(item: dict[str, Any]) -> str:
     return str(item.get("job_id") or "")
 
@@ -190,6 +212,8 @@ def create_leon_tools(
                     "additionalProperties": False,
                 },
                 handler=generate_images,
+                return_direct=True,
+                answer_formatter=_format_generation_answer,
             ),
             AgentTool(
                 name="get_image_tasks",

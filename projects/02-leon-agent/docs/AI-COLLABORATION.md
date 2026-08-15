@@ -117,6 +117,19 @@ non-empty `final_image_url` across the whole Leon image database, without a `cha
 expand it into global search/delete APIs. Normalize every `final_image_url` into an absolute public
 `image_url` before returning it to the LLM.
 
+## CLI Interaction Contract
+
+- `leon` uses `prompt-toolkit` when stdin/stdout are interactive: the upper pane is scrollable
+  output and the bottom pane is the single-line Enter-to-send input. Non-TTY environments keep the
+  Rich prompt fallback.
+- The startup panel shows the active model, provider/profile, LLM base URL, configuration source,
+  image backend, and session id. All command and answer output goes through the same renderer so
+  answers remain visually separated from input.
+- The shared `AgentTool.return_direct` flag is for deterministic, user-facing tool results that do
+  not need another provider round-trip. Leon's `generate_images` uses it and renders image URLs or
+  task status directly after the image tool finishes. This avoids an unnecessary second LLM request
+  after a long image wait, which is important for low-RPM providers.
+
 ## Voice Contract
 
 - Secrets stay server-side through `VOLINK_API_KEY`; the browser never calls Volink directly.
@@ -196,8 +209,11 @@ For Web changes also verify a mobile viewport with a real browser:
 - bubble copy/retry/edit/TTS actions work after rerendering
 - TTS shows loading/playing/idle states and preserves blocked iOS audio until unlock
 
-Current baseline on 2026-08-15: `96 passed`, Ruff clean, and
-`tests/manual_web_check.py` `51/51` with system Chrome at `390x844` touch viewport.
+Current baseline on 2026-08-15: `97 passed`, Ruff clean, and
+`tests/manual_web_check.py` `56/56` with system Chrome at `390x844` touch viewport.
+The browser suite covers restoring persisted chat history, newest-first task/gallery
+ordering, and the edge-to-edge fullscreen image viewer. The Service Worker cache is
+`leon-v17`.
 
 ## Handoff Format
 

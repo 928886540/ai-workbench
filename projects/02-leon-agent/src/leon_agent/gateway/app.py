@@ -246,6 +246,13 @@ def _fallback_image_completion(count: int) -> str:
     return f"{count} 张图已经生成好了，点开看看。"
 
 
+def _image_sort_time(item: dict[str, Any]) -> int:
+    try:
+        return int(item.get("created_at") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _llm_image_completion_message(llm_client: LLMClient, count: int) -> str:
     """Ask the pinned session model for a short, human completion note."""
     fallback = _fallback_image_completion(count)
@@ -542,6 +549,7 @@ async def get_session_image_state(
         mode_id = str(item.get("workflow_name") or "").strip()
         item["mode_id"] = mode_id
         item["mode_name"] = mode_display_name(mode_id) if mode_id else ""
+    tasks.sort(key=_image_sort_time, reverse=True)
 
     if isinstance(gallery_result, BaseException):
         errors["gallery"] = f"{type(gallery_result).__name__}: {gallery_result}"
@@ -567,12 +575,18 @@ async def get_session_image_state(
                 "workflow_name": task.get("workflow_name"),
                 "source_text": task.get("source_text"),
                 "image_url": image_url,
-                "created_at": None,
+                "created_at": task.get("created_at"),
             }
+
+    ordered_images = sorted(
+        images_by_job.values(),
+        key=_image_sort_time,
+        reverse=True,
+    )
 
     return {
         "tasks": tasks,
-        "images": list(images_by_job.values()),
+        "images": ordered_images,
         "errors": errors,
     }
 

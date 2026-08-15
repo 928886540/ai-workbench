@@ -126,10 +126,8 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 /* Fullscreen image album viewer */
 #image-viewer{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.94);overflow:hidden;touch-action:none}
 #image-viewer[hidden]{display:none}
-/* Stage is padded so the image never sits under the chrome at scale 1. */
-#image-viewer-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
-  padding:calc(60px + env(safe-area-inset-top)) 12px calc(24px + env(safe-area-inset-bottom))}
-#image-viewer img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;transform-origin:center center;will-change:transform;touch-action:none;user-select:none;-webkit-user-drag:none}
+#image-viewer-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#image-viewer img{display:block;width:100%;height:100%;object-fit:cover;transform-origin:center center;will-change:transform;touch-action:none;user-select:none;-webkit-user-drag:none}
 #image-viewer img.iv-settling{transition:transform .22s cubic-bezier(.22,.61,.36,1)}
 /* The image creates its own stacking context (will-change:transform) and comes
    later in DOM order, so every control needs an explicit z-index to stay above it. */
@@ -1535,9 +1533,11 @@ function handleEvent(ev){
     }
 
     case 'image.task.created':
+      const taskCreatedAt=Date.parse(ev.timestamp)||Date.now();
       tasks[ev.data.job_id]={
         status:ev.data.status||'queued',planId:ev.data.generation_plan_id,
-        modeId:ev.data.mode_id||'',modeName:ev.data.mode_name||'',sourceText:ev.data.source_text||''
+        modeId:ev.data.mode_id||'',modeName:ev.data.mode_name||'',sourceText:ev.data.source_text||'',
+        createdAt:taskCreatedAt
       };
       if(currentToolCard)addTaskMeta(currentToolCard,ev.data);
       if(currentIvToolEntry){
@@ -1557,7 +1557,7 @@ function handleEvent(ev){
 
     case 'image.completed':
       tasks[ev.data.job_id]={...(tasks[ev.data.job_id]||{}),status:'completed'};
-      images[ev.data.job_id]={url:ev.data.image_url};
+      images[ev.data.job_id]={url:ev.data.image_url,createdAt:Date.parse(ev.timestamp)||Date.now()};
       replaceSkeletonWithImage(ev.data.job_id,ev.data.image_url);
       {const href=safeHref(ev.data.image_url);if(href)addTlEntry('image','Image Ready',`<a href="${esc(href)}" data-image-preview="${esc(href)}" style="color:#B09FCC">查看大图<br><img src="${esc(href)}" alt="generated"></a>`,ev.timestamp)}
       updateIvStats();break;
@@ -1632,10 +1632,10 @@ async function loadImageState(){
     (data.tasks||[]).forEach(item=>{
       const jobId=String(item.job_id||'');if(!jobId)return;
       tasks[jobId]={...tasks[jobId],...item};
-      if(item.image_url)images[jobId]={url:item.image_url,sourceText:item.source_text||''};
+      if(item.image_url)images[jobId]={url:item.image_url,sourceText:item.source_text||'',createdAt:item.created_at||item.createdAt||0};
     });
     (data.images||[]).forEach(item=>{
-      const jobId=String(item.job_id||'');if(jobId&&item.image_url)images[jobId]={url:item.image_url,sourceText:item.source_text||''};
+      const jobId=String(item.job_id||'');if(jobId&&item.image_url)images[jobId]={url:item.image_url,sourceText:item.source_text||'',createdAt:item.created_at||item.createdAt||0};
     });
     imageStateLoaded=true;
     const errors=Object.values(data.errors||{});imageStateError=errors.join(' | ');
@@ -1644,9 +1644,17 @@ async function loadImageState(){
 }
 
 // Tasks
+function stateCreatedAt(value){
+  const raw=value.createdAt??value.created_at;
+  const time=typeof raw==='number'?raw:Date.parse(raw);
+  return Number.isFinite(time)&&time>0?time:0;
+}
+function stateEntries(state){
+  return Object.entries(state).sort(([,a],[,b])=>stateCreatedAt(b)-stateCreatedAt(a));
+}
 function renderTasks(){
   const $l=document.getElementById('tasks-list');$l.innerHTML='';
-  const entries=Object.entries(tasks).reverse();
+  const entries=stateEntries(tasks);
   if(!entries.length){$l.innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><p>${imageStateLoading?'正在加载任务…':imageStateError?'任务加载失败':'暂无任务'}</p></div>`;return}
   entries.forEach(([jobId,t])=>{
     const el=document.createElement('div');el.className='task-item';
@@ -1664,7 +1672,7 @@ function renderTasks(){
 // Gallery
 function renderGallery(){
   const $g=document.getElementById('gallery-grid');$g.innerHTML='';
-  const entries=Object.entries(images).reverse();
+  const entries=stateEntries(images);
   if(!entries.length){$g.innerHTML=`<div class="empty-state"><div class="empty-icon">🖼️</div><p>${imageStateLoading?'正在加载图库…':imageStateError?'图库加载失败':'暂无图片'}</p></div>`;return}
   entries.forEach(([jobId,img])=>{
     const el=document.createElement('div');el.className='gallery-img-wrap';
@@ -1766,9 +1774,10 @@ async function ensureSession(){
   sessionId=d.session_id;localStorage.setItem(SESSION_KEY,sessionId);
   return {session_id:sessionId,messages:[]};
 }
-function renderHistory(messages){
-  if(messages.length)return;
-  (messages||[]).forEach(message=>{
+function renderHistory(history){
+  const items=Array.isArray(history)?history:[];
+  while(messages.length)removeMessage(messages[messages.length-1].id);
+  items.forEach(message=>{
     if(message.role==='user'||message.role==='assistant')addBubble(message.role==='assistant'?'agent':'user',message.content||'',false);
   });
   autoFollowMessages=true;scrollBottom(true);
@@ -1783,7 +1792,7 @@ async function init(){
 }
 
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=16',{scope:'/',updateViaCache:'none'})
+  navigator.serviceWorker.register('/sw.js?v=17',{scope:'/',updateViaCache:'none'})
     .then(registration=>registration.update()).catch(()=>{});
 }
 if(token){hideLogin();init()}

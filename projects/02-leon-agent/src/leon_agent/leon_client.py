@@ -306,6 +306,13 @@ class LeonImageClient:
                 or item.get("finalImageUrl")
                 or item.get("final_image_url")
             ),
+            "created_at": (
+                item.get("createdAt")
+                or item.get("created_at")
+                or item.get("queuedAt")
+                or item.get("queued_at")
+                or item.get("queued_at_ms")
+            ),
             "error": item.get("error"),
         }
 
@@ -323,8 +330,11 @@ class LeonImageClient:
             "created_at": (
                 item.get("createdAt")
                 or item.get("created_at")
+                or item.get("finalizedAt")
                 or item.get("finalized_at_ms")
+                or item.get("finishedAt")
                 or item.get("finished_at_ms")
+                or item.get("queuedAt")
                 or item.get("queued_at_ms")
             ),
         }

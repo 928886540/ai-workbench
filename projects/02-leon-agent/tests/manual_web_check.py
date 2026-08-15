@@ -41,6 +41,25 @@ with sync_playwright() as p:
     page.wait_for_selector("#login-screen.hidden", state="attached", timeout=15000)
     check("app 初始化完成（登录页隐藏）", True)
 
+    history = page.evaluate(
+        """() => {
+        renderHistory([
+          {role:'user',content:'很久之前的问题'},
+          {role:'assistant',content:'很久之前的回答'},
+        ]);
+        return {
+          count: messages.length,
+          nodes: $msgs.querySelectorAll('.bubble-wrap').length,
+          text: $msgs.innerText,
+        };
+      }"""
+    )
+    check("刷新后恢复已有聊天记录", history["count"] == 2 and history["nodes"] == 2, repr(history))
+    check(
+        "历史记录保留用户和助手内容",
+        "很久之前的问题" in history["text"] and "很久之前的回答" in history["text"],
+    )
+
     # ---------------- Bug 3: model picker ----------------
     page.click('.nav-item[data-page="settings"]')
     voice_search = page.locator("#voice-search").bounding_box()
@@ -166,6 +185,19 @@ with sync_playwright() as p:
     )
     page.locator("#chat-messages img").first.click()
     page.wait_for_selector("#image-viewer:not([hidden])", timeout=5000)
+
+    fullscreen = page.evaluate(
+        """() => {
+        const r=$imageViewerImage.getBoundingClientRect();
+        return {width:r.width, height:r.height, vw:innerWidth, vh:innerHeight};
+      }"""
+    )
+    check(
+        "全屏图片上下左右撑满 viewport",
+        abs(fullscreen["width"] - fullscreen["vw"]) < 1
+        and abs(fullscreen["height"] - fullscreen["vh"]) < 1,
+        repr(fullscreen),
+    )
 
     album = page.evaluate("() => ({n: ivAlbum.length, i: ivIndex})")
     check("查看器把会话全部图片收成相册", album["n"] == 3, f"相册张数={album['n']}")
@@ -403,6 +435,25 @@ with sync_playwright() as p:
         "2668cea0b6124e1983e10128ff6c4d72" not in task_ui["collapsed"]
         and "2668cea0b6124e1983e10128ff6c4d72" in task_ui["expanded"],
     )
+
+    ordering = page.evaluate(
+        """([urls]) => {
+        Object.keys(tasks).forEach(key=>delete tasks[key]);
+        tasks.old={status:'completed',modeName:'旧任务',createdAt:1770000000000};
+        tasks.new={status:'completed',modeName:'新任务',createdAt:1770000000900};
+        Object.keys(images).forEach(key=>delete images[key]);
+        images.old={url:urls[0],createdAt:1770000000000};
+        images.new={url:urls[1],createdAt:1770000000900};
+        renderTasks();renderGallery();
+        return {
+          task: document.querySelector('.task-item .task-mode').textContent,
+          gallery: document.querySelector('.gallery-meta').textContent,
+        };
+      }""",
+        [IMGS],
+    )
+    check("任务列表按最新任务排在最前", ordering["task"] == "新任务", ordering["task"])
+    check("图库按最新图片排在最前", ordering["gallery"].startswith("new"), ordering["gallery"])
 
     blocked = page.evaluate(
         """async () => {

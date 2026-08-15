@@ -29,7 +29,7 @@
   决策依据：JS 已 807 行 / 48 个顶层可变变量 / 65 处 DOM 查询，近期修的 4 个 bug 全是「状态与 DOM 手动同步」这一类结构性问题；
   且组件一文件一职责后，外部 agent 改动边界清晰，不必再动 1250 行单文件。
 - 前端 W1 已完成：`messages[]` + `messageIndex` 单一数据源，`createMessage/renderMessage/patchMessage/removeMessage`；
-  复制 / 真重试 / 编辑 / 朗读工具栏、底部图片气泡、模型候选收起均已落地，SW 缓存已升到 v16
+  复制 / 真重试 / 编辑 / 朗读工具栏、底部图片气泡、模型候选收起均已落地，SW 缓存已升到 v17
 - Volink TTS 已接入：4 个模型 / 561 个中文音色；目录使用 `lang=zh-CN`，可搜「风韵少妇」，支持试听、收藏、
   手动朗读、自动朗读、loading / 波形状态，以及 iOS Chrome 的用户手势解锁与待播音频恢复；前后端会清理
   Markdown 列表横杠、emoji、链接、模式 ID、任务 ID 和计划 ID，避免 TTS 把 `-` 读成“减/简”
@@ -38,8 +38,13 @@
   网关现在记录 voice ID、原始/净化字符数和上游错误，Web 会显示 `detail`；未加入无依据的自动重试
 - 可通过 `LEON_SYSTEM_PROMPT_FILE` 读取 UTF-8 TXT 并追加到 Agent system prompt；本机文件位于被 Git 忽略的
   `data/system-prompts/双人成行预设.txt`，CLI 与 Web Gateway 都已接入
-- 当前验证（2026-08-15 实测）：全仓库 `pytest` **96 passed**、`ruff check .` 通过、
-  浏览器端到端 `tests/manual_web_check.py` **51/51 通过**（真实 Chrome + 390×844 触屏模拟）
+- Web 修复（2026-08-15）：旧 session 聊天记录恢复渲染、任务/图库按 `created_at` 最新优先、
+  全屏图片 edge-to-edge `cover` 显示；SW 缓存升到 v17
+- CLI 已完成第一版全屏 TUI：交互终端使用上方滚动区 + 底部 Enter 输入框，启动面板展示
+  model/provider/base URL/config source；非 TTY 继续使用 Rich fallback。`generate_images` 工具
+  采用 `return_direct`，图片任务完成后直接输出结果，避免再发一轮 provider 请求（低 RPM provider 必须如此）。
+- 当前验证（2026-08-15 实测）：全仓库 `pytest` **97 passed**、`ruff check .` 通过、
+  浏览器端到端 `tests/manual_web_check.py` **56/56 通过**（真实 Chrome + 390×844 触屏模拟）
 - ⚠️ LLM provider 已被 CC Switch 换过（`~/.codex/config.toml`，8/15 09:30）：
   `anyrouter.top` → `new-api.abrdns.com`，默认模型 `gpt-5.6-sol` → `DeepSeek-V4-Flash-0731`，目录从 17 个模型变成 96 个。
   会话里「同样的话上次能答、这次不能答」优先怀疑这里，而不是提示词。
@@ -54,7 +59,7 @@
 - ASR 尚未接入；TTS 已完成，网关使用 `POST /api/agent/tts` 和 `/api/voice/*`
 - 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
-- 完整 TUI 后置
+- 下一步可选：按既定决策启动 Vue 3 + Vite W2；CLI TUI 不再是阻塞项
 
 ---
 
@@ -65,12 +70,12 @@
 ### 1. 提交前必须跑完这三条，全绿才提交
 
 ```bash
-uv run pytest -q                                  # 期望：96 passed
+uv run pytest -q                                  # 期望：97 passed
 uv run ruff check .                               # 期望：All checks passed
 # 浏览器端到端（需网关在 127.0.0.1:8233 运行）
 export LEON_TOKEN=$(grep -E "^LEON_API_TOKEN=" .env | cut -d= -f2- | tr -d '\r\n')
 export CHROME_PATH="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-uv run --with playwright python projects/02-leon-agent/tests/manual_web_check.py   # 期望：51/51 通过
+uv run --with playwright python projects/02-leon-agent/tests/manual_web_check.py   # 期望：56/56 通过
 ```
 
 `pytest` 对前端只做字符串断言，**改了渲染链路必须跑第三条**，否则 ReferenceError 这类问题测不出来。

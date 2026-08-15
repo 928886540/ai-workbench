@@ -103,6 +103,7 @@ def test_session_image_state_restores_tasks_and_gallery(client, monkeypatch):
                         "status": "completed",
                         "workflow_name": "k2_queen_marika",
                         "image_url": "https://images.example/task.png",
+                        "created_at": "1770000000100",
                     }
                 ]
             }
@@ -114,6 +115,7 @@ def test_session_image_state_restores_tasks_and_gallery(client, monkeypatch):
                     {
                         "job_id": "job-from-gallery",
                         "image_url": "https://images.example/gallery.png",
+                        "created_at": "1770000000200",
                     }
                 ]
             }
@@ -129,6 +131,8 @@ def test_session_image_state_restores_tasks_and_gallery(client, monkeypatch):
     assert {item["job_id"] for item in data["tasks"]} == {"job-from-task"}
     assert data["tasks"][0]["mode_id"] == "k2_queen_marika"
     assert data["tasks"][0]["mode_name"] == "玛莉卡"
+    assert data["images"][0]["job_id"] == "job-from-gallery"
+    assert data["images"][1]["job_id"] == "job-from-task"
     assert {item["job_id"] for item in data["images"]} == {
         "job-from-task",
         "job-from-gallery",
@@ -162,7 +166,11 @@ def test_web_client_supports_markdown_images_and_touch_scrolling(client):
     assert "$input.addEventListener('focus'" not in html
     assert "height:100dvh" in html
     assert "font-size:16px" in html
-    assert "/sw.js?v=16" in html
+    assert "/sw.js?v=17" in html
+    assert "function renderHistory(history){" in html
+    assert "while(messages.length)removeMessage(messages[messages.length-1].id)" in html
+    assert "function stateEntries(state)" in html
+    assert "object-fit:cover" in html
     assert "function statusLabel(" in html
     assert "排队中" in html
     assert "任务详情" in html
