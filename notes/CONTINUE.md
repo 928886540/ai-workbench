@@ -26,7 +26,7 @@
 - 前端演进评估（是否迁 Vue3 / 聊天化 / 气泡工具栏 / 语音）：`projects/02-leon-agent/docs/web-client-evolution.md`，结论是暂不迁 Vue3，先做 `messages[]` 重构
 - 当前验证：`pytest` 79 passed，`ruff check .` 通过，本地与公网 `/api/health` 均为 200
 - 下一步最小动作：在 Cloudflare Dashboard 为 `/api/agent/*/events` 添加 Cache Bypass Rule，然后手机端验收 SSE 与生图闭环
-- 前端下一步（W1）：引入 `messages[]` 单一数据源与 `renderMessage` / `patchMessage`，行为不变，为气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）钺路
+- 前端下一步（W1）：引入 `messages[]` 单一数据源与 `renderMessage` / `patchMessage`，行为不变，为气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）铺路
 - 语音：等用户提供 TTS / ASR API，网关端预留 `POST /api/agent/tts` 与 `POST /api/agent/asr`
 - 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
