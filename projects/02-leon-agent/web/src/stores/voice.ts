@@ -1,4 +1,5 @@
 import { ref } from "vue";
+import { api, type VoiceCatalogResponse } from "../api/client";
 
 export interface VoiceOption {
   id: string;
@@ -17,6 +18,10 @@ export const defaultVoiceId = ref("");
 export const selectedVoiceId = ref("");
 export const favoriteVoiceIds = ref<string[]>([]);
 export const autoplayAll = ref(false);
+export const voiceCatalogLoaded = ref(false);
+export const voiceCatalogLoading = ref(false);
+
+let catalogRequest: Promise<boolean> | null = null;
 
 function readPrefs(): void {
   if (typeof localStorage === "undefined") return;
@@ -74,10 +79,38 @@ export function setVoiceCatalog(payload: {
     demo: voice.demo || "",
   }));
   defaultVoiceId.value = payload.default_voice_id || "";
+  voiceCatalogLoaded.value = true;
   if (selectedVoiceId.value && !voices.value.some((voice) => voice.id === selectedVoiceId.value)) {
     selectedVoiceId.value = "";
     persistPrefs();
   }
+}
+
+/** Load the catalog once per app session so chat and settings share one request. */
+export function loadVoiceCatalog(refresh = false): Promise<boolean> {
+  if (!refresh && voiceCatalogLoaded.value) return Promise.resolve(voiceEnabled.value);
+  if (catalogRequest) return catalogRequest;
+
+  voiceCatalogLoading.value = true;
+  catalogRequest = api
+    .getVoiceCatalog(refresh)
+    .then((payload: VoiceCatalogResponse) => {
+      setVoiceCatalog(payload);
+      return payload.enabled;
+    })
+    .finally(() => {
+      voiceCatalogLoading.value = false;
+      catalogRequest = null;
+    });
+  return catalogRequest;
+}
+
+export function clearVoiceCatalog(): void {
+  voiceEnabled.value = false;
+  voiceModels.value = [];
+  voices.value = [];
+  defaultVoiceId.value = "";
+  voiceCatalogLoaded.value = false;
 }
 
 export function activeVoiceId(): string {

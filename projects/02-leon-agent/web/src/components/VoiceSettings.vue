@@ -1,21 +1,21 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ApiError, api } from "../api/client";
+import { ApiError } from "../api/client";
 import {
   activeVoice,
   autoplayAll,
   defaultVoiceId,
   isFavoriteVoice,
+  loadVoiceCatalog,
   selectVoice,
   setAutoplayAll,
-  setVoiceCatalog,
+  voiceCatalogLoaded,
   toggleFavoriteVoice,
   voiceEnabled,
   voices,
 } from "../stores/voice";
 
 const loading = ref(false);
-const catalogLoaded = ref(false);
 const search = ref("");
 const status = ref("");
 const statusTone = ref<"neutral" | "error">("neutral");
@@ -39,15 +39,20 @@ const visibleVoices = computed(() => {
 const active = computed(() => activeVoice());
 
 async function loadCatalog(refresh = false): Promise<void> {
-  if (loading.value || (catalogLoaded.value && !refresh)) return;
+  if (loading.value) return;
+  if (voiceCatalogLoaded.value && !refresh) {
+    statusTone.value = "neutral";
+    status.value = voiceEnabled.value
+      ? `共 ${voices.value.length} 个音色，搜索名称或模型；★ 可收藏`
+      : "未配置 VOLINK_API_KEY，语音功能已关闭";
+    return;
+  }
   loading.value = true;
   status.value = refresh ? "正在刷新音色目录…" : "正在加载音色目录…";
   statusTone.value = "neutral";
   try {
-    const payload = await api.getVoiceCatalog(refresh);
-    setVoiceCatalog(payload);
-    catalogLoaded.value = true;
-    status.value = payload.enabled
+    await loadVoiceCatalog(refresh);
+    status.value = voiceEnabled.value
       ? `共 ${voices.value.length} 个音色，搜索名称或模型；★ 可收藏`
       : "未配置 VOLINK_API_KEY，语音功能已关闭";
   } catch (error) {
