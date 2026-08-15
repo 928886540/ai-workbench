@@ -206,7 +206,7 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .error-card-header{font-weight:600;font-size:14px;color:var(--red)}
 .error-card-msg{font-size:13px;color:#7a2020;word-break:break-word;white-space:pre-wrap}
 .error-retry-btn{align-self:flex-start;background:var(--red);color:#fff;border:none;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer}
-.image-placeholder{align-self:flex-start;width:min(260px,80%);border-radius:14px;overflow:hidden;border:1.5px solid var(--border);background:var(--surface)}
+.bubble-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--text2)}.image-placeholder{align-self:flex-start;width:min(260px,80%);border-radius:14px;overflow:hidden;border:1.5px solid var(--border);background:var(--surface)}
 .image-placeholder-inner{width:100%;aspect-ratio:1;background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 .image-placeholder-label{padding:8px 12px;font-size:12px;color:var(--text2);display:flex;align-items:center;gap:6px}
@@ -626,7 +626,7 @@ window.addEventListener('online',()=>{clearTimeout(sseTimer);sseTimer=setTimeout
 const tasks={},images={};
 let currentToolCard=null,currentBubble=null,sending=false;
 let ivTurns=0,ivTools=0;
-const imagePlaceholders={};
+let currentMessageId=null;
 let streamBuffer='',lastUserText='',lastAgentErrorAt=0;
 
 function safeHref(value){
@@ -923,48 +923,107 @@ function hideThinking(){
   if(thinkingEl){thinkingEl.remove();thinkingEl=null}
 }
 
+// ============================================================
+// messages[] single source of truth (W1)
+// ============================================================
+const messages=[],messageIndex=new Map(),imageJobMessages={};
+let messageSeq=0;
+function newMessageId(){messageSeq+=1;return 'm_'+Date.now().toString(36)+'_'+messageSeq}
+function getMessage(id){return id?messageIndex.get(id)||null:null}
+function messageNode(id){return id?$msgs.querySelector('[data-message-id="'+id+'"]'):null}
+function createMessage(init){
+  const msg={id:newMessageId(),kind:'text',role:'agent',text:'',status:'done',images:[],
+    meta:{model:null,startedAt:Date.now(),finishedAt:null,elapsedMs:null,tokensIn:null,tokensOut:null},
+    audio:{state:'idle',url:null},...init};
+  messages.push(msg);messageIndex.set(msg.id,msg);
+  $msgs.appendChild(renderMessage(msg));scrollBottom();return msg;
+}
+function removeMessage(id){
+  const msg=getMessage(id);if(!msg)return;
+  const node=messageNode(id);if(node&&node.isConnected)node.remove();
+  messageIndex.delete(id);
+  const at=messages.indexOf(msg);if(at>=0)messages.splice(at,1);
+}
+function renderMessage(msg){
+  if(msg.kind==='error'||(msg.kind==='image'&&msg.status!=='done')){
+    const node=renderBubbleBody(msg);node.dataset.messageId=msg.id;
+    const errorBar=renderBubbleToolbar(msg);if(errorBar)node.appendChild(errorBar);
+    return node;
+  }
+  const wrap=document.createElement('div');
+  wrap.className='bubble-wrap '+msg.role+(msg.kind==='image'?' image-result':'');
+  wrap.dataset.messageId=msg.id;
+  wrap.appendChild(renderBubbleBody(msg));
+  const bar=renderBubbleToolbar(msg);if(bar)wrap.appendChild(bar);
+  return wrap;
+}
+function renderBubbleBody(msg){
+  if(msg.kind==='error'){
+    const card=document.createElement('div');card.className='error-card';
+    card.innerHTML=`<div class="error-card-header">请求失败</div><div class="error-card-msg">${esc(msg.text)}</div>`;
+    return card;
+  }
+  if(msg.kind==='image'&&msg.status!=='done'){
+    const holder=document.createElement('div');holder.className='image-placeholder';
+    holder.innerHTML=`<div class="image-placeholder-inner"></div><div class="image-placeholder-label"><div class="spinner"></div><span>正在生成图片…</span><span class="status-badge ${esc(msg.status)}">${esc(msg.status)}</span></div>`;
+    return holder;
+  }
+  const bubble=document.createElement('div');
+  bubble.className='bubble '+msg.role+(msg.status==='streaming'?' streaming':'');
+  if(msg.kind==='image')bubble.innerHTML=msg.images.map(href=>renderMd(`![生成图片](${href})`)).join('');
+  else if(msg.role==='agent'&&msg.status!=='streaming')bubble.innerHTML=renderMd(msg.text);
+  else bubble.textContent=msg.text;
+  return bubble;
+}
+function renderBubbleToolbar(msg){
+  // W2 adds 复制 / 重试 / 耗时 here; W1 only moves the existing error retry in.
+  if(msg.kind!=='error')return null;
+  const bar=document.createElement('div');bar.className='bubble-toolbar';
+  const retry=document.createElement('button');
+  retry.type='button';retry.className='error-retry-btn';retry.textContent='重试';
+  retry.addEventListener('click',()=>{
+    if(lastUserText){$input.value=lastUserText;updateComposerState();$input.focus()}
+  });
+  bar.appendChild(retry);return bar;
+}
+function patchMessage(id){
+  const msg=getMessage(id),node=messageNode(id);if(!msg||!node)return null;
+  const next=renderMessage(msg),loaded=new Map();
+  // Reuse already decoded <img> nodes so a status patch never restarts a download.
+  node.querySelectorAll('img').forEach(img=>{if(img.complete&&!loaded.has(img.src))loaded.set(img.src,img)});
+  next.querySelectorAll('img').forEach(img=>{const old=loaded.get(img.src);if(old)img.replaceWith(old)});
+  node.replaceWith(next);return next;
+}
+
 function addImageSkeleton(jobId){
-  const el=document.createElement('div');el.className='image-placeholder';
-  el.innerHTML='<div class="image-placeholder-inner"></div><div class="image-placeholder-label"><div class="spinner"></div><span>正在生成图片…</span><span class="status-badge queued">queued</span></div>';
-  $msgs.appendChild(el);imagePlaceholders[jobId]=el;scrollBottom();
+  const msg=createMessage({kind:'image',status:'queued'});
+  imageJobMessages[jobId]=msg.id;return msg;
 }
 function updateSkeletonBadge(jobId,status){
-  const el=imagePlaceholders[jobId];const badge=el&&el.querySelector('.status-badge');
-  if(badge){badge.className='status-badge '+status;badge.textContent=status}
-}
-function createImageResult(url){
-  const wrap=document.createElement('div');wrap.className='bubble-wrap agent image-result';
-  const bubble=document.createElement('div');bubble.className='bubble agent';
-  bubble.innerHTML=renderMd(`![生成图片](${url})`);wrap.appendChild(bubble);return wrap;
+  const msg=getMessage(imageJobMessages[jobId]);if(!msg||!status)return;
+  msg.status=status;patchMessage(msg.id);
 }
 function replaceSkeletonWithImage(jobId,url){
   const href=safeHref(url);if(!href)return;
-  const placeholder=imagePlaceholders[jobId];const preload=new Image();let settled=false;
+  const preload=new Image();let settled=false;
   // The skeleton was appended when the job was created, so by now the agent reply
-  // and tool cards usually sit below it. Drop it and append the image as a fresh
-  // bubble at the bottom instead of swapping it in mid-conversation.
+  // and tool cards usually sit below it. Drop that message and append the image as
+  // a fresh bubble at the bottom instead of swapping it in mid-conversation.
   const show=()=>{
     if(settled)return;settled=true;
-    if(placeholder&&placeholder.isConnected)placeholder.remove();
-    delete imagePlaceholders[jobId];
-    const result=createImageResult(href);
-    $msgs.appendChild(result);
+    removeMessage(imageJobMessages[jobId]);delete imageJobMessages[jobId];
+    const msg=createMessage({kind:'image',status:'done',images:[href]});
     // This is what the user has been waiting for, so jump to it even if they
     // scrolled away, then re-anchor once the <img> reports its real height.
     autoFollowMessages=true;scrollBottom(true);
-    const image=result.querySelector('img');
+    const node=messageNode(msg.id),image=node&&node.querySelector('img');
     if(image&&!image.complete)image.addEventListener('load',()=>scrollBottom(true),{once:true});
     else requestAnimationFrame(()=>scrollBottom(true));
   };
   preload.addEventListener('load',show,{once:true});preload.addEventListener('error',show,{once:true});preload.src=href;
 }
 function addErrorCard(message){
-  const card=document.createElement('div');card.className='error-card';
-  card.innerHTML=`<div class="error-card-header">请求失败</div><div class="error-card-msg">${esc(message)}</div><button class="error-retry-btn">重试</button>`;
-  card.querySelector('.error-retry-btn').addEventListener('click',()=>{
-    if(lastUserText){$input.value=lastUserText;updateComposerState();$input.focus()}
-  });
-  $msgs.appendChild(card);scrollBottom();
+  return createMessage({kind:'error',status:'error',text:message});
 }
 
 // ============================================================
@@ -1028,25 +1087,33 @@ function handleEvent(ev){
       ivTurns++;addTlEntry('user','User Input',esc(ev.data.content||''),ev.timestamp);updateIvStats();break;
 
     case 'assistant.started':
-      showThinking();currentBubble=null;currentToolCard=null;currentIvToolEntry=null;
+      showThinking();currentBubble=null;currentMessageId=null;currentToolCard=null;currentIvToolEntry=null;
       streamBuffer='';twReset();break;
 
     case 'assistant.delta':{
       const delta=ev.data.delta||'';if(!delta)break;
       hideThinking();
-      if(!currentBubble)currentBubble=addBubble('agent','',true);
+      if(!currentBubble){const started=addMessageBubble('agent','',true);currentMessageId=started.msg.id;currentBubble=started.node}
       const bubble=currentBubble.querySelector('.bubble');
+      const streaming=getMessage(currentMessageId);if(streaming)streaming.text+=delta;
       streamBuffer+=delta;twEnqueue(delta,bubble);break;
     }
 
     case 'assistant.completed':{
       const content=ev.data.content||'';
       hideThinking();
-      if(!currentBubble)currentBubble=addBubble('agent','',true);
+      if(!currentBubble){const started=addMessageBubble('agent','',true);currentMessageId=started.msg.id;currentBubble=started.node}
       const bubble=currentBubble.querySelector('.bubble');
       if(!streamBuffer&&content)twEnqueue(content,bubble);
       twComplete(content||streamBuffer,bubble);
-      currentBubble=null;
+      const finished=getMessage(currentMessageId);
+      if(finished){
+        finished.text=content||streamBuffer;finished.status='done';
+        finished.meta.model=ev.data.model||finished.meta.model;
+        finished.meta.finishedAt=Date.now();
+        finished.meta.elapsedMs=finished.meta.finishedAt-finished.meta.startedAt;
+      }
+      currentBubble=null;currentMessageId=null;
       if(content)addTlEntry('agent','Agent Response',esc(content),ev.timestamp);
       break;
     }
@@ -1099,7 +1166,7 @@ function handleEvent(ev){
     case 'agent.error':{
       const msg=ev.data.error||'Unknown error';
       hideThinking();twReset();lastAgentErrorAt=Date.now();
-      if(currentBubble){currentBubble.remove();currentBubble=null}
+      if(currentBubble){removeMessage(currentMessageId);currentBubble=null;currentMessageId=null}
       addErrorCard(msg);addTlEntry('error','Error',esc(msg),ev.timestamp);
       break;
     }
@@ -1110,10 +1177,11 @@ function handleEvent(ev){
 const $msgs=document.getElementById('chat-messages');
 let autoFollowMessages=true;
 function addBubble(role,text,streaming){
-  const w=document.createElement('div');w.className='bubble-wrap '+role;
-  const b=document.createElement('div');b.className='bubble '+role+(streaming?' streaming':'');
-  if(role==='agent'&&!streaming)b.innerHTML=renderMd(text);else b.textContent=text;
-  w.appendChild(b);$msgs.appendChild(w);scrollBottom();return w;
+  return addMessageBubble(role,text,streaming).node;
+}
+function addMessageBubble(role,text,streaming){
+  const msg=createMessage({role,text,status:streaming?'streaming':'done'});
+  return {msg,node:messageNode(msg.id)};
 }
 function addToolCard(name,state,inputData){
   const c=document.createElement('div');c.className='tool-card';
@@ -1299,7 +1367,7 @@ async function ensureSession(){
   return {session_id:sessionId,messages:[]};
 }
 function renderHistory(messages){
-  if($msgs.children.length)return;
+  if(messages.length)return;
   (messages||[]).forEach(message=>{
     if(message.role==='user'||message.role==='assistant')addBubble(message.role==='assistant'?'agent':'user',message.content||'',false);
   });
@@ -1315,7 +1383,7 @@ async function init(){
 }
 
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=12',{scope:'/',updateViaCache:'none'})
+  navigator.serviceWorker.register('/sw.js?v=13',{scope:'/',updateViaCache:'none'})
     .then(registration=>registration.update()).catch(()=>{});
 }
 if(token){hideLogin();init()}

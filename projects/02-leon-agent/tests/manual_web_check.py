@@ -262,6 +262,56 @@ with sync_playwright() as p:
         f"y={pan['after']:.1f} 上限={pan['maxY']:.1f}",
     )
 
+    # ---------------- W1: the streaming turn must stay in sync with messages[] ----------------
+    page.evaluate("() => closeImageViewer()")
+    page.wait_for_selector("#image-viewer[hidden]", state="attached", timeout=5000)
+    page.click('.nav-item[data-page="chat"]')
+    stream = page.evaluate(
+        """() => {
+        $msgs.innerHTML='';messages.length=0;messageIndex.clear();
+        handleEvent({event:'assistant.started',data:{}});
+        handleEvent({event:'assistant.delta',data:{delta:'你好'}});
+        handleEvent({event:'assistant.delta',data:{delta:'，世界'}});
+        handleEvent({event:'assistant.completed',data:{content:'你好，世界'}});
+        const last=messages[messages.length-1];
+        return {
+          count: messages.length,
+          text: last && last.text,
+          status: last && last.status,
+          indexed: messageIndex.size,
+          hasNode: !!messageNode(last && last.id),
+          cleared: currentMessageId,
+          elapsed: last && last.meta && typeof last.meta.elapsedMs === 'number',
+        };
+      }"""
+    )
+    check("流式回复只产生一条消息", stream["count"] == 1, f"messages 长度={stream['count']}")
+    check("消息文本落库为完整内容", stream["text"] == "你好，世界", repr(stream["text"]))
+    check("完成后状态置为 done", stream["status"] == "done", stream["status"])
+    check("消息在 DOM 中有对应节点", stream["hasNode"])
+    check("完成后 currentMessageId 归位", stream["cleared"] is None)
+    check("耗时元数据已记录", stream["elapsed"])
+
+    err = page.evaluate(
+        """() => {
+        $msgs.innerHTML='';messages.length=0;messageIndex.clear();
+        handleEvent({event:'assistant.started',data:{}});
+        handleEvent({event:'assistant.delta',data:{delta:'写到一半'}});
+        handleEvent({event:'agent.error',data:{error:'boom'}});
+        return {
+          kinds: messages.map(m=>m.kind),
+          partialGone: !messages.some(m=>m.text==='写到一半'),
+          errorCards: $msgs.querySelectorAll('.error-card').length,
+          retryButtons: $msgs.querySelectorAll('.bubble-toolbar .error-retry-btn').length,
+          cleared: currentMessageId,
+        };
+      }"""
+    )
+    check("出错时半截气泡被移除", err["partialGone"], f"kinds={err['kinds']}")
+    check("错误卡片渲染出来", err["errorCards"] == 1)
+    check("重试按钮进了新的 bubble-toolbar", err["retryButtons"] == 1)
+    check("出错后 currentMessageId 归位", err["cleared"] is None)
+
     real_errors = [
         e for e in errors if "favicon" not in e.lower() and "404" not in e
     ]
