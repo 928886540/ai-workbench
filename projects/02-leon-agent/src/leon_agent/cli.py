@@ -927,6 +927,9 @@ class LeonConsole:
             )
             self._check_active_turn()
             return True
+        if message.casefold() == "/nsfw" or message.casefold().startswith("/nsfw "):
+            self.process(message)
+            return True
         if message.startswith("/"):
             self.print(
                 f"[yellow]未知命令：{message.split(maxsplit=1)[0]}[/yellow] · "

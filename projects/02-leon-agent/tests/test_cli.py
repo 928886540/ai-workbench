@@ -375,3 +375,12 @@ def test_terminal_ui_ctrl_c_cancels_current_worker_and_ctrl_q_waits_for_exit(
     assert not worker.is_alive()
     assert ui.busy is False
     assert fake_app.exited is True
+
+
+def test_interactive_nsfw_command_is_not_treated_as_unknown_slash_command() -> None:
+    calls = []
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.process = lambda message: calls.append(message)  # type: ignore[method-assign]
+
+    assert cli.handle_interactive_message("/NSFW 原样描述") is True
+    assert calls == ["/NSFW 原样描述"]
