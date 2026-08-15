@@ -41,6 +41,10 @@ class LeonSettings(BaseSettings):
     http_timeout_seconds: float = Field(default=30.0, alias="LEON_HTTP_TIMEOUT_SECONDS")
     bridge_timeout_seconds: float = Field(default=20.0, alias="LEON_BRIDGE_TIMEOUT_SECONDS")
     api_token: SecretStr | None = Field(default=None, alias="LEON_API_TOKEN")
+    system_prompt_file: Path | None = Field(
+        default=None,
+        alias="LEON_SYSTEM_PROMPT_FILE",
+    )
 
     # Volink TTS. The key stays server-side: audio is proxied so the browser
     # never sees it.
@@ -80,6 +84,28 @@ class LeonSettings(BaseSettings):
     def active_public_image_base_url(self) -> str:
         """Base URL used to build image links the user can actually open."""
         return self.public_image_base_url or self.backend_url
+
+    def read_additional_system_prompt(self) -> str | None:
+        """Read the optional UTF-8 text appended to Leon's system prompt."""
+        if self.system_prompt_file is None:
+            return None
+        path = self.system_prompt_file.expanduser()
+        if not path.is_absolute():
+            path = REPO_ROOT / path
+        path = path.resolve()
+        if not path.is_file():
+            raise ValueError(f"LEON_SYSTEM_PROMPT_FILE is not a file: {path}")
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f"LEON_SYSTEM_PROMPT_FILE must be UTF-8 encoded: {path}"
+            ) from exc
+        except OSError as exc:
+            raise ValueError(f"Cannot read LEON_SYSTEM_PROMPT_FILE: {path}") from exc
+        if not content:
+            raise ValueError(f"LEON_SYSTEM_PROMPT_FILE is empty: {path}")
+        return content
 
     @property
     def default_mode_ids(self) -> list[str]:

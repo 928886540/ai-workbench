@@ -49,6 +49,13 @@ Rules:
 """.strip()
 
 
+def build_system_prompt(additional_system_prompt: str | None = None) -> str:
+    """Append user-managed instructions as part of the system message."""
+    if not additional_system_prompt:
+        return SYSTEM_PROMPT
+    return f"{SYSTEM_PROMPT}\n\n{additional_system_prompt.strip()}"
+
+
 class LeonAgent:
     def __init__(
         self,
@@ -62,6 +69,7 @@ class LeonAgent:
         wait_for_image_completion: bool = True,
         on_generation_submitted: Callable[[dict[str, Any]], None] | None = None,
         speak_handler: Callable[[str, str | None], dict[str, Any]] | None = None,
+        additional_system_prompt: str | None = None,
     ) -> None:
         tools = create_leon_tools(
             image_client,
@@ -74,7 +82,7 @@ class LeonAgent:
         self.runtime = AgentRuntime(
             client=llm_client,
             tools=tools,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=build_system_prompt(additional_system_prompt),
             max_turns=max_turns,
             temperature=0.2,
             on_event=on_event,

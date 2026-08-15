@@ -23,6 +23,9 @@ Never commit `.env`, API tokens, SQLite databases, generated images, caches, or 
 - Gateway: `src/leon_agent/gateway/app.py`
 - Web client: `src/leon_agent/web/index.html`
 - Service Worker: `src/leon_agent/web/sw.js`
+- Leon runtime config: `src/leon_agent/config.py`
+- Agent system prompt composition: `src/leon_agent/agent.py`
+- Volink TTS client: `src/leon_agent/voice_client.py`
 - LLM transport: `packages/workbench_core/src/workbench_core/llm.py`
 - Session persistence: `src/leon_agent/session.py`
 - Model helpers: `src/leon_agent/models.py`
@@ -38,6 +41,15 @@ The read-only global latest-image backend lives in the separate ComfyUI reposito
 
 There must be only one Web client source. Do not recreate `projects/02-leon-agent/web/`; the
 FastAPI server only serves `src/leon_agent/web/`.
+
+## Additional System Prompt Contract
+
+- `LEON_SYSTEM_PROMPT_FILE` optionally points to a UTF-8 text file whose content is appended to the
+  built-in Leon system prompt for both CLI and Web requests.
+- Relative paths resolve from the repository root.
+- Missing, non-file, non-UTF-8, and empty values fail clearly; do not silently ignore them.
+- Keep local prompt files under the gitignored `data/system-prompts/` directory. Never commit the
+  prompt content or the real `.env` path selection.
 
 ## Model Selection Contract
 
@@ -71,6 +83,7 @@ The Gateway publishes these SSE events:
 - `image.task.created`
 - `image.task.updated`
 - `image.completed`
+- `voice.ready`
 - `agent.error`
 
 SSE currently transports lifecycle events and final answers. It does not yet provide true LLM token
@@ -87,9 +100,9 @@ while the user types `--model`.
 Normal LLM-routed generation and `/nsfw` share the same completion tracker. When the task endpoint
 already has the final image URL, it emits `image.completed` immediately; the gallery endpoint is only
 a fallback. The tracker persists the image Markdown separately, then asks the session-pinned LLM for
-a short natural completion note and emits that text through `assistant.notice`. The Web client keeps
-the Skeleton until the image resource itself loads, replaces it in place, and never waits for the LLM
-note before showing the image.
+a short natural completion note and emits that text through `assistant.notice`. The tool card is the
+only running indicator: there is no image skeleton bubble. A completed image is appended as a new
+bottom bubble and auto-scrolled into view without waiting for the LLM note.
 
 Web refresh state is not reconstructed from SSE memory. The client loads
 `GET /api/agent/sessions/{session_id}/image-state`, which merges the current Leon task sync and
@@ -104,6 +117,19 @@ non-empty `final_image_url` across the whole Leon image database, without a `cha
 expand it into global search/delete APIs. Normalize every `final_image_url` into an absolute public
 `image_url` before returning it to the LLM.
 
+## Voice Contract
+
+- Secrets stay server-side through `VOLINK_API_KEY`; the browser never calls Volink directly.
+- `GET /api/voice/catalog` returns four TTS models and the paginated voice catalog. The upstream
+  request must include `lang=zh-CN`, otherwise Chinese names such as `风韵少妇` become unsearchable
+  English labels.
+- `POST /api/agent/tts` accepts `text` plus optional `voice_id` and returns `audio/mpeg` directly.
+- Agent-initiated `speak_text` stores a short-lived clip, publishes `voice.ready`, and serves it from
+  `GET /api/voice/clips/{clip_id}`.
+- Voice IDs are 24-character IDs, not display names, and each voice is bound to its catalog model.
+- The Web client uses one reusable audio element. A blocked iOS autoplay attempt keeps the pending
+  audio URL and callback until the user taps the visible unlock button; do not revoke it early.
+
 ## UX State
 
 Merged from `feat/leon-ux-polish`:
@@ -111,10 +137,11 @@ Merged from `feat/leon-ux-polish`:
 - Thinking timer while the Agent request is running
 - Progressive answer rendering and safe local Markdown rendering
 - Collapsible tool input/output cards
-- Image generation skeleton replaced by the completed image
+- Image progress stays in the tool card; completed images append as new bottom bubbles
 - Markdown image syntax and plain ComfyUI image URLs render clickable images inside the assistant
   bubble; clicking opens the current-page full-screen viewer
-- Full-screen viewer supports pinch zoom, drag-to-pan, mouse wheel, and visible `+/-` controls
+- Full-screen viewer supports album navigation, pinch/double-click focal zoom, drag-to-pan, and mouse
+  wheel; the redundant visible zoom controls were removed
 - Chat history, image tasks, and gallery are restored after a page refresh
 - The chat message area remains touch-scrollable and stops auto-following when the user scrolls up
 - Mobile keyboard layout relies on `interactive-widget=resizes-content` and `100dvh`; do not add a
@@ -122,7 +149,11 @@ Merged from `feat/leon-ux-polish`:
   blank bottom area and pushes the composer too far upward
 - Chat and gallery images open in the current-page full-screen viewer, not a new tab/download page
 - Typing `/nsfw --model` opens a selectable mode menu above the composer
-- Error card with retry-to-composer behavior
+- Assistant bubbles support copy, real retry, local edit, and TTS playback; edited text is used by TTS
+- TTS strips Markdown images and raw URLs, shows loading then animated level bars, and restores the
+  normal playback icon on completion
+- Model candidates open on focus/input and collapse after a successful save
+- Error cards retry the matching previous user message directly
 - CLI image-generation progress indicator
 
 Deliberately excluded:
@@ -151,7 +182,12 @@ For Web changes also verify a mobile viewport with a real browser:
 - settings fetch models from the current `base_url`
 - a case-sensitive custom model ID is saved unchanged
 - SSE connects without duplicate error cards
-- generated-image skeleton is replaced by the real image
+- completed images append at the bottom without a skeleton bubble
+- bubble copy/retry/edit/TTS actions work after rerendering
+- TTS shows loading/playing/idle states and preserves blocked iOS audio until unlock
+
+Current baseline on 2026-08-15: `94 passed`, Ruff clean, and
+`tests/manual_web_check.py` `45/45` with system Chrome at `390x844` touch viewport.
 
 ## Handoff Format
 

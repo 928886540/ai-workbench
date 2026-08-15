@@ -1,8 +1,12 @@
 # Web 客户端演进评估：是否迁 Vue3、聊天化改造、气泡工具栏、语音接入
 
-> 状态：设计草案（2026-08-15）
+> 状态：历史设计 + 实施状态（2026-08-15）
 > 关联提交：`3aab43a fix(leon-web): 图片查看器改为可缩放相册，完成后新气泡回图`
-> 唯一 Web 源文件：`src/leon_agent/web/index.html`（约 68KB 单文件，无构建步骤）
+> 唯一 Web 源文件：`src/leon_agent/web/index.html`（约 90KB 单文件，无构建步骤）
+>
+> 当前实施：W1、W2 与 TTS 已完成；助手气泡支持复制 / 真重试 / 编辑 / 朗读，Volink
+> 提供 4 个模型和 561 个中文音色，SW 为 v15。ASR 与 tokens 上屏尚未实现。用户随后决定
+> 后续迁 Vue 3 + Vite，因此本文件中“暂不迁 Vue3”仅保留为当时的评估背景。
 
 ---
 
@@ -10,10 +14,10 @@
 
 | 议题 | 结论 |
 | --- | --- |
-| 现在迁 Vue3？ | **不迁**。先在原生里做完聊天化改造，顺手把组件边界画出来，等消息状态机稳定再一次性迁。 |
+| 现在迁 Vue3？ | **后续迁移**。W1/W2 先在原生实现并稳定消息状态机，再按组件边界迁 Vue 3 + Vite。 |
 | 界面聊天化？ | **做**，优先级最高。纯前端改动，不动网关协议。 |
-| 气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）？ | **做**。需要网关补少量元数据字段。 |
-| 语音？ | **先预留接口**。播放态、按钮、错误态先做完，真实 API 到位后只换一个适配层。 |
+| 气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）？ | **部分完成**。复制、真重试、编辑、朗读和前端耗时已完成；tokens 待后端 usage。 |
+| 语音？ | **TTS 已完成，ASR 待做**。Volink 密钥仅在网关，前端已有完整播放状态与 iOS 解锁。 |
 
 ---
 
@@ -142,9 +146,9 @@ assert "/sw.js?v=12" in html
 
 ---
 
-## 5. 语音接入（预留层）
+## 5. 语音接入（TTS 已完成，ASR 预留）
 
-先把接口面定下来，API 到位后只改一个文件。
+TTS 已按网关代理方案落地；ASR 仍按下述边界预留。
 
 ### 5.1 输出（TTS，朗读）
 
@@ -152,11 +156,12 @@ assert "/sw.js?v=12" in html
 
 ```
 POST /api/agent/tts
-{ "text": "...", "voice": "default" }
--> { "url": "https://.../xxx.mp3" }   或直接返回 audio 流
+{ "text": "...", "voice_id": "689334e84d3396ad1d28ee9e" }
+-> 200 audio/mpeg
 ```
 
-前端：`msg.audio.state` 驱动按钮（idle / loading / playing）；**全局单例播放**，开新的先停旧的；音频 URL 缓存在消息上，重复点不重复请求。
+目录由 `GET /api/voice/catalog` 提供。前端按钮覆盖 idle / loading / playing，使用**全局单例播放**；
+iOS Chrome 拒绝自动播放时保留待播 URL，用户点击解锁按钮后继续播放。
 
 ### 5.2 输入（ASR，语音发消息）
 
@@ -171,9 +176,10 @@ POST /api/agent/asr   (multipart: audio 文件)
 
 | 变量 | 用途 |
 | --- | --- |
-| `LEON_TTS_BASE_URL` / `LEON_TTS_TOKEN` | 语音合成服务 |
+| `VOLINK_API_KEY` / `VOLINK_BASE_URL` | Volink 语音合成服务 |
+| `VOLINK_DEFAULT_VOICE_ID` | 默认 24 位音色 ID |
 | `LEON_ASR_BASE_URL` / `LEON_ASR_TOKEN` | 语音转写服务 |
-| 未配置时 | 端点返 501，前端隐藏朗读 / 麦克风按钮 |
+| 未配置 Volink 时 | TTS 目录返回 disabled，前端隐藏朗读能力 |
 
 ---
 
@@ -192,11 +198,11 @@ POST /api/agent/asr   (multipart: audio 文件)
 
 | 阶段 | 内容 | 依赖 |
 | --- | --- | --- |
-| **W1** | `messages[]` + `renderMessage` 重构，行为不变 | 无 |
-| **W2** | 气泡工具栏：复制 / 重试 / 耗时（前端自算） | W1 |
+| **W1** | `messages[]` + `renderMessage` 重构，行为不变（已完成） | 无 |
+| **W2** | 气泡工具栏：复制 / 真重试 / 编辑 / 朗读 / 耗时（已完成） | W1 |
 | **W3** | 聊天化视觉 + CSS 变量主题 | W1 |
 | **W4** | 网关补 `model` / `elapsed_ms` / `usage`，tokens 上屏 | W2 |
-| **W5** | 语音：TTS 朗读 → ASR 输入 | 等你给 API |
+| **W5** | 语音：TTS 朗读（已完成）→ ASR 输入（待做） | ASR API |
 | **W6** | 重评 Vue3（按第 2.4 节触发条件） | W1-W5 |
 
 每个阶段单独一个 commit，`test_gateway.py` 同步补断言，`sw.js` 缓存版本号递增。
@@ -209,4 +215,4 @@ POST /api/agent/asr   (multipart: audio 文件)
 2. IDEA 的缓存可能比磁盘旧（本次已踩到）：改 `index.html` 前先用磁盘读确认。
 3. `manual_web_check.py` 是手工 Playwright 脚本，不进 CI；不要让它假装自动测试。
 4. Service Worker 缓存：每次前端改动必须同时改 `sw.js` 版本和注册 `?v=`，否则手机拿旧缓存。
-5. Cloudflare 还没给 `/api/agent/*/events` 加 Cache Bypass Rule，语音和流式上线前必须先解决。
+5. Cloudflare 仍需确认 `/api/agent/*/events` 的 Cache Bypass Rule，避免公网 SSE 被缓存或缓冲。

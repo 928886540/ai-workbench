@@ -10,7 +10,7 @@
 - `leon-server`：FastAPI Gateway + SSE + 手机 PWA Web Client
 - 普通问题直接聊天，不调用工具
 - 明确生图请求优先路由工具，用户原话作为 `source_text` 透传，不由 Agent 扩写 Prompt
-- 6 个 Leon 生图工具：模式、环境、自助生成、任务、会话图库、全局最近图片（数量可调）
+- 7 个 Leon 生图工具：模式、环境、自助生成、任务、取消任务、会话图库、全局最近图片（数量可调）
 - SQLite 持久化会话、消息、tool call、`generationPlanId` 和 `jobId`
 - 复用 `leon-image` 的 `executor-core.js + executor-assets.js`
 - 调用现有 `/ios/*` HTTP 接口，不复制 Prompt、Workflow 或 LoRA 配置
@@ -19,6 +19,10 @@
 - Web 全屏图片查看器是可缩放相册：左右切换、计数、滑动翻页、双指 / 双击定点缩放、平移夹在真实图片边界内
 - 生图完成后丢弃骨架屏，在聊天底部追加一条新图片气泡并自动跟随到底
 - 模型选择改为可点击列表（不再依赖手机浏览器不友好的 `<datalist>`）
+- Volink TTS 已接入：4 个模型 / 561 个中文音色，支持搜索、收藏、试听、手动朗读与自动朗读
+- 助手气泡支持复制、重试、编辑和朗读；编辑后的文字会成为后续朗读内容
+- iOS 有声播放使用单例播放器 + 用户手势解锁，被拦截时保留待播音频并显示开启按钮
+- 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读
 [AI 协作状态](docs/AI-COLLABORATION.md)，其中记录唯一源码路径、事件协议、模型选择契约和交接格式。
@@ -109,6 +113,7 @@ uv tool install --editable .\projects\02-leon-agent `
 | `LEON_DEFAULT_IMAGE_MODES` | `k2_tifa_plus` | 未指定模式时的默认值，逗号分隔 |
 | `LEON_SESSION_DB` | `data/leon-agent.db` | 本地会话数据库 |
 | `LEON_API_TOKEN` | 空 | Web Gateway 鉴权 token；公网暴露时必须设置 |
+| `LEON_SYSTEM_PROMPT_FILE` | 空 | 可选 UTF-8 TXT；内容原样追加到 Agent system prompt，相对路径从仓库根目录解析 |
 
 后端返回的图片可能是 `/view?filename=...` 这类相对路径。工具层会把它拼成
 `LEON_PUBLIC_IMAGE_BASE_URL`（未配置时用 `LEON_BACKEND_URL`）下的绝对地址，已经是
@@ -142,12 +147,12 @@ Web Gateway 提交生图任务后立即通过 SSE 推送 job id，并在后台�
 
 架构与接口边界见 [Mobile Web 架构](docs/mobile-web-architecture.md)。
 
-Web 客户端只有一份源文件 `src/leon_agent/web/index.html`（无构建步骤），`tests/test_gateway.py` 直接对服务端返回的 HTML 做字符串断言。每次前端改动需同步递增`sw.js` 的缓存名与注册 `?v=` 版本号，否则手机会命中旧缓存。下一阶段的聊天化改造、气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）、语音接入，以及是否迁 Vue3 的结论见
+Web 客户端只有一份源文件 `src/leon_agent/web/index.html`（无构建步骤），`tests/test_gateway.py` 直接对服务端返回的 HTML 做字符串断言。每次前端改动需同步递增 `sw.js` 的缓存名与注册 `?v=` 版本号，否则手机会命中旧缓存。后续 Vue3 迁移的结论见
 [Web 客户端演进评估](docs/web-client-evolution.md)。
 
 ## 后续路线
 
-Web 前端演进（聊天化 UI、气泡工具栏、语音、Vue3 迁移时机）见
+Web 前端下一阶段的 Vue3 迁移与组件拆分见
 [Web 客户端演进评估](docs/web-client-evolution.md)。
 
 已记录三条扩展需求：面试 MCP、Telegram Bot、Tavo 互通。详细边界与实施顺序见

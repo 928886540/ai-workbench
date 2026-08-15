@@ -144,7 +144,7 @@ def test_web_client_supports_markdown_images_and_touch_scrolling(client):
     assert 'id="image-viewer"' in html
     assert "openImageViewer" in html
     assert "viewerPointers" in html
-    assert "image-viewer-zoom-in" in html
+    assert "image-viewer-zoom-in" not in html
     assert "replaceSkeletonWithImage" in html
     assert 'id="mode-suggestions"' in html
     assert "/api/image-modes" in html
@@ -159,7 +159,7 @@ def test_web_client_supports_markdown_images_and_touch_scrolling(client):
     assert "$input.addEventListener('focus'" not in html
     assert "height:100dvh" in html
     assert "font-size:16px" in html
-    assert "/sw.js?v=14" in html
+    assert "/sw.js?v=15" in html
 
 
 def test_web_client_image_viewer_is_a_zoomable_album(client):
@@ -188,7 +188,9 @@ def test_web_client_appends_finished_image_as_new_bubble(client):
     # The skeleton is dropped and the image is appended at the bottom, instead of
     # being swapped in place halfway up the conversation.
     assert "function replaceSkeletonWithImage(" in html
-    assert "removeMessage(imageJobMessages[jobId]);" in html
+    assert "imageJobMessages" not in html
+    assert "addImageSkeleton" not in html
+    assert "updateSkeletonBadge" not in html
     assert "createMessage({kind:'image',status:'done',images:[href]});" in html
     assert "placeholder.replaceWith" not in html
 
@@ -198,7 +200,7 @@ def test_web_client_renders_every_bubble_from_the_message_store(client):
 
     # W1: one message list is the only source of truth; renderers read from it and
     # patch a single bubble instead of appending straight into the DOM.
-    assert "const messages=[],messageIndex=new Map(),imageJobMessages={};" in html
+    assert "const messages=[],messageIndex=new Map();" in html
     assert "function createMessage(" in html
     assert "function renderMessage(" in html
     assert "function renderBubbleBody(" in html
@@ -210,6 +212,29 @@ def test_web_client_renders_every_bubble_from_the_message_store(client):
     assert "bar.className='bubble-toolbar';" in html
     # The old ad-hoc DOM registry is gone.
     assert "imagePlaceholders" not in html
+
+
+def test_web_client_has_complete_bubble_actions_and_voice_states(client):
+    html = client.get("/").text
+
+    assert "ICON_COPY" in html
+    assert "ICON_RETRY" in html
+    assert "ICON_EDIT" in html
+    assert "function startEditingMessage(" in html
+    assert "function retryMessage(" in html
+    assert "function speakableText(" in html
+    assert "button.innerHTML=ICON_LOADING" in html
+    assert "button.innerHTML=ICON_WAVE" in html
+    assert "pendingVoice={url,onState}" in html
+    assert "playVoice(waiting.url,{onState:waiting.onState})" in html
+
+
+def test_web_client_model_picker_collapses_after_save(client):
+    html = client.get("/").text
+
+    assert "let modelListOpen=false;" in html
+    assert "if(!modelListOpen)return;" in html
+    assert "modelListOpen=false;renderModelList();" in html
 
 
 def test_web_client_model_picker_is_tappable(client):

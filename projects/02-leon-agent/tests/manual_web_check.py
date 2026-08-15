@@ -2,6 +2,7 @@
 
 import os
 import sys
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
@@ -42,6 +43,7 @@ with sync_playwright() as p:
 
     # ---------------- Bug 3: model picker ----------------
     page.click('.nav-item[data-page="settings"]')
+    page.click("#model-input")
     page.wait_for_selector("#model-list .model-option", timeout=30000)
     count = page.locator("#model-list .model-option").count()
     check("设置页模型列表渲染出可点条目", count > 0, f"{count} 个模型")
@@ -69,13 +71,16 @@ with sync_playwright() as p:
         0 < filtered <= count,
         f"{filtered}/{count} 条匹配 {keyword!r}",
     )
+    page.fill("#model-input", val)
+    page.click("#model-save")
+    page.wait_for_function("() => !modelListOpen && !$modelList.children.length")
+    check("保存模型后候选列表收起", page.locator("#model-list .model-option").count() == 0)
 
     # ---------------- Bug 2: finished image becomes a new bottom bubble ----------------
     page.click('.nav-item[data-page="chat"]')
     layout = page.evaluate(
         """([urls]) => {
-        addImageSkeleton('job-x');
-        addBubble('agent','LLM 在骨架屏之后回复的一句话',false);
+        addBubble('agent','LLM 在图片完成前回复的一句话',false);
         return new Promise(resolve => {
           replaceSkeletonWithImage('job-x', urls[0]);
           setTimeout(() => {
@@ -103,8 +108,7 @@ with sync_playwright() as p:
         """([urls]) => {
         $msgs.innerHTML='';
         for(let i=0;i<40;i++) addBubble('agent','填充消息 '+i,false);
-        addImageSkeleton('job-scroll');
-        for(let i=0;i<10;i++) addBubble('agent','骨架屏之后的回复 '+i,false);
+        for(let i=0;i<10;i++) addBubble('agent','图片完成前的回复 '+i,false);
         $msgs.scrollTop=0;
         $msgs.dispatchEvent(new Event('scroll'));
         const away=autoFollowMessages;
@@ -292,6 +296,79 @@ with sync_playwright() as p:
     check("完成后 currentMessageId 归位", stream["cleared"] is None)
     check("耗时元数据已记录", stream["elapsed"])
 
+    # ---------------- Bubble actions + TTS state machine ----------------
+    actions = page.evaluate(
+        """async () => {
+        $msgs.innerHTML='';messages.length=0;messageIndex.clear();
+        const user=createMessage({role:'user',kind:'text',text:'原始问题',status:'done'});
+        const agent=createMessage({role:'agent',kind:'text',text:'旧回答 ![图](https://x/a.png)',status:'done'});
+        messageNode(agent.id).querySelector('[title="编辑"]').click();
+        const editor=messageNode(agent.id).querySelector('.bubble-editor');
+        editor.value='编辑后的回答 ![图](https://x/new.png)';
+        messageNode(agent.id).querySelector('.edit-save').click();
+
+        const oldApi=api,calls=[];
+        api=async(method,path,body)=>{calls.push({method,path,body});return {ok:true}};
+        messageNode(agent.id).querySelector('[title="重试"]').click();
+        await new Promise(resolve=>setTimeout(resolve,0));
+        api=oldApi;
+
+        voiceState.enabled=true;patchMessage(agent.id);
+        const button=messageNode(agent.id).querySelector('.bubble-speak');
+        const oldRequest=requestTts,oldPlay=playVoice;
+        let loading=false,wave=false;
+        requestTts=async()=>{loading=button.innerHTML.includes('spin17');return 'blob:manual-test'};
+        playVoice=async(url,{onState})=>{
+          wave=button.innerHTML.includes('class="wave"');
+          onState('playing');onState('idle');return true;
+        };
+        await autoSpeak(agent);
+        requestTts=oldRequest;playVoice=oldPlay;
+
+        return {
+          edited:agent.text,
+          rendered:messageNode(agent.id).querySelector('.bubble').textContent,
+          spoken:speakableText(agent.text),
+          retry:calls[0]||null,
+          loading,wave,
+          idle:!button.classList.contains('busy')&&!button.innerHTML.includes('wave'),
+          userId:user.id,
+        };
+      }"""
+    )
+    check("编辑后消息 store 立即更新", actions["edited"].startswith("编辑后的回答"))
+    check("编辑后气泡立即重绘", "编辑后的回答" in actions["rendered"])
+    check("朗读文本剔除图片地址", actions["spoken"] == "编辑后的回答", actions["spoken"])
+    check(
+        "重试按钮重新提交对应用户消息",
+        actions["retry"] is not None
+        and actions["retry"]["method"] == "POST"
+        and actions["retry"]["body"]["content"] == "原始问题",
+        repr(actions["retry"]),
+    )
+    check("自动朗读请求期间显示 loading", actions["loading"])
+    check("自动朗读播放期间显示波形", actions["wave"])
+    check("自动朗读结束恢复普通图标", actions["idle"])
+
+    blocked = page.evaluate(
+        """async () => {
+        stopVoice();
+        const oldPlay=voicePlayer.play,states=[];
+        const url=SILENT_MP3;
+        voicePlayer.play=()=>Promise.reject(new DOMException('blocked','NotAllowedError'));
+        await playVoice(url,{onState:state=>states.push(state)});
+        const result={
+          pending:!!pendingVoice&&pendingVoice.url===url,
+          banner:!$audioUnlock.hidden,
+          revokedEarly:states.includes('idle'),
+        };
+        voicePlayer.play=oldPlay;stopVoice();return result;
+      }"""
+    )
+    check("iOS 阻止播放后保留待解锁音频", blocked["pending"])
+    check("iOS 阻止播放后显示解锁按钮", blocked["banner"])
+    check("待解锁音频不会被提前清理", not blocked["revokedEarly"])
+
     err = page.evaluate(
         """() => {
         $msgs.innerHTML='';messages.length=0;messageIndex.clear();
@@ -321,6 +398,9 @@ with sync_playwright() as p:
         not bad_responses,
         "; ".join(sorted(set(bad_responses))[:5]),
     )
+
+    Path(".tmp").mkdir(exist_ok=True)
+    page.screenshot(path=".tmp/leon-web-mobile-v15.png", full_page=True)
 
     browser.close()
 

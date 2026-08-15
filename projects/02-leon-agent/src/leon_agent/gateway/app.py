@@ -67,6 +67,7 @@ _WEB_DIR: Path = Path(__file__).parent.parent / "web"
 async def lifespan(app: FastAPI):
     global _config, _store, _bus_registry, _llm_snapshots
     _config = LeonSettings()
+    _config.read_additional_system_prompt()
     _store = SessionStore(_config.session_db)
     _bus_registry = EventBusRegistry()
     _llm_snapshots = {}
@@ -810,6 +811,7 @@ async def send_message(
             wait_for_image_completion=False,
             on_generation_submitted=on_generation_submitted,
             speak_handler=_session_speak_factory(config, session_id, bus.publish),
+            additional_system_prompt=config.read_additional_system_prompt(),
         )
 
         result = await asyncio.to_thread(agent.run, body.content, history=history)

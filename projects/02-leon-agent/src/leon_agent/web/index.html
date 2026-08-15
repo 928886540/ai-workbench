@@ -124,7 +124,7 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 #image-viewer[hidden]{display:none}
 /* Stage is padded so the image never sits under the chrome at scale 1. */
 #image-viewer-stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
-  padding:calc(60px + env(safe-area-inset-top)) 12px calc(78px + env(safe-area-inset-bottom))}
+  padding:calc(60px + env(safe-area-inset-top)) 12px calc(24px + env(safe-area-inset-bottom))}
 #image-viewer img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;transform-origin:center center;will-change:transform;touch-action:none;user-select:none;-webkit-user-drag:none}
 #image-viewer img.iv-settling{transition:transform .22s cubic-bezier(.22,.61,.36,1)}
 /* The image creates its own stacking context (will-change:transform) and comes
@@ -135,18 +135,10 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .iv-nav{top:50%;margin-top:-22px;width:44px;height:44px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font-size:26px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
 #image-viewer-prev{left:max(10px,env(safe-area-inset-left))}
 #image-viewer-next{right:max(10px,env(safe-area-inset-right))}
-#image-viewer-controls{left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:10px}
-#image-viewer-controls button{width:44px;height:44px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font-size:24px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .iv-chrome[hidden]{display:none}
 
 /* Debug */
 .debug-section{background:var(--surface);border-radius:10px;padding:12px}
-.debug-section h3{font-size:13px;font-weight:600;margin-bottom:8px}
-.debug-section pre{font-family:Menlo,Consolas,monospace;font-size:11px;overflow-x:auto;color:var(--text2);white-space:pre-wrap;word-break:break-all}
-#debug-events{max-height:260px;overflow-y:auto}
-.debug-event{padding:4px 0;border-bottom:1px solid var(--border);font-size:11px;font-family:Menlo,monospace;color:var(--text2)}
-.debug-event:last-child{border-bottom:none}
-.ev-type{color:var(--blue);font-weight:600}
 .debug-btn{margin-top:8px;padding:8px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;width:100%}
 
 /* Settings */
@@ -196,9 +188,28 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .voice-star.on{opacity:1}
 .voice-section-label{padding:7px 12px;font-size:11px;font-weight:600;color:var(--text2);background:var(--surface);border-bottom:1px solid var(--border)}
 /* Voice bubbles + toolbar button */
-.bubble-speak{border:0;background:none;padding:2px 4px;font-size:13px;color:var(--text2);cursor:pointer;line-height:1;border-radius:6px}
-.bubble-speak:active{background:var(--surface2)}
-.bubble-speak.busy{opacity:.5;cursor:default}
+.bubble-toolbar{display:flex;align-items:center;gap:2px;flex-wrap:wrap;margin-top:2px}
+.bubble-act{border:0;background:none;padding:5px;color:var(--text2);cursor:pointer;line-height:0;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;min-width:30px;min-height:30px}
+.bubble-act:active{background:var(--surface2)}
+.bubble-act.ok{color:var(--green)}
+.bubble-act.busy{cursor:default}
+.bubble-act svg{width:17px;height:17px;display:block}
+/* Playing indicator: bars that rise and fall like a level meter. */
+.wave{display:inline-flex;align-items:flex-end;gap:2px;height:17px}
+.wave i{width:2.5px;background:currentColor;border-radius:1px;animation:wavebar .9s ease-in-out infinite}
+.wave i:nth-child(1){height:6px;animation-delay:0s}
+.wave i:nth-child(2){height:13px;animation-delay:.15s}
+.wave i:nth-child(3){height:9px;animation-delay:.3s}
+.wave i:nth-child(4){height:15px;animation-delay:.45s}
+@keyframes wavebar{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+.spin17{width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite}
+.bubble-editor{width:100%;min-height:60px;border:1.5px solid var(--blue);border-radius:12px;padding:8px 11px;font:inherit;font-size:15px;line-height:1.45;resize:vertical;outline:none;background:#fff;color:var(--text)}
+.bubble-edit-actions{display:flex;gap:8px;margin-top:6px}
+.bubble-edit-actions button{border:0;border-radius:8px;padding:5px 13px;font-size:13px;font-weight:600;cursor:pointer}
+.edit-save{background:var(--blue);color:#fff}
+.edit-cancel{background:var(--surface2);color:var(--text2)}
+#audio-unlock{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--nav-h) + 18px + env(safe-area-inset-bottom));z-index:120;background:#1a1a2e;color:#fff;border:0;border-radius:22px;padding:11px 20px;font-size:14px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.28);cursor:pointer;display:flex;align-items:center;gap:8px}
+#audio-unlock[hidden]{display:none}
 .voice-bubble{align-self:flex-start;max-width:min(300px,88%);background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:9px 11px;display:flex;flex-direction:column;gap:6px}
 .voice-bubble audio{width:100%;height:34px}
 .voice-bubble-meta{font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px}
@@ -238,10 +249,6 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
 .error-card-header{font-weight:600;font-size:14px;color:var(--red)}
 .error-card-msg{font-size:13px;color:#7a2020;word-break:break-word;white-space:pre-wrap}
 .error-retry-btn{align-self:flex-start;background:var(--red);color:#fff;border:none;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer}
-.bubble-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--text2)}.image-placeholder{align-self:flex-start;width:min(260px,80%);border-radius:14px;overflow:hidden;border:1.5px solid var(--border);background:var(--surface)}
-.image-placeholder-inner{width:100%;aspect-ratio:1;background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite}
-@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
-.image-placeholder-label{padding:8px 12px;font-size:12px;color:var(--text2);display:flex;align-items:center;gap:6px}
 .image-card,.image-result{animation:fadeIn .35s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
@@ -450,13 +457,7 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
         <div id="voice-status" role="status" style="min-height:18px;margin-top:8px;font-size:12px;color:var(--text2)"></div>
       </div>
       <div class="debug-section">
-        <h3>连接信息</h3>
-        <pre id="debug-info">加载中…</pre>
         <button class="debug-btn" id="logout-btn">🔒 退出登录</button>
-      </div>
-      <div class="debug-section">
-        <h3>SSE Event Stream</h3>
-        <div id="debug-events"></div>
       </div>
     </div>
   </div>
@@ -469,6 +470,8 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
   </nav>
 </div>
 
+<button id="audio-unlock" type="button" hidden>🔈 点击开启语音播放</button>
+
 <div id="image-viewer" role="dialog" aria-modal="true" aria-label="图片预览" hidden>
   <div id="image-viewer-stage">
     <img id="image-viewer-image" alt="图片预览">
@@ -477,11 +480,6 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none;font-family:-appl
   <div id="image-viewer-counter" class="iv-chrome" hidden></div>
   <button id="image-viewer-prev" class="iv-chrome iv-nav" type="button" aria-label="上一张" title="上一张" hidden>‹</button>
   <button id="image-viewer-next" class="iv-chrome iv-nav" type="button" aria-label="下一张" title="下一张" hidden>›</button>
-  <div id="image-viewer-controls" class="iv-chrome">
-    <button id="image-viewer-zoom-out" type="button" aria-label="缩小" title="缩小">−</button>
-    <button id="image-viewer-reset" type="button" aria-label="还原大小" title="还原大小">↺</button>
-    <button id="image-viewer-zoom-in" type="button" aria-label="放大" title="放大">+</button>
-  </div>
 </div>
 
 <!-- TIMELINE OVERLAY -->
@@ -566,7 +564,7 @@ document.querySelectorAll('.nav-item').forEach(btn=>{
     document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+t));
     if(t==='tasks'){renderTasks();loadImageState()}
     if(t==='gallery'){renderGallery();loadImageState()}
-    if(t==='settings'){updateDebugInfo();loadModelSettings();loadVoiceCatalog()}
+    if(t==='settings'){loadModelSettings();loadVoiceCatalog()}
   });
 });
 
@@ -592,9 +590,13 @@ const $modelSave=document.getElementById('model-save');
 const $modelCurrent=document.getElementById('model-current');
 const $modelStatus=document.getElementById('model-status');
 let modelSettingsLoaded=false,modelCatalog=[],modelDefault='';
+let modelListOpen=false;
 function renderModelList(){
   $modelList.replaceChildren();
   if(!modelCatalog.length)return;
+  // The candidate list is a picker, not a permanent panel: it opens while the
+  // user is typing or browsing and collapses once a model is saved.
+  if(!modelListOpen)return;
   const current=$modelInput.value.trim();
   const query=current.toLowerCase();
   const matches=modelCatalog.filter(id=>!query||id.toLowerCase().includes(query));
@@ -648,13 +650,15 @@ async function saveModelSettings(){
     const model=$modelInput.value.trim();
     fillModelSettings(await api('PUT','/api/agent/sessions/'+sessionId+'/model',{model:model||null}));
     $modelStatus.textContent='已保存，下条消息开始使用';
+    modelListOpen=false;renderModelList();
   }catch(err){
     $modelStatus.className='error';$modelStatus.textContent='保存失败：'+err.message;
   }finally{$modelSave.disabled=false}
 }
-$modelInput.addEventListener('input',renderModelList);
+$modelInput.addEventListener('input',()=>{modelListOpen=true;renderModelList()});
+$modelInput.addEventListener('focus',()=>{modelListOpen=true;renderModelList()});
 $modelSave.addEventListener('click',saveModelSettings);
-$modelRefresh.addEventListener('click',()=>loadModelSettings(true));
+$modelRefresh.addEventListener('click',()=>{modelListOpen=true;loadModelSettings(true)});
 
 // SSE
 let sse=null,sseTimer=null;
@@ -791,9 +795,6 @@ function closeImageViewer(){
   ivAlbum=[];ivIndex=0;resetViewerZoom();
 }
 document.getElementById('image-viewer-close').addEventListener('click',closeImageViewer);
-document.getElementById('image-viewer-zoom-in').addEventListener('click',()=>zoomFromCenter(1.35));
-document.getElementById('image-viewer-zoom-out').addEventListener('click',()=>zoomFromCenter(1/1.35));
-document.getElementById('image-viewer-reset').addEventListener('click',resetViewerZoom);
 $ivPrev.addEventListener('click',()=>ivGo(-1));
 $ivNext.addEventListener('click',()=>ivGo(1));
 $imageViewer.addEventListener('click',e=>{if(e.target===$imageViewer||e.target===$ivStage)closeImageViewer()});
@@ -941,9 +942,99 @@ const $voiceRefresh=document.getElementById('voice-refresh');
 const $voiceList=document.getElementById('voice-list');
 const $voiceStatus=document.getElementById('voice-status');
 const $voiceAutoplayAll=document.getElementById('voice-autoplay-all');
+const ICON_COPY='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const ICON_CHECK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const ICON_RETRY='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
+const ICON_SPEAK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>';
+const ICON_EDIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const ICON_WAVE='<span class="wave"><i></i><i></i><i></i><i></i></span>';
+const ICON_LOADING='<span class="spin17"></span>';
+
+// One reusable element: iOS only keeps the unlocked state on the element the
+// user gesture touched, so a fresh `new Audio()` per clip would be blocked again.
+const voicePlayer=document.createElement('audio');
+voicePlayer.playsInline=true;voicePlayer.setAttribute('playsinline','');voicePlayer.preload='auto';
+const SILENT_MP3='data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD/////////////////////////////////////////////AAAAAExhdmM1OC4xMwAAAAAAAAAAAAAAACQCQAAAAAAAAAEg0Jj//8QAAAAAAAAAAAAAAAAAAAAA//sQxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
+let audioUnlocked=false,audioUnlockPromise=null,activeVoice=null,pendingVoice=null;
+async function unlockAudio(){
+  if(audioUnlocked)return true;
+  if(!audioUnlockPromise){
+    audioUnlockPromise=(async()=>{
+      try{
+        voicePlayer.src=SILENT_MP3;
+        await voicePlayer.play();
+        voicePlayer.pause();voicePlayer.currentTime=0;
+        audioUnlocked=true;$audioUnlock.hidden=true;
+      }catch{}
+      return audioUnlocked;
+    })();
+  }
+  try{return await audioUnlockPromise}
+  finally{audioUnlockPromise=null}
+}
+// Any first tap counts as the unlocking gesture, so most users never see the banner.
+document.addEventListener('pointerdown',()=>{unlockAudio()},{once:true,capture:true});
+const $audioUnlock=document.getElementById('audio-unlock');
+$audioUnlock.addEventListener('click',async()=>{
+  await unlockAudio();
+  if(audioUnlocked&&pendingVoice){
+    const waiting=pendingVoice;pendingVoice=null;
+    playVoice(waiting.url,{onState:waiting.onState});
+  }
+});
+async function playVoice(url,{onState}={}){
+  if(activeVoice){
+    const previous=activeVoice;activeVoice=null;voicePlayer.pause();
+    if(previous.onState)previous.onState('idle');
+  }
+  const token={};activeVoice={token,onState};
+  voicePlayer.src=url;
+  const done=()=>{
+    if(activeVoice&&activeVoice.token===token){activeVoice=null;if(onState)onState('idle')}
+  };
+  voicePlayer.onended=done;voicePlayer.onpause=()=>{if(voicePlayer.ended)done()};
+  try{
+    await voicePlayer.play();
+    if(onState)onState('playing');
+    return true;
+  }catch(err){
+    if(activeVoice&&activeVoice.token===token)activeVoice=null;
+    // NotAllowedError == the browser wants a user gesture (iOS Chrome).
+    if(err&&err.name==='NotAllowedError'){
+      if(pendingVoice&&pendingVoice.onState)pendingVoice.onState('idle');
+      pendingVoice={url,onState};$audioUnlock.hidden=false;
+      return false;
+    }
+    if(onState)onState('idle');
+    return false;
+  }
+}
+function stopVoice(){
+  if(pendingVoice){
+    const waiting=pendingVoice;pendingVoice=null;
+    if(waiting.onState)waiting.onState('idle');
+  }
+  if(activeVoice){
+    const current=activeVoice;activeVoice=null;voicePlayer.pause();voicePlayer.currentTime=0;
+    if(current.onState)current.onState('idle');
+  }
+  $audioUnlock.hidden=true;
+}
+// TTS should read the words, not the markdown around them: image links in
+// particular used to be spelled out URL character by character.
+function speakableText(raw){
+  return String(raw||'')
+    .replace(/```[\s\S]*?```/g,' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g,' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g,'$1')
+    .replace(/https?:\/\/\S+/gi,' ')
+    .replace(/[`*_>#|]/g,'')
+    .replace(/\s{2,}/g,' ')
+    .trim();
+}
 const voiceState={enabled:false,models:[],voices:[],voiceId:'',loaded:false};
 let voicePrefs={voiceId:'',favorites:[],autoplayAll:false};
-let currentAudio=null,demoAudio=null;
+let demoAudio=null;
 try{voicePrefs={...voicePrefs,...JSON.parse(localStorage.getItem(VOICE_PREF_KEY)||'{}')}}catch{}
 function saveVoicePrefs(){localStorage.setItem(VOICE_PREF_KEY,JSON.stringify(voicePrefs))}
 function voiceById(id){return voiceState.voices.find(v=>v.id===id)||null}
@@ -954,13 +1045,6 @@ function toggleFavorite(id){
   saveVoicePrefs();renderVoiceList();
 }
 function activeVoiceId(){return voicePrefs.voiceId||voiceState.voiceId}
-// Only one clip plays at a time: a new one always interrupts the old.
-function playAudio(url,{onEnd}={}){
-  if(currentAudio){currentAudio.pause();currentAudio=null}
-  const audio=new Audio(url);currentAudio=audio;
-  audio.addEventListener('ended',()=>{if(currentAudio===audio)currentAudio=null;if(onEnd)onEnd()},{once:true});
-  return audio.play().catch(()=>{if(onEnd)onEnd()});
-}
 function voiceRow(v){
   const row=document.createElement('div');row.className='voice-option'+(v.id===activeVoiceId()?' selected':'');
   row.setAttribute('role','option');
@@ -1031,19 +1115,59 @@ async function loadVoiceCatalog(refresh=false){
     $voiceStatus.textContent='加载失败：'+err.message;
   }
 }
+async function requestTts(text){
+  const headers={'Content-Type':'application/json'};
+  if(token)headers['Authorization']='Bearer '+token;
+  const r=await fetch(BASE_URL+'/api/agent/tts',{method:'POST',headers,
+    body:JSON.stringify({text,voice_id:activeVoiceId()||undefined})});
+  if(!r.ok)throw new Error('TTS '+r.status);
+  return URL.createObjectURL(await r.blob());
+}
 async function speakMessage(msg,button){
-  if(!voiceState.enabled||button.classList.contains('busy'))return;
-  button.classList.add('busy');
+  if(!voiceState.enabled)return;
+  if(button.classList.contains('busy')){stopVoice();button.classList.remove('busy');button.innerHTML=ICON_SPEAK;return}
+  const spoken=speakableText(msg.text);
+  if(!spoken){button.title='没有可朗读的文字';return}
+  // Unlock inside the click itself; awaiting fetch first can lose the gesture.
+  unlockAudio();
+  button.classList.add('busy');button.innerHTML=ICON_LOADING;
   try{
-    const headers={'Content-Type':'application/json'};
-    if(token)headers['Authorization']='Bearer '+token;
-    const r=await fetch(BASE_URL+'/api/agent/tts',{method:'POST',headers,
-      body:JSON.stringify({text:msg.text,voice_id:activeVoiceId()||undefined})});
-    if(!r.ok)throw new Error(r.status+'');
-    const url=URL.createObjectURL(await r.blob());
-    await playAudio(url,{onEnd:()=>URL.revokeObjectURL(url)});
-  }catch{button.title='朗读失败'}
-  finally{button.classList.remove('busy')}
+    const url=await requestTts(spoken);
+    button.innerHTML=ICON_WAVE;
+    await playVoice(url,{onState:state=>{
+      if(state==='idle'){button.classList.remove('busy');button.innerHTML=ICON_SPEAK;URL.revokeObjectURL(url)}
+    }});
+  }catch{
+    button.classList.remove('busy');button.innerHTML=ICON_SPEAK;button.title='朗读失败';
+  }
+}
+function startEditingMessage(msg){
+  const node=messageNode(msg.id);if(!node)return;
+  const bubble=node.querySelector('.bubble');if(!bubble)return;
+  if(node.querySelector('.bubble-editor'))return;
+  const original=msg.text;
+  const editor=document.createElement('textarea');
+  editor.className='bubble-editor';editor.value=original;
+  const actions=document.createElement('div');actions.className='bubble-edit-actions';
+  const save=document.createElement('button');save.type='button';save.className='edit-save';save.textContent='保存';
+  const cancel=document.createElement('button');cancel.type='button';cancel.className='edit-cancel';cancel.textContent='取消';
+  actions.append(save,cancel);
+  bubble.replaceWith(editor);node.insertBefore(actions,node.querySelector('.bubble-toolbar'));
+  editor.focus();editor.setSelectionRange(editor.value.length,editor.value.length);
+  editor.style.height='auto';editor.style.height=Math.min(editor.scrollHeight,260)+'px';
+  editor.addEventListener('input',()=>{editor.style.height='auto';editor.style.height=Math.min(editor.scrollHeight,260)+'px'});
+  const finish=commit=>{
+    if(commit)msg.text=editor.value;
+    actions.remove();
+    // Re-render from the store so the toolbar (and 🔊) picks up the new text.
+    patchMessage(msg.id);
+  };
+  save.addEventListener('click',()=>finish(true));
+  cancel.addEventListener('click',()=>finish(false));
+  editor.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){e.preventDefault();finish(false)}
+    if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();finish(true)}
+  });
 }
 function addVoiceBubble(data){
   const wrap=document.createElement('div');wrap.className='voice-bubble';
@@ -1051,6 +1175,7 @@ function addVoiceBubble(data){
   const meta=document.createElement('div');meta.className='voice-bubble-meta';
   meta.textContent='🔊 '+(data.voice_name||'语音')+' · '+Math.round((data.bytes||0)/1024)+'KB';
   const audio=document.createElement('audio');audio.controls=true;audio.src=url;audio.preload='auto';
+  audio.setAttribute('playsinline','');
   wrap.append(meta,audio);
   if(data.text){
     const text=document.createElement('div');text.className='voice-bubble-text';text.textContent=data.text;
@@ -1059,20 +1184,25 @@ function addVoiceBubble(data){
   $msgs.appendChild(wrap);
   autoFollowMessages=true;scrollBottom(true);
   // An agent-initiated clip is always played: the user asked for voice.
-  if(currentAudio){currentAudio.pause();currentAudio=null}
-  currentAudio=audio;audio.play().catch(()=>{});
+  playVoice(url);
   return wrap;
 }
 async function autoSpeak(msg){
+  const spoken=speakableText(msg.text);if(!spoken)return;
+  const button=messageNode(msg.id)?.querySelector('.bubble-speak');
+  if(button){button.classList.add('busy');button.innerHTML=ICON_LOADING}
   try{
-    const headers={'Content-Type':'application/json'};
-    if(token)headers['Authorization']='Bearer '+token;
-    const r=await fetch(BASE_URL+'/api/agent/tts',{method:'POST',headers,
-      body:JSON.stringify({text:msg.text,voice_id:activeVoiceId()||undefined})});
-    if(!r.ok)return;
-    const url=URL.createObjectURL(await r.blob());
-    playAudio(url,{onEnd:()=>URL.revokeObjectURL(url)});
-  }catch{}
+    const url=await requestTts(spoken);
+    if(button)button.innerHTML=ICON_WAVE;
+    playVoice(url,{onState:state=>{
+      if(state==='idle'){
+        if(button){button.classList.remove('busy');button.innerHTML=ICON_SPEAK}
+        URL.revokeObjectURL(url);
+      }
+    }});
+  }catch{
+    if(button){button.classList.remove('busy');button.innerHTML=ICON_SPEAK;button.title='朗读失败'}
+  }
 }
 $voiceSearch.addEventListener('input',renderVoiceList);
 $voiceRefresh.addEventListener('click',()=>loadVoiceCatalog(true));
@@ -1125,7 +1255,7 @@ function hideThinking(){
 // ============================================================
 // messages[] single source of truth (W1)
 // ============================================================
-const messages=[],messageIndex=new Map(),imageJobMessages={};
+const messages=[],messageIndex=new Map();
 let messageSeq=0;
 function newMessageId(){messageSeq+=1;return 'm_'+Date.now().toString(36)+'_'+messageSeq}
 function getMessage(id){return id?messageIndex.get(id)||null:null}
@@ -1144,7 +1274,7 @@ function removeMessage(id){
   const at=messages.indexOf(msg);if(at>=0)messages.splice(at,1);
 }
 function renderMessage(msg){
-  if(msg.kind==='error'||(msg.kind==='image'&&msg.status!=='done')){
+  if(msg.kind==='error'){
     const node=renderBubbleBody(msg);node.dataset.messageId=msg.id;
     const errorBar=renderBubbleToolbar(msg);if(errorBar)node.appendChild(errorBar);
     return node;
@@ -1162,11 +1292,6 @@ function renderBubbleBody(msg){
     card.innerHTML=`<div class="error-card-header">请求失败</div><div class="error-card-msg">${esc(msg.text)}</div>`;
     return card;
   }
-  if(msg.kind==='image'&&msg.status!=='done'){
-    const holder=document.createElement('div');holder.className='image-placeholder';
-    holder.innerHTML=`<div class="image-placeholder-inner"></div><div class="image-placeholder-label"><div class="spinner"></div><span>正在生成图片…</span><span class="status-badge ${esc(msg.status)}">${esc(msg.status)}</span></div>`;
-    return holder;
-  }
   const bubble=document.createElement('div');
   bubble.className='bubble '+msg.role+(msg.status==='streaming'?' streaming':'');
   if(msg.kind==='image')bubble.innerHTML=msg.images.map(href=>renderMd(`![生成图片](${href})`)).join('');
@@ -1174,24 +1299,49 @@ function renderBubbleBody(msg){
   else bubble.textContent=msg.text;
   return bubble;
 }
+function retryMessage(msg){
+  const at=messages.indexOf(msg);let text='';
+  for(let i=(at>=0?at:messages.length)-1;i>=0;i--){
+    const candidate=messages[i];
+    if(candidate.role==='user'&&candidate.kind==='text'&&candidate.text.trim()){
+      text=candidate.text.trim();break;
+    }
+  }
+  if(!text)text=lastUserText;
+  if(!text||sending||!sessionId)return;
+  $input.value=text;updateComposerState();sendMessage();
+}
 function renderBubbleToolbar(msg){
   if(msg.kind==='error'){
     const bar=document.createElement('div');bar.className='bubble-toolbar';
     const retry=document.createElement('button');
     retry.type='button';retry.className='error-retry-btn';retry.textContent='重试';
-    retry.addEventListener('click',()=>{
-      if(lastUserText){$input.value=lastUserText;updateComposerState();$input.focus()}
-    });
+    retry.addEventListener('click',()=>retryMessage(msg));
     bar.appendChild(retry);return bar;
   }
-  // Finished agent text can be spoken on demand once a TTS key is configured.
   if(msg.role!=='agent'||msg.kind!=='text'||msg.status!=='done'||!msg.text.trim())return null;
-  if(!voiceState.enabled)return null;
   const bar=document.createElement('div');bar.className='bubble-toolbar';
-  const speak=document.createElement('button');
-  speak.type='button';speak.className='bubble-speak';speak.title='朗读';speak.textContent='🔊';
-  speak.addEventListener('click',()=>speakMessage(msg,speak));
-  bar.appendChild(speak);return bar;
+  const mk=(label,title,handler)=>{
+    const b=document.createElement('button');
+    b.type='button';b.className='bubble-act';b.title=title;b.innerHTML=label;
+    b.addEventListener('click',()=>handler(b));return b;
+  };
+  bar.appendChild(mk(ICON_COPY,'复制',async b=>{
+    try{await navigator.clipboard.writeText(msg.text)}
+    catch{
+      const ta=document.createElement('textarea');ta.value=msg.text;ta.style.position='fixed';ta.style.opacity='0';
+      document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();
+    }
+    b.classList.add('ok');b.innerHTML=ICON_CHECK;
+    setTimeout(()=>{b.classList.remove('ok');b.innerHTML=ICON_COPY},1400);
+  }));
+  bar.appendChild(mk(ICON_RETRY,'重试',()=>retryMessage(msg)));
+  bar.appendChild(mk(ICON_EDIT,'编辑',()=>startEditingMessage(msg)));
+  if(voiceState.enabled){
+    const speak=mk(ICON_SPEAK,'朗读',b=>speakMessage(msg,b));
+    speak.classList.add('bubble-speak');bar.appendChild(speak);
+  }
+  return bar;
 }
 function patchMessage(id){
   const msg=getMessage(id),node=messageNode(id);if(!msg||!node)return null;
@@ -1202,23 +1352,13 @@ function patchMessage(id){
   node.replaceWith(next);return next;
 }
 
-function addImageSkeleton(jobId){
-  const msg=createMessage({kind:'image',status:'queued'});
-  imageJobMessages[jobId]=msg.id;return msg;
-}
-function updateSkeletonBadge(jobId,status){
-  const msg=getMessage(imageJobMessages[jobId]);if(!msg||!status)return;
-  msg.status=status;patchMessage(msg.id);
-}
 function replaceSkeletonWithImage(jobId,url){
   const href=safeHref(url);if(!href)return;
   const preload=new Image();let settled=false;
-  // The skeleton was appended when the job was created, so by now the agent reply
-  // and tool cards usually sit below it. Drop that message and append the image as
-  // a fresh bubble at the bottom instead of swapping it in mid-conversation.
+  // The tool card already shows progress; the completed image becomes a fresh
+  // bubble at the bottom instead of occupying a temporary placeholder.
   const show=()=>{
     if(settled)return;settled=true;
-    removeMessage(imageJobMessages[jobId]);delete imageJobMessages[jobId];
     const msg=createMessage({kind:'image',status:'done',images:[href]});
     // This is what the user has been waiting for, so jump to it even if they
     // scrolled away, then re-anchor once the <img> reports its real height.
@@ -1286,7 +1426,7 @@ function addTlEntry(type,label,html,ts){
 // Event handler
 // ============================================================
 function handleEvent(ev){
-  logDebug(ev);updateIvStats();
+  updateIvStats();
   switch(ev.event){
     case 'session.connected':setStatus('online','Connected');break;
 
@@ -1350,7 +1490,6 @@ function handleEvent(ev){
     case 'image.task.created':
       tasks[ev.data.job_id]={status:ev.data.status||'queued',planId:ev.data.generation_plan_id};
       if(currentToolCard)addTaskMeta(currentToolCard,ev.data);
-      addImageSkeleton(ev.data.job_id);
       if(currentIvToolEntry){
         const c=currentIvToolEntry.querySelector('.tl-content');
         const row=document.createElement('div');row.style.marginTop='4px';
@@ -1362,7 +1501,6 @@ function handleEvent(ev){
     case 'image.task.updated':
       if(tasks[ev.data.job_id])tasks[ev.data.job_id].status=ev.data.status;
       if(currentToolCard)updateBadge(currentToolCard,ev.data.job_id,ev.data.status);
-      updateSkeletonBadge(ev.data.job_id,ev.data.status);
       {const ivb=document.getElementById('iv-badge-'+ev.data.job_id);if(ivb){ivb.className='tl-badge '+ev.data.status;ivb.textContent=ev.data.status}}
       break;
 
@@ -1481,19 +1619,7 @@ function renderGallery(){
 }
 
 // Debug
-function updateDebugInfo(){
-  document.getElementById('debug-info').textContent=JSON.stringify({
-    session_id:sessionId,gateway:BASE_URL,
-    sse:sse?['CONNECTING','OPEN','CLOSED'][sse.readyState]:'none',
-    tasks:Object.keys(tasks).length,images:Object.keys(images).length,
-  },null,2);
-}
-function logDebug(ev){
-  const $de=document.getElementById('debug-events');
-  const el=document.createElement('div');el.className='debug-event';
-  el.innerHTML=`<span class="ev-type">${esc(ev.event)}</span> ${esc(JSON.stringify(ev.data||{}))}`.slice(0,240);
-  $de.prepend(el);if($de.children.length>100)$de.lastChild.remove();
-}
+
 
 // Send
 const $input=document.getElementById('chat-input'),$sendBtn=document.getElementById('send-btn');
@@ -1592,13 +1718,13 @@ async function init(){
   setStatus('connecting','Initializing...');
   try{
     const session=await ensureSession();renderHistory(session.messages);
-    connectSSE();updateDebugInfo();updateComposerState();loadImageState();
+    connectSSE();updateComposerState();loadImageState();
   }
   catch(err){if(!err.message.startsWith('401'))setStatus('error','Connection failed')}
 }
 
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=14',{scope:'/',updateViaCache:'none'})
+  navigator.serviceWorker.register('/sw.js?v=15',{scope:'/',updateViaCache:'none'})
     .then(registration=>registration.update()).catch(()=>{});
 }
 if(token){hideLogin();init()}

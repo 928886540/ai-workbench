@@ -125,6 +125,7 @@ class LeonConsole:
             session_id=self.session_id,
             default_mode_ids=self.config.default_mode_ids,
             on_event=self._on_event,
+            additional_system_prompt=self.config.read_additional_system_prompt(),
         )
 
     def _print_startup(self) -> None:

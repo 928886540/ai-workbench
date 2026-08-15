@@ -100,11 +100,19 @@ class VolinkVoiceClient:
 
         `page_size` is the only pagination knob the service honours; `limit`,
         `per_page` and `size` are silently ignored and fall back to 20.
+
+        `lang=zh-CN` is required for Chinese display names — without it the
+        catalogue answers with English ones ("Elegant Lady" instead of 风韵少妇),
+        which makes the names unsearchable for a Chinese-speaking user. Note that
+        `locale=zh-CN` and `lang=zh` do NOT work; only `lang=zh-CN`.
         """
         voices: list[dict[str, Any]] = []
         seen: set[str] = set()
         for page in range(1, max_pages + 1):
-            payload = self._get("/tts/voices", {"page_size": page_size, "page": page})
+            payload = self._get(
+                "/tts/voices",
+                {"page_size": page_size, "page": page, "lang": "zh-CN"},
+            )
             if not isinstance(payload, dict):
                 break
             batch = [item for item in (payload.get("voices") or []) if isinstance(item, dict)]

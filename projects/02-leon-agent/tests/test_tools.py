@@ -1,6 +1,6 @@
 from typing import Any
 
-from leon_agent.agent import SYSTEM_PROMPT
+from leon_agent.agent import SYSTEM_PROMPT, build_system_prompt
 from leon_agent.tools import create_leon_tools
 
 
@@ -134,3 +134,11 @@ def test_agent_prompt_tells_the_model_it_can_cancel() -> None:
     # The agent used to tell users cancelling was impossible because no tool existed.
     assert "cancel_image_task" in SYSTEM_PROMPT
     assert "never tell the user cancelling is unsupported" in SYSTEM_PROMPT
+
+
+def test_additional_system_prompt_is_appended_verbatim() -> None:
+    additional = "自定义第一行\n自定义第二行"
+
+    prompt = build_system_prompt(additional)
+
+    assert prompt == f"{SYSTEM_PROMPT}\n\n{additional}"
