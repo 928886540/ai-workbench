@@ -115,6 +115,7 @@ uv tool install --editable .\projects\02-leon-agent `
 | `LEON_DEFAULT_IMAGE_MODES` | `k2_tifa_plus` | 未指定模式时的默认值，逗号分隔 |
 | `LEON_SESSION_DB` | `data/leon-agent.db` | 本地会话数据库 |
 | `LEON_API_TOKEN` | 空 | Web Gateway 鉴权 token；公网暴露时必须设置 |
+| `LEON_WEB_CLIENT` | `legacy` | Web 客户端实现；Vue 构建完成并验收后再切为 `vue` |
 | `LEON_SYSTEM_PROMPT_FILE` | 空 | 可选 UTF-8 TXT；内容原样追加到 Agent system prompt，相对路径从仓库根目录解析 |
 
 后端返回的图片可能是 `/view?filename=...` 这类相对路径。工具层会把它拼成
@@ -155,6 +156,10 @@ Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 jo
 
 Web 客户端只有一份源文件 `src/leon_agent/web/index.html`（无构建步骤），`tests/test_gateway.py` 直接对服务端返回的 HTML 做字符串断言。每次前端改动需同步递增 `sw.js` 的缓存名与注册 `?v=` 版本号，否则手机会命中旧缓存。后续 Vue3 迁移的结论见
 [Web 客户端演进评估](docs/web-client-evolution.md)。
+
+Vue 3 + Vite 迁移基座位于 `web/`。默认 `LEON_WEB_CLIENT=legacy`，因此构建 Vue
+产物不会改变现有线上页面；本地构建并验收后，设置 `LEON_WEB_CLIENT=vue` 并重启
+`leon-server` 才会由 FastAPI 托管 `web/dist/`。
 
 ## 后续路线
 

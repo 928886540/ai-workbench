@@ -45,7 +45,11 @@
   采用 `return_direct`，图片任务完成后直接输出结果，避免再发一轮 provider 请求（低 RPM provider 必须如此）。
 - CLI 普通聊天会在 provider 请求前立即显示状态；默认 LLM 超时降为 30 秒、自动重试关闭，
   `Ctrl+C` 只取消当前轮且不再输出 traceback，适配 RPM=5 的中转 provider。
-- 当前验证（2026-08-15 实测）：全仓库 `pytest` **101 passed**、`ruff check .` 通过、
+- Vue W2 基座已落地：`projects/02-leon-agent/web/` 提供 Vue 3 + Vite、API client、
+  `stores/messages.ts`、ChatView 和 PWA 资产；`LEON_WEB_CLIENT=legacy` 默认保持旧页面，
+  显式切为 `vue` 且存在 `web/dist/index.html` 后 FastAPI 才托管新产物。
+- 当前验证（2026-08-16 实测）：全仓库 Python `pytest` **104 passed**、`ruff check .` 通过，
+  Web `npm run typecheck` 与 `npm run build` 通过；
   浏览器端到端 `tests/manual_web_check.py` **56/56 通过**（真实 Chrome + 390×844 触屏模拟）
 - ⚠️ LLM provider 已被 CC Switch 换过（`~/.codex/config.toml`，8/15 09:30）：
   `anyrouter.top` → `new-api.abrdns.com`，默认模型 `gpt-5.6-sol` → `DeepSeek-V4-Flash-0731`，目录从 17 个模型变成 96 个。
@@ -56,12 +60,13 @@
   `image_tasks/hide` / `hide_history`（清理列表）、`metrics/tasks/{job_id}`（任务指标）、
   `async_autogen/recover`（恢复）、`comic_compose` / `async_comic`（漫画模式）
 - 下一步最小动作：在 Cloudflare Dashboard 为 `/api/agent/*/events` 添加 Cache Bypass Rule，然后手机端验收 SSE 与生图闭环
-- 前端下一步（W2）：按上面的决策启动 Vue 3 + Vite 迁移。先搭 `vite.config.ts` + 构建产物托管链路（含 SW / Cloudflare 隧道回归），
-  再按 `views/` 逐页搬迁；W1 的 `messages[]` 直接对应 `stores/messages.ts`，不用重写
+- 前端下一步（W2 后续）：在 Vue 基座上按 `views/` 逐页搬迁聊天、任务、图库和设置；
+  先保持 legacy 默认，完成浏览器回归后再切 `LEON_WEB_CLIENT=vue`；W1 的 `messages[]`
+  直接对应 `stores/messages.ts`，不用重写
 - ASR 尚未接入；TTS 已完成，网关使用 `POST /api/agent/tts` 和 `/api/voice/*`
 - 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
-- 下一步可选：按既定决策启动 Vue 3 + Vite W2；CLI TUI 不再是阻塞项
+- 下一步可选：继续 Vue 页面迁移；CLI TUI 与 Web 改造由两个 Codex 分工，提交前统一审查
 
 ---
 

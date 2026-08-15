@@ -38,3 +38,14 @@ def test_empty_system_prompt_file_fails_clearly(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="LEON_SYSTEM_PROMPT_FILE is empty"):
         settings_with_prompt_file(prompt_file).read_additional_system_prompt()
+
+
+def test_web_client_defaults_to_legacy() -> None:
+    settings = LeonSettings(_env_file=None)
+
+    assert settings.web_client == "legacy"
+
+
+def test_web_client_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError):
+        LeonSettings(_env_file=None, LEON_WEB_CLIENT="next")

@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
-from leon_agent.gateway.app import _track_image_jobs, app, get_store
+from leon_agent.gateway.app import _resolve_web_dir, _track_image_jobs, app, get_store
 from leon_agent.gateway.events import EventBusRegistry
 from leon_agent.session import SessionStore
 
@@ -52,6 +52,20 @@ def test_sse_invalid_token_stops_eventsource_retry(tmp_path, monkeypatch):
 def test_web_manifest_and_icon_are_served(client):
     assert client.get("/manifest.json").status_code == 200
     assert client.get("/icon.svg").status_code == 200
+
+
+def test_vue_web_dir_requires_a_built_entrypoint(tmp_path):
+    legacy_dir = tmp_path / "legacy"
+    vue_dir = tmp_path / "vue" / "dist"
+    legacy_dir.mkdir()
+    vue_dir.mkdir(parents=True)
+
+    assert _resolve_web_dir("legacy", legacy_dir=legacy_dir, vue_dist_dir=vue_dir) == legacy_dir
+    with pytest.raises(RuntimeError, match="requires a built Vue client"):
+        _resolve_web_dir("vue", legacy_dir=legacy_dir, vue_dist_dir=vue_dir)
+
+    (vue_dir / "index.html").write_text("<div id='app'></div>", encoding="utf-8")
+    assert _resolve_web_dir("vue", legacy_dir=legacy_dir, vue_dist_dir=vue_dir) == vue_dir
 
 
 def test_web_shell_disables_stale_pwa_cache(client):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -41,6 +42,8 @@ class LeonSettings(BaseSettings):
     http_timeout_seconds: float = Field(default=30.0, alias="LEON_HTTP_TIMEOUT_SECONDS")
     bridge_timeout_seconds: float = Field(default=20.0, alias="LEON_BRIDGE_TIMEOUT_SECONDS")
     api_token: SecretStr | None = Field(default=None, alias="LEON_API_TOKEN")
+    # Keep the legacy shell as the safe default while the Vue client is migrated.
+    web_client: Literal["legacy", "vue"] = Field(default="legacy", alias="LEON_WEB_CLIENT")
     system_prompt_file: Path | None = Field(
         default=None,
         alias="LEON_SYSTEM_PROMPT_FILE",

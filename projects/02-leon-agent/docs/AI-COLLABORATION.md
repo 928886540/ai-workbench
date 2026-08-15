@@ -21,7 +21,8 @@ Never commit `.env`, API tokens, SQLite databases, generated images, caches, or 
 
 - CLI: `src/leon_agent/cli.py`
 - Gateway: `src/leon_agent/gateway/app.py`
-- Web client: `src/leon_agent/web/index.html`
+- Legacy Web client (kept as the safe fallback): `src/leon_agent/web/index.html`
+- Vue migration source: `web/` (`src/api`, `src/stores`, `src/views`, `src/components`)
 - Service Worker: `src/leon_agent/web/sw.js`
 - Leon runtime config: `src/leon_agent/config.py`
 - Agent system prompt composition: `src/leon_agent/agent.py`
@@ -39,8 +40,10 @@ The read-only global latest-image backend lives in the separate ComfyUI reposito
 - HTTP API: `GET /ios/image_gallery/recent?limit=<count>`
 - Compatibility API: `GET /ios/image_gallery/latest`
 
-There must be only one Web client source. Do not recreate `projects/02-leon-agent/web/`; the
-FastAPI server only serves `src/leon_agent/web/`.
+During the Vue migration there are exactly two intentional trees: the legacy fallback under
+`src/leon_agent/web/` and the new source under `web/`. Do not create a third Web client tree.
+FastAPI serves the legacy tree by default; `LEON_WEB_CLIENT=vue` selects `web/dist/` only after
+the Vue build exists and the service is restarted.
 
 ## Additional System Prompt Contract
 
@@ -214,6 +217,9 @@ Current baseline on 2026-08-15: `97 passed`, Ruff clean, and
 The browser suite covers restoring persisted chat history, newest-first task/gallery
 ordering, and the edge-to-edge fullscreen image viewer. The Service Worker cache is
 `leon-v17`.
+
+The LLM transport safety fix was validated separately with `101 passed`; the Vue migration base
+must additionally pass `npm run typecheck` and `npm run build` before enabling `LEON_WEB_CLIENT=vue`.
 
 ## Handoff Format
 
