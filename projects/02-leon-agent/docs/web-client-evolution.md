@@ -1,0 +1,212 @@
+# Web 客户端演进评估：是否迁 Vue3、聊天化改造、气泡工具栏、语音接入
+
+> 状态：设计草案（2026-08-15）
+> 关联提交：`3aab43a fix(leon-web): 图片查看器改为可缩放相册，完成后新气泡回图`
+> 唯一 Web 源文件：`src/leon_agent/web/index.html`（约 68KB 单文件，无构建步骤）
+
+---
+
+## 1. 结论先行
+
+| 议题 | 结论 |
+| --- | --- |
+| 现在迁 Vue3？ | **不迁**。先在原生里做完聊天化改造，顺手把组件边界画出来，等消息状态机稳定再一次性迁。 |
+| 界面聊天化？ | **做**，优先级最高。纯前端改动，不动网关协议。 |
+| 气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）？ | **做**。需要网关补少量元数据字段。 |
+| 语音？ | **先预留接口**。播放态、按钮、错误态先做完，真实 API 到位后只换一个适配层。 |
+
+---
+
+## 2. 为什么现在不迁 Vue3
+
+### 2.1 会直接废掉现有测试策略
+
+`tests/test_gateway.py` 目前对**服务端返回的 HTML 字符串**做断言：
+
+```python
+assert "function zoomAt(" in html
+assert "const result=createImageResult(href);" in html
+assert "setViewerScale" not in html
+assert "/sw.js?v=12" in html
+```
+
+这套断言便宜、快（79 个测试 2 秒跑完）、不需要浏览器。一旦上 Vue3 + 构建产物：
+
+- HTML 退化成 `<div id="app">` 加一堆 hash 文件名的 bundle，上面每一条断言全部失效；
+- 得换成 Vitest（组件单测）+ Playwright（端到端），仓库里要多一条 Node 工具链；
+- 迁移成本明显大于「加个复制按钮」这件事本身。
+
+### 2.2 要做的功能不需要框架
+
+复制、重试、耗时、tokens、朗读，本质是**给消息对象加字段 + 气泡下方渲染一排按钮**。现有的 `createImageResult()`、`addImageSkeleton()`、`addErrorCard()`、`renderGallery()`、`renderModelList()` 已经是工厂函数，就是组件雏形。原生 DOM 完全够。
+
+### 2.3 部署链路简单是优势
+
+现在：`StaticFiles(directory=_WEB_DIR, html=True)` 直接抬单文件，配合 `disable_web_shell_cache` 中间件 + Service Worker 版本号，改完刷新就生效。上构建后多出一步 `npm run build`，手机上改一行样式都要进构建管道。
+
+### 2.4 什么时候就该迁了
+
+出现下面任意 **两条** 就开始迁：
+
+1. 流式输出 + 重试 + 多图任务并发 + 语音播放态互斥，四者同时存在；
+2. `index.html` 超过 ~2000 行，改一处要搜三个地方；
+3. 需要多页面（会话列表 / 图库 / 设置 独立路由）；
+4. 要上 TypeScript 给消息类型做约束。
+
+预估：把下面的聊天化改造做完，就会命中第 1 和第 2 条。所以**迁移很可能就是下一个大动作**——但必须在功能需求先落地之后，不能边迁边改。
+
+---
+
+## 3. 先做的重构（同时就是 Vue3 的前置）
+
+目标：把「渲染」和「状态」拆开。现在是每个事件直接 `appendChild`，没有一份可信的消息列表。
+
+### 3.1 引入 `messages[]` 单一数据源
+
+```js
+// 消息对象（前端内存模型）
+{
+  id: 'm_17...',          // 客户端生成，用于定位 DOM
+  role: 'user' | 'agent' | 'system',
+  text: '',
+  status: 'pending' | 'streaming' | 'done' | 'error',
+  images: [],             // 图片结果列表
+  meta: {
+    model: 'gpt-5-codex',
+    startedAt: 1755..., finishedAt: 1755...,
+    elapsedMs: 4210,
+    tokensIn: null, tokensOut: null,
+  },
+  audio: { state: 'idle' | 'loading' | 'playing', url: null },
+}
+```
+
+规则：所有事件（SSE、图片轮询、错误）**只改 `messages[]`**，然后调 `patchMessage(id)` 重渲染单条气泡。不全量重画（会打断图片加载和滚动位置）。
+
+### 3.2 抽出渲染函数
+
+| 新函数 | 职责 |
+| --- | --- |
+| `renderMessage(msg)` | 返回完整气泡节点（含工具栏） |
+| `renderBubbleBody(msg)` | 正文：Markdown / 图片 / 错误卡 |
+| `renderBubbleToolbar(msg)` | 下方按钮排 + 元数据 |
+| `patchMessage(id)` | 局部更新，不动已加载的 `<img>` |
+
+现有 `addImageSkeleton` / `replaceSkeletonWithImage` / `addErrorCard` 改为操作 `messages[]` 后走 `patchMessage`。
+
+这一步做完，日后迁 Vue3 就是把 `renderMessage` 换成 `<MessageBubble :msg="msg">`，数据模型一行不改。
+
+---
+
+## 4. 气泡工具栏规格
+
+参照常见聊天客户端（grok / ChatGPT 手机版）：按钮**常驻在气泡下方**，低对比度图标，点击后有反馈。手机上不用 hover 才显现。
+
+### 4.1 用户气泡
+
+| 按钮 | 行为 |
+| --- | --- |
+| 复制 | `navigator.clipboard.writeText(msg.text)`，图标瞬变✓ 1.5s |
+| 重试 | 删除该消息之后的所有回复，重发相同内容 |
+| 编辑 | 回填输入框，原消息标为已改（第二批） |
+
+### 4.2 Agent 气泡
+
+| 按钮 / 字段 | 行为 |
+| --- | --- |
+| 复制 | 同上，复制原始 Markdown |
+| 重试 | 重发上一条用户消息（已有 `lastUserText` 可复用），旧回复不删，追加新气泡 |
+| 朗读 | 调 TTS，详见第 5 节 |
+| 耗时 | `meta.elapsedMs` 格式化为 `4.2s` |
+| tokens | `meta.tokensIn/Out`，无值则**不渲染**（不显示 `0 tokens`） |
+| 模型名 | 当前回复实际用的模型，方便切模型后回溯 |
+
+### 4.3 错误气泡
+
+保留现有 `.error-card`，把 `.error-retry-btn` 并入统一工具栏；错误原文（如 `HTTP 424 upstream_error`）默认折叠，点「详情」展开。
+
+### 4.4 需要网关配合的字段
+
+这部分是后端小改动，在 `gateway/events.py` 的完成事件里带上：
+
+```json
+{
+  "type": "message.completed",
+  "model": "gpt-5-codex",
+  "elapsed_ms": 4210,
+  "usage": { "input_tokens": 1234, "output_tokens": 567 }
+}
+```
+
+> 注：usage 取不到时统一传 `null`，前端靠「无值不渲染」规则自然降级。耗时宁可前端自己算（`finishedAt - startedAt`），不阻塞后端。
+
+---
+
+## 5. 语音接入（预留层）
+
+先把接口面定下来，API 到位后只改一个文件。
+
+### 5.1 输出（TTS，朗读）
+
+新增网关端点，避免语音密钥落到前端：
+
+```
+POST /api/agent/tts
+{ "text": "...", "voice": "default" }
+-> { "url": "https://.../xxx.mp3" }   或直接返回 audio 流
+```
+
+前端：`msg.audio.state` 驱动按钮（idle / loading / playing）；**全局单例播放**，开新的先停旧的；音频 URL 缓存在消息上，重复点不重复请求。
+
+### 5.2 输入（ASR，语音发消息）
+
+```
+POST /api/agent/asr   (multipart: audio 文件)
+-> { "text": "..." }
+```
+
+前端：输入框旁加麦克风，`MediaRecorder` 录音 → 上传 → 转写回填输入框（**不自动发送**，给一次校对机会）。
+
+### 5.3 环境变量预留
+
+| 变量 | 用途 |
+| --- | --- |
+| `LEON_TTS_BASE_URL` / `LEON_TTS_TOKEN` | 语音合成服务 |
+| `LEON_ASR_BASE_URL` / `LEON_ASR_TOKEN` | 语音转写服务 |
+| 未配置时 | 端点返 501，前端隐藏朗读 / 麦克风按钮 |
+
+---
+
+## 6. 界面聊天化（视觉）
+
+- **头部**：双行——会话名 + 当前模型胶囊，点模型胶囊直开 `model-list`（现有）
+- **气泡**：用户右侧强色、agent 左侧低调；圆角 18px；同一角色连续消息收紧间距
+- **时间分割线**：超过 10 分钟间隔插一条居中时间
+- **输入区**：多行自增高 textarea（上限 5 行）+ 图片 / 麦克风 / 发送；保留 `font-size:16px` 防 iOS 缩放
+- **主题**：先把颜色提成 CSS 变量，为深色 / 自定义壁纸铺路
+- **滚动**：继续用 `autoFollowMessages`；用户上滚时显示「回到最新」悬浮按钮
+
+---
+
+## 7. 建议排期
+
+| 阶段 | 内容 | 依赖 |
+| --- | --- | --- |
+| **W1** | `messages[]` + `renderMessage` 重构，行为不变 | 无 |
+| **W2** | 气泡工具栏：复制 / 重试 / 耗时（前端自算） | W1 |
+| **W3** | 聊天化视觉 + CSS 变量主题 | W1 |
+| **W4** | 网关补 `model` / `elapsed_ms` / `usage`，tokens 上屏 | W2 |
+| **W5** | 语音：TTS 朗读 → ASR 输入 | 等你给 API |
+| **W6** | 重评 Vue3（按第 2.4 节触发条件） | W1-W5 |
+
+每个阶段单独一个 commit，`test_gateway.py` 同步补断言，`sw.js` 缓存版本号递增。
+
+---
+
+## 8. 遗留风险
+
+1. HTML 字符串断言很脆：改一行实现就可能红。W1 后将断言转向**函数名与 DOM id**，少碰具体语句。
+2. IDEA 的缓存可能比磁盘旧（本次已踩到）：改 `index.html` 前先用磁盘读确认。
+3. `manual_web_check.py` 是手工 Playwright 脚本，不进 CI；不要让它假装自动测试。
+4. Service Worker 缓存：每次前端改动必须同时改 `sw.js` 版本和注册 `?v=`，否则手机拿旧缓存。
+5. Cloudflare 还没给 `/api/agent/*/events` 加 Cache Bypass Rule，语音和流式上线前必须先解决。

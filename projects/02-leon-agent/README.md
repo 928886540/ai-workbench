@@ -16,6 +16,9 @@
 - 调用现有 `/ios/*` HTTP 接口，不复制 Prompt、Workflow 或 LoRA 配置
 - 任务与图库返回的图片地址统一补全成绝对 URL，可直接打开
 - CLI 与 Web 设置页从当前 LLM provider 的 `/models` 动态读取模型目录，手输模型 ID 保持原始大小写
+- Web 全屏图片查看器是可缩放相册：左右切换、计数、滑动翻页、双指 / 双击定点缩放、平移夹在真实图片边界内
+- 生图完成后丢弃骨架屏，在聊天底部追加一条新图片气泡并自动跟随到底
+- 模型选择改为可点击列表（不再依赖手机浏览器不友好的 `<datalist>`）
 
 Codex、Notion AI 或其他 Agent 开发前先读
 [AI 协作状态](docs/AI-COLLABORATION.md)，其中记录唯一源码路径、事件协议、模型选择契约和交接格式。
@@ -139,7 +142,13 @@ Web Gateway 提交生图任务后立即通过 SSE 推送 job id，并在后台�
 
 架构与接口边界见 [Mobile Web 架构](docs/mobile-web-architecture.md)。
 
+Web 客户端只有一份源文件 `src/leon_agent/web/index.html`（无构建步骤），`tests/test_gateway.py` 直接对服务端返回的 HTML 做字符串断言。每次前端改动需同步递增`sw.js` 的缓存名与注册 `?v=` 版本号，否则手机会命中旧缓存。下一阶段的聊天化改造、气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）、语音接入，以及是否迁 Vue3 的结论见
+[Web 客户端演进评估](docs/web-client-evolution.md)。
+
 ## 后续路线
+
+Web 前端演进（聊天化 UI、气泡工具栏、语音、Vue3 迁移时机）见
+[Web 客户端演进评估](docs/web-client-evolution.md)。
 
 已记录三条扩展需求：面试 MCP、Telegram Bot、Tavo 互通。详细边界与实施顺序见
 [Leon Agent 扩展路线](../../notes/plans/leon-agent-expansion.md)。

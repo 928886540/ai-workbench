@@ -10,7 +10,7 @@
 2. **开场一句话** = 快速对齐
 3. **Codex session 续接** = 加分项，有就用，没有也能继续
 
-## 当前主线（2026-08-14）
+## 当前主线（2026-08-15）
 
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
@@ -22,8 +22,12 @@
 - Leon 环境只读自检：19 模式、38 节点类型、39 LoRA，通过
 - 架构决策：`notes/decisions/0002-leon-agent-boundary.md`
 - 新需求计划：`notes/plans/leon-agent-expansion.md`
-- 当前验证：`pytest` 50 passed，`ruff check .` 通过，本地与公网 `/api/health` 均为 200
+- Web 图片体验已升级：全屏查看器变可缩放相册（左右切换 / 计数 / 滑动翻页 / 定点缩放），生图完成后在底部追加新气泡，模型选择改为可点击列表（SW 缓存 v12）
+- 前端演进评估（是否迁 Vue3 / 聊天化 / 气泡工具栏 / 语音）：`projects/02-leon-agent/docs/web-client-evolution.md`，结论是暂不迁 Vue3，先做 `messages[]` 重构
+- 当前验证：`pytest` 79 passed，`ruff check .` 通过，本地与公网 `/api/health` 均为 200
 - 下一步最小动作：在 Cloudflare Dashboard 为 `/api/agent/*/events` 添加 Cache Bypass Rule，然后手机端验收 SSE 与生图闭环
+- 前端下一步（W1）：引入 `messages[]` 单一数据源与 `renderMessage` / `patchMessage`，行为不变，为气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）钺路
+- 语音：等用户提供 TTS / ASR API，网关端预留 `POST /api/agent/tts` 与 `POST /api/agent/asr`
 - 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
 - 完整 TUI 后置
