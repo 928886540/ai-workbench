@@ -22,6 +22,8 @@ def test_vue_entry_is_explicit_opt_in_and_keeps_legacy_default() -> None:
     gateway = _read("src/leon_agent/gateway/app.py")
     entry = _read("web/index.html")
     vite = _read("web/vite.config.ts")
+    main = _read("web/src/main.ts")
+    service_worker = _read("web/public/sw.js")
 
     assert 'Literal["legacy", "vue"]' in config
     assert 'web_client: Literal["legacy", "vue"] = Field(default="legacy"' in config
@@ -32,6 +34,8 @@ def test_vue_entry_is_explicit_opt_in_and_keeps_legacy_default() -> None:
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
     assert 'outDir: "dist"' in vite
+    assert 'register("/sw.js?v=vue-2"' in main
+    assert "leon-vue-v2" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:
