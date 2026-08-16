@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import shutil
+import subprocess
 import sys
 import threading
 from collections.abc import Sequence
@@ -36,9 +38,29 @@ from leon_agent.models import model_provider_scope, resolve_model_id
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
 
+if sys.platform == "win32":
+    try:
+        from prompt_toolkit.input.defaults import create_input
+        from prompt_toolkit.input.win32 import ConsoleInputReader, Win32Input
+        from prompt_toolkit.key_binding.key_processor import KeyPress
+        from prompt_toolkit.keys import Keys
+    except ModuleNotFoundError:  # pragma: no cover - optional TUI dependency
+        create_input = None
+        ConsoleInputReader = None
+        Win32Input = None
+        KeyPress = None
+        Keys = None
+else:  # pragma: no cover - platform-specific compatibility shim
+    create_input = None
+    ConsoleInputReader = None
+    Win32Input = None
+    KeyPress = None
+    Keys = None
+
 try:
     from prompt_toolkit.application import Application
     from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.filters import Condition, has_focus
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.layout import HSplit, Layout
@@ -47,6 +69,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - legacy prompt fallback remains usable
     Application = None
     WordCompleter = None
+    Condition = None
+    has_focus = None
     KeyBindings = None
     HSplit = None
     Layout = None
@@ -62,17 +86,97 @@ _ACTIVE_TURN: ContextVar[tuple[int, threading.Event] | None] = ContextVar(
     default=None,
 )
 
-_CLI_COMMANDS = [
-    "/help",
-    "/new",
-    "/history",
-    "/status",
-    "/model",
-    "/clear",
-    "/nsfw",
-    "/exit",
-    "/quit",
-]
+_CLI_COMMAND_META = {
+    "/help": "查看命令和快捷键",
+    "/new": "创建新会话",
+    "/history": "列出最近会话",
+    "/resume": "切换已有会话",
+    "/retry": "重试上一条请求",
+    "/last": "查看上一条回答",
+    "/copy": "复制上一条回答",
+    "/tools": "查看已注册工具",
+    "/status": "查看模型与运行状态",
+    "/model": "查看或切换模型",
+    "/clear": "清空终端滚动区",
+    "/nsfw": "跳过 LLM 直达生图",
+    "/exit": "退出 Leon",
+    "/quit": "退出 Leon",
+}
+_CLI_COMMANDS = list(_CLI_COMMAND_META)
+
+_NEWLINE_ENTER_DATA = {
+    "\x1b[27;2;13~",  # xterm modifyOtherKeys
+    "\x1b[27;5;13~",
+    "\x1b[13;2u",  # Kitty/CSI-u keyboard protocol
+    "\x1b[13;5u",
+}
+
+_WIN32_SHIFT_PRESSED = 0x0010
+_WIN32_CTRL_PRESSED = 0x000C
+_WIN32_ALT_PRESSED = 0x0003
+
+
+def _copy_to_clipboard(text: str) -> str | None:
+    """Copy text through an installed native clipboard helper.
+
+    Clipboard support is deliberately optional: the CLI remains usable over
+    SSH, in containers, and in minimal CI images where no helper exists.
+    Return the executable used so callers can give a useful confirmation.
+    """
+
+    if not text:
+        return None
+    if sys.platform == "win32":
+        commands = [("clip.exe",)]
+    elif sys.platform == "darwin":
+        commands = [("pbcopy",)]
+    else:
+        commands = [
+            ("wl-copy",),
+            ("xclip", "-selection", "clipboard"),
+            ("xsel", "--clipboard", "--input"),
+        ]
+    for command in commands:
+        executable = shutil.which(command[0])
+        if executable is None:
+            continue
+        try:
+            subprocess.run(
+                [executable, *command[1:]],
+                input=text,
+                text=True,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=2,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        return executable
+    return None
+
+
+def _is_native_shift_enter(record) -> bool:  # noqa: ANN001
+    if getattr(record, "VirtualKeyCode", None) != 13:
+        return False
+    state = getattr(record, "ControlKeyState", 0)
+    return bool(state & _WIN32_SHIFT_PRESSED) and not bool(
+        state & (_WIN32_CTRL_PRESSED | _WIN32_ALT_PRESSED)
+    )
+
+
+if ConsoleInputReader is not None:
+
+    class _ShiftAwareConsoleInputReader(ConsoleInputReader):
+        """Keep Win32's Shift+Enter modifier before prompt_toolkit drops it."""
+
+        def _event_to_key_presses(self, event):  # noqa: ANN001
+            if _is_native_shift_enter(event):
+                return [KeyPress(Keys.ControlM, "\x1b[27;2;13~")]
+            return super()._event_to_key_presses(event)
+
+else:
+    _ShiftAwareConsoleInputReader = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,7 +219,7 @@ class TerminalChatUI:
     """Fullscreen chat surface with explicit turn ownership and cancellation."""
 
     _MAX_BLOCKS = 240
-    _IDLE_STATUS = "● 就绪 · Enter 发送 · Ctrl+C 取消 · Ctrl+Q 退出"
+    _IDLE_STATUS = "● 就绪 · Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 备用"
 
     def __init__(self, owner: LeonConsole) -> None:
         if Application is None:
@@ -138,26 +242,88 @@ class TerminalChatUI:
             wrap_lines=True,
         )
         input_kwargs = {
-            "height": 1,
+            "height": self._input_height,
             "prompt": "❯ ",
-            "multiline": False,
+            "multiline": True,
             "accept_handler": self._accept,
         }
         if InMemoryHistory is not None:
-            input_kwargs["history"] = InMemoryHistory()
+            input_kwargs["history"] = self._build_input_history()
         if WordCompleter is not None:
-            input_kwargs["completer"] = WordCompleter(_CLI_COMMANDS, sentence=True)
+            input_kwargs["completer"] = WordCompleter(
+                _CLI_COMMANDS,
+                ignore_case=True,
+                meta_dict=_CLI_COMMAND_META,
+                sentence=True,
+            )
         self.input = TextArea(**input_kwargs)
         self.header = Label(self._header_text)
         self.status = Label(self._status_line)
         self.footer = Label(
-            "  Enter 发送   ·   Ctrl+C 取消当前轮   ·   Ctrl+Q 取消并退出   ·   Ctrl+L 清屏"
+            "  Enter 发送   ·   Shift+Enter 换行   ·   Ctrl+Enter 备用   ·   "
+            "Esc/Ctrl+C 取消   ·   Ctrl+D/Q 退出   ·   Ctrl+L 清屏"
         )
         key_bindings = KeyBindings()
+        input_focused = has_focus(self.input)
+        turn_busy = Condition(lambda: self.busy)
+
+        @key_bindings.add("enter", filter=input_focused, eager=True)
+        def _(event) -> None:  # noqa: ANN001
+            self._handle_enter(event)
+
+        # prompt_toolkit 3.x does not yet decode Kitty's CSI-u Shift+Enter.
+        # Register its raw key sequence so supported terminals still get the
+        # expected composer behavior without changing global input parsing.
+        @key_bindings.add(
+            "escape",
+            "[",
+            "1",
+            "3",
+            ";",
+            "2",
+            "u",
+            filter=input_focused,
+            eager=True,
+        )
+        @key_bindings.add(
+            "escape",
+            "[",
+            "1",
+            "3",
+            ";",
+            "5",
+            "u",
+            filter=input_focused,
+            eager=True,
+        )
+        @key_bindings.add("escape", "c-j", filter=input_focused, eager=True)
+        @key_bindings.add("escape", "enter", filter=input_focused, eager=True)
+        def _(event) -> None:  # noqa: ANN001
+            self._insert_newline(event.current_buffer)
 
         @key_bindings.add("c-c")
         def _(event) -> None:  # noqa: ANN001
             self._handle_interrupt(event, exit_after=False)
+
+        @key_bindings.add("escape", filter=turn_busy)
+        def _(event) -> None:  # noqa: ANN001
+            self._handle_interrupt(event, exit_after=False)
+
+        @key_bindings.add("c-d", filter=input_focused, eager=True)
+        def _(event) -> None:  # noqa: ANN001
+            self._handle_eof(event)
+
+        @key_bindings.add("c-u", filter=input_focused, eager=True)
+        def _(event) -> None:  # noqa: ANN001
+            self._clear_input(event.current_buffer)
+
+        @key_bindings.add("c-k", filter=input_focused, eager=True)
+        def _(event) -> None:  # noqa: ANN001
+            self._delete_to_end(event.current_buffer)
+
+        @key_bindings.add("c-w", filter=input_focused, eager=True)
+        def _(event) -> None:  # noqa: ANN001
+            self._delete_previous_word(event.current_buffer)
 
         @key_bindings.add("c-q")
         def _(event) -> None:  # noqa: ANN001
@@ -177,20 +343,93 @@ class TerminalChatUI:
                     height=Dimension(weight=1),
                 ),
                 self.status,
-                Frame(self.input, title="⌨ 输入 · 支持 /help /model /new /clear"),
+                Frame(self.input, title="⌨ 输入 · 多行编辑 · 支持 /help /model /new /clear"),
                 self.footer,
             ]
         )
-        self.app = Application(
-            layout=Layout(root, focused_element=self.input),
-            key_bindings=key_bindings,
-            full_screen=True,
-            mouse_support=True,
-        )
+        application_kwargs = {
+            "layout": Layout(root, focused_element=self.input),
+            "key_bindings": key_bindings,
+            "full_screen": True,
+            "mouse_support": True,
+        }
+        native_input = self._create_native_input()
+        if native_input is not None:
+            application_kwargs["input"] = native_input
+        self.app = Application(**application_kwargs)
 
     @staticmethod
     def available() -> bool:
         return Application is not None
+
+    @staticmethod
+    def _create_native_input():
+        if (
+            sys.platform != "win32"
+            or not sys.stdin.isatty()
+            or create_input is None
+            or Win32Input is None
+            or ConsoleInputReader is None
+            or _ShiftAwareConsoleInputReader is None
+        ):
+            return None
+        try:
+            input_adapter = create_input()
+        except OSError:
+            return None
+        reader = getattr(input_adapter, "console_input_reader", None)
+        if not isinstance(input_adapter, Win32Input) or not isinstance(
+            reader, ConsoleInputReader
+        ):
+            input_adapter.close()
+            return None
+        try:
+            replacement = _ShiftAwareConsoleInputReader()
+        except OSError:
+            input_adapter.close()
+            return None
+        reader.close()
+        input_adapter.console_input_reader = replacement
+        return input_adapter
+
+    def _input_height(self) -> Dimension:
+        buffer = getattr(getattr(self, "input", None), "buffer", None)
+        if buffer is None:
+            return Dimension.exact(1)
+        line_count = buffer.document.line_count
+        return Dimension.exact(min(6, max(1, line_count)))
+
+    def _build_input_history(self):
+        history = InMemoryHistory()
+        store = getattr(self.owner, "store", None)
+        session_id = getattr(self.owner, "session_id", "")
+        if store is None or not session_id:
+            return history
+        try:
+            messages = store.load_messages(session_id)
+        except (OSError, ValueError):
+            return history
+        for item in messages:
+            if item["role"] == "user" and item["content"].strip():
+                history.append_string(item["content"])
+        return history
+
+    def refresh_input_history(self) -> None:
+        if InMemoryHistory is None:
+            return
+        history = self._build_input_history()
+
+        def replace_history() -> None:
+            document = self.input.buffer.document
+            self.input.buffer.history = history
+            self.input.buffer.reset(document=document)
+            self.app.invalidate()
+
+        loop = getattr(self.app, "loop", None)
+        if getattr(self.app, "_is_running", False) and loop is not None:
+            loop.call_soon_threadsafe(replace_history)
+            return
+        replace_history()
 
     def _header_text(self) -> str:
         model = getattr(self.owner, "llm_model", "-") or "-"
@@ -303,6 +542,38 @@ class TerminalChatUI:
         self.write_plain(message)
         self._set_status(status)
 
+    def _handle_eof(self, event) -> None:  # noqa: ANN001
+        buffer = event.current_buffer
+        if buffer.text:
+            buffer.delete()
+            return
+        self._handle_interrupt(event, exit_after=True)
+
+    @staticmethod
+    def _clear_input(buffer) -> None:  # noqa: ANN001
+        before_cursor = buffer.document.text_before_cursor
+        line_prefix = before_cursor.rsplit("\n", 1)[-1]
+        line_suffix = buffer.document.text_after_cursor.split("\n", 1)[0]
+        buffer.delete_before_cursor(count=len(line_prefix))
+        buffer.delete(count=len(line_suffix))
+
+    @staticmethod
+    def _delete_to_end(buffer) -> None:  # noqa: ANN001
+        line_suffix = buffer.document.text_after_cursor.split("\n", 1)[0]
+        buffer.delete(count=len(line_suffix))
+
+    @staticmethod
+    def _delete_previous_word(buffer) -> None:  # noqa: ANN001
+        line_before_cursor = buffer.document.text_before_cursor.rsplit("\n", 1)[-1]
+        trimmed = line_before_cursor.rstrip()
+        if not trimmed:
+            buffer.delete_before_cursor(count=len(line_before_cursor))
+            return
+        word_start = len(trimmed)
+        while word_start and not trimmed[word_start - 1].isspace():
+            word_start -= 1
+        buffer.delete_before_cursor(count=len(line_before_cursor) - word_start)
+
     def _set_cancel_event(self, cancel_event: threading.Event) -> None:
         commit_lock = getattr(self.owner, "_commit_lock", None)
         if commit_lock is None:
@@ -311,24 +582,54 @@ class TerminalChatUI:
         with commit_lock:
             cancel_event.set()
 
+    @staticmethod
+    def _is_newline_shortcut(event) -> bool:  # noqa: ANN001
+        key_sequence = getattr(event, "key_sequence", ())
+        if not key_sequence:
+            return False
+        return getattr(key_sequence[-1], "data", "") in _NEWLINE_ENTER_DATA
+
+    @staticmethod
+    def _insert_newline(buffer) -> None:  # noqa: ANN001
+        buffer.newline(copy_margin=False)
+
+    def _handle_enter(self, event) -> None:  # noqa: ANN001
+        if self._is_newline_shortcut(event):
+            self._insert_newline(event.current_buffer)
+            return
+        with self.lock:
+            busy = self.busy
+        if busy:
+            # Avoid adding an unsent draft to prompt_toolkit history while the
+            # current turn is still running.
+            self._accept(event.current_buffer)
+            return
+        event.current_buffer.validate_and_handle()
+
     def _accept(self, buffer) -> bool:  # noqa: ANN001
-        message = buffer.text.strip()
-        buffer.text = ""
-        if not message:
-            return True
+        message = buffer.text.strip("\r\n")
+        if not message.strip():
+            buffer.text = ""
+            return False
         with self.lock:
             if self.busy:
                 busy = True
             else:
                 busy = False
         if busy:
-            self.write_plain("⏳ 上一轮仍在处理；按 Ctrl+C 取消，或 Ctrl+Q 取消并退出。")
+            self.write_plain(
+                "⏳ 上一轮仍在处理；草稿已保留。按 Esc/Ctrl+C 取消，或等待本轮完成。"
+            )
             return True
+        if buffer.text != message:
+            # Keep the history entry identical to the text sent to the agent;
+            # a final Shift+Enter should not leave a phantom blank line.
+            buffer.text = message
         self.write_user_message(message)
         if message.casefold() in {"/exit", "/quit"}:
             self.write_plain("👋 Leon Agent 已退出。")
             self.app.exit()
-            return True
+            return False
 
         cancel_event = threading.Event()
         with self.lock:
@@ -345,7 +646,7 @@ class TerminalChatUI:
                 daemon=False,
             )
             self._active_thread = thread
-        self._set_status("◐ 处理中 · Ctrl+C 取消当前轮 · Ctrl+Q 取消并退出")
+        self._set_status("◐ 处理中 · Esc/Ctrl+C 取消 · Ctrl+Q 取消并退出")
         try:
             thread.start()
         except Exception:
@@ -355,7 +656,7 @@ class TerminalChatUI:
                 self._active_thread = None
                 self._started_at = None
             raise
-        return True
+        return False
 
     def _run_message(
         self,
@@ -434,6 +735,8 @@ class LeonConsole:
         self.llm_config_label = ""
         self.llm_timeout_seconds = 0.0
         self.llm_max_retries = 0
+        self._last_user_message = ""
+        self._last_answer = ""
         self._progress: Progress | None = None
         self._progress_task_id: int | None = None
         self._commit_lock = threading.Lock()
@@ -549,16 +852,19 @@ class LeonConsole:
         body.append("🛑  Cancel    ", style="bold yellow")
         body.append("协作式取消；在途同步请求按超时边界收敛\n", style="dim")
         body.append(
-            "✨ /model 选模型    🖼 /nsfw 直达生图    🕹 /history 找会话    ℹ /status 状态\n",
+            "✨ /model 选模型    🧰 /tools 工具    🕹 /history /resume 会话    ↻ /retry 重试\n",
             style="white",
         )
-        body.append("🚀 直接输入问题即可聊天；Ctrl+C 取消当前轮，Ctrl+Q 取消并退出", style="dim")
+        body.append(
+            "🚀 Enter 发送；Shift+Enter 换行（不兼容终端用 Ctrl+Enter）",
+            style="dim",
+        )
 
         self.print(
             Panel(
                 body,
                 title=title,
-                subtitle="Enter 发送 · /help 命令 · Ctrl+C 取消 · Ctrl+Q 退出",
+                subtitle="Enter 发送 · Shift+Enter 换行 · /help 命令",
                 border_style="cyan",
                 padding=(1, 2),
             )
@@ -631,7 +937,7 @@ class LeonConsole:
                 return
         if event.kind == "turn_started":
             if ui is not None:
-                ui._set_status(f"◐ 模型思考中 · 第 {event.turn} 轮 · Ctrl+C 取消")
+                ui._set_status(f"◐ 模型思考中 · 第 {event.turn} 轮 · Esc/Ctrl+C 取消")
             return
         if event.kind == "cancelled":
             if ui is not None:
@@ -654,6 +960,7 @@ class LeonConsole:
                 self.print(f"[red]✗[/red] [dim]{event.tool_name} 失败[/dim]")
 
     def _print_answer(self, answer: str) -> None:
+        self._last_answer = answer
         self.print(
             Panel(
                 Markdown(answer),
@@ -689,6 +996,9 @@ class LeonConsole:
 
     def process(self, message: str) -> bool:
         stripped = message.strip()
+        if not stripped:
+            return True
+        self._last_user_message = message
         try:
             self._check_active_turn()
             if stripped.casefold() == "/nsfw" or stripped.casefold().startswith("/nsfw "):
@@ -785,13 +1095,142 @@ class LeonConsole:
         return True
 
     def show_history(self) -> None:
-        table = Table("Session", "Messages", "Updated")
-        for item in self.store.list_sessions():
+        table = Table("#", "Session", "Messages", "Last user", "Updated", "Current")
+        for index, item in enumerate(self.store.list_sessions(), start=1):
+            messages = self.store.load_messages(item["id"], limit=8)
+            last_user = next(
+                (
+                    message["content"]
+                    for message in reversed(messages)
+                    if message["role"] == "user"
+                ),
+                "",
+            )
+            preview = " ".join(last_user.split())
+            if len(preview) > 36:
+                preview = preview[:35] + "…"
             table.add_row(
+                str(index),
                 item["id"],
                 str(item["message_count"]),
+                preview or "-",
                 str(item["updated_at"]),
+                "*" if item["id"] == self.session_id else "",
             )
+        self.print(table)
+
+    def resume_session(self, value: str) -> None:
+        reference = value.strip()
+        if not reference:
+            self.print("[yellow]用法：/resume <会话ID或 /history 序号>[/yellow]")
+            self.show_history()
+            return
+
+        session_id = reference
+        if reference.isdigit():
+            index = int(reference)
+            sessions = self.store.list_sessions(limit=max(10, index))
+            if index < 1 or index > len(sessions):
+                self.print(f"[red]历史序号不存在：{reference}[/red]")
+                return
+            session_id = sessions[index - 1]["id"]
+        if not self.store.has_session(session_id):
+            self.print(f"[red]会话不存在：{reference}[/red]")
+            return
+        if session_id == self.session_id:
+            self.print(f"[dim]已经在会话 {session_id} 中。[/dim]")
+            return
+
+        self.session_id = session_id
+        self.model_selection = self.store.get_model_selection(session_id)
+        self._last_user_message = next(
+            (
+                item["content"]
+                for item in reversed(self.store.load_messages(session_id))
+                if item["role"] == "user"
+            ),
+            "",
+        )
+        self._last_answer = next(
+            (
+                item["content"]
+                for item in reversed(self.store.load_messages(session_id))
+                if item["role"] == "assistant"
+            ),
+            "",
+        )
+        self.agent = self._create_agent()
+        ui = getattr(self, "ui", None)
+        if ui is not None:
+            ui.refresh_input_history()
+        self.print(f"[green]已切换会话[/green] {session_id}")
+
+    def retry_last_message(self) -> bool:
+        message = getattr(self, "_last_user_message", "") or ""
+        if not message.strip():
+            message = next(
+                (
+                    item["content"]
+                    for item in reversed(self.store.load_messages(self.session_id))
+                    if item["role"] == "user"
+                ),
+                "",
+            )
+        if not message.strip():
+            self.print("[yellow]还没有可重试的请求。[/yellow]")
+            return False
+        self.print("[cyan]↻ 正在重试上一条请求（会追加一轮记录）…[/cyan]")
+        return self.process(message)
+
+    def _last_answer_text(self) -> str:
+        answer = getattr(self, "_last_answer", "") or ""
+        if answer.strip():
+            return answer
+        return next(
+            (
+                item["content"]
+                for item in reversed(self.store.load_messages(self.session_id))
+                if item["role"] == "assistant" and item["content"].strip()
+            ),
+            "",
+        )
+
+    def show_last_answer(self) -> bool:
+        answer = self._last_answer_text()
+        if not answer:
+            self.print("[yellow]当前会话还没有可显示的回答。[/yellow]")
+            return False
+        self._print_answer(answer)
+        return True
+
+    def copy_last_answer(self) -> bool:
+        answer = self._last_answer_text()
+        if not answer:
+            self.print("[yellow]当前会话还没有可复制的回答。[/yellow]")
+            return False
+        executable = _copy_to_clipboard(answer)
+        if executable is None:
+            self.print(
+                "[yellow]未找到可用剪贴板命令；可先用 /last 查看，再从终端复制。[/yellow]"
+            )
+            return False
+        self.print(f"[green]✓ 已复制上一条回答[/green] [dim]({Path(executable).name})[/dim]")
+        return True
+
+    def show_tools(self) -> None:
+        registry = getattr(getattr(self.agent, "runtime", None), "tools", None)
+        schemas = getattr(registry, "schemas", [])
+        table = Table("Tool", "Description", "Mode")
+        for schema in schemas:
+            function = schema.get("function", {})
+            table.add_row(
+                str(function.get("name") or "-"),
+                str(function.get("description") or "-"),
+                "model tool",
+            )
+        if not schemas:
+            self.print("[yellow]当前 Agent 没有可展示的工具。[/yellow]")
+            return
         self.print(table)
 
     def show_status(self) -> None:
@@ -872,31 +1311,59 @@ class LeonConsole:
     def new_session(self) -> None:
         self.session_id = self.store.create_session()
         self.model_selection = None
+        self._last_user_message = ""
+        self._last_answer = ""
         self.agent = self._create_agent()
+        ui = getattr(self, "ui", None)
+        if ui is not None:
+            ui.refresh_input_history()
         self.print(f"[green]✓[/green] 新会话 [bold]{self.session_id}[/bold]")
 
     def handle_interactive_message(self, message: str) -> bool:
         """Handle one command or chat turn for either terminal frontend."""
-        message = message.strip()
-        if not message:
+        message = message.strip("\r\n")
+        command = message.strip()
+        if not command:
             return True
+        command_parts = command.split(maxsplit=1)
+        command_name = command_parts[0].casefold()
+        command_argument = command_parts[1] if len(command_parts) > 1 else ""
         self._check_active_turn()
-        if message in {"/exit", "/quit"}:
+        if command_name in {"/exit", "/quit"} and not command_argument:
             self.print("[dim]Leon Agent 已退出。[/dim]")
             return False
-        if message == "/new":
+        if command_name == "/new" and not command_argument:
             self.new_session()
             self._check_active_turn()
             return True
-        if message == "/history":
+        if command_name == "/history" and not command_argument:
             self.show_history()
             self._check_active_turn()
             return True
-        if message == "/status":
+        if command_name == "/resume":
+            self.resume_session(command_argument)
+            self._check_active_turn()
+            return True
+        if command_name == "/retry" and not command_argument:
+            self.retry_last_message()
+            return True
+        if command_name == "/last" and not command_argument:
+            self.show_last_answer()
+            self._check_active_turn()
+            return True
+        if command_name == "/copy" and not command_argument:
+            self.copy_last_answer()
+            self._check_active_turn()
+            return True
+        if command_name == "/tools" and not command_argument:
+            self.show_tools()
+            self._check_active_turn()
+            return True
+        if command_name == "/status" and not command_argument:
             self.show_status()
             self._check_active_turn()
             return True
-        if message == "/clear":
+        if command_name == "/clear" and not command_argument:
             ui = getattr(self, "ui", None)
             if ui is not None:
                 ui.clear_output()
@@ -905,26 +1372,35 @@ class LeonConsole:
                 self.console.clear()
             self._check_active_turn()
             return True
-        if message == "/model":
+        if command_name == "/model" and not command_argument:
             self.show_models()
             self._check_active_turn()
             return True
-        if message.startswith("/model "):
-            self.switch_model(message.removeprefix("/model "))
+        if command_name == "/model":
+            self.switch_model(command_argument)
             self._check_active_turn()
             return True
-        if message == "/help":
+        if command_name == "/help" and not command_argument:
             self.print(
                 Panel(
                     "[bold]/new[/bold] 新会话\n"
                     "[bold]/history[/bold] 会话列表\n"
+                    "[bold]/resume <ID或序号>[/bold] 切换已有会话\n"
+                    "[bold]/retry[/bold] 重试上一条请求（追加一轮记录）\n"
+                    "[bold]/last[/bold] 重新显示上一条回答\n"
+                    "[bold]/copy[/bold] 复制上一条回答到系统剪贴板\n"
+                    "[bold]/tools[/bold] 查看当前 Agent 已注册工具\n"
                     "[bold]/status[/bold] 当前模型、provider、会话状态\n"
                     "[bold]/model[/bold] 查看模型\n"
                     "[bold]/model <序号或模型ID>[/bold] 切换模型\n"
                     "[bold]/clear[/bold] 清空当前终端滚动区\n"
                     "[bold]/nsfw <描述>[/bold] 跳过 LLM，直接用 NSFW 模式生图\n"
                     "[bold]/exit[/bold] 退出\n\n"
-                    "[dim]快捷键：Ctrl+C 取消当前轮 · Ctrl+Q 取消并退出 · Ctrl+L 清屏[/dim]\n\n"
+                    "[dim]快捷键：Enter 发送 · Shift+Enter 换行"
+                    "（终端不兼容时 Ctrl+Enter 或 Esc+Enter）\n"
+                    "Esc/Ctrl+C 取消当前轮 · Ctrl+D/Q 退出 · Ctrl+L 清屏\n"
+                    "Ctrl+U 清空输入 · Ctrl+K 删除到行尾 · Ctrl+W 删除前一词\n"
+                    "↑/↓ 当前会话输入历史 · Tab 补全斜杠命令[/dim]\n\n"
                     "[dim]你也可以直接说：检查环境、生成图片、查询任务、查看最近图片。[/dim]",
                     title="Leon 命令",
                     border_style="dim",
@@ -932,12 +1408,12 @@ class LeonConsole:
             )
             self._check_active_turn()
             return True
-        if message.casefold() == "/nsfw" or message.casefold().startswith("/nsfw "):
-            self.process(message)
+        if command_name == "/nsfw":
+            self.process(command)
             return True
-        if message.startswith("/"):
+        if command.startswith("/"):
             self.print(
-                f"[yellow]未知命令：{message.split(maxsplit=1)[0]}[/yellow] · "
+                f"[yellow]未知命令：{command.split(maxsplit=1)[0]}[/yellow] · "
                 "输入 /help 查看可用命令"
             )
             return True

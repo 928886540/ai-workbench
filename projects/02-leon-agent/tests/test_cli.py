@@ -2,9 +2,15 @@ import threading
 from io import StringIO
 from types import SimpleNamespace
 
+import leon_agent.cli as cli_module
 import pytest
-from leon_agent.cli import LeonConsole, TerminalChatUI, parse_args
+from leon_agent.cli import LeonConsole, TerminalChatUI, _is_native_shift_enter, parse_args
 from leon_agent.session import SessionStore
+from prompt_toolkit.application import create_app_session
+from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.document import Document
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from workbench_core.agent import AgentResult
 from workbench_core.agent.runtime import cancellation_scope, current_cancel_event
@@ -230,6 +236,140 @@ def test_switch_model_refreshes_catalog_after_provider_change(tmp_path) -> None:
     )
 
 
+def test_resume_session_switches_by_history_index_without_provider_call(tmp_path) -> None:  # noqa: ANN001
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    first = cli.store.create_session()
+    second = cli.store.create_session()
+    cli.store.add_message(first, "user", "旧会话")
+    cli.store.add_message(second, "user", "新会话")
+    sessions = cli.store.list_sessions()
+    target = sessions[0]["id"]
+    current = sessions[1]["id"]
+    cli.session_id = current
+    cli.model_selection = None
+    cli.console = Console(quiet=True)
+    created_for = []
+
+    def fake_create_agent():
+        created_for.append(cli.session_id)
+        return object()
+
+    cli._create_agent = fake_create_agent  # type: ignore[method-assign]
+
+    cli.resume_session("1")
+
+    assert cli.session_id == target
+    assert created_for == [target]
+    expected_prompt = "新会话" if target == second else "旧会话"
+    assert cli._last_user_message == expected_prompt
+    assert cli.store.has_session(cli.session_id)
+
+
+def test_history_list_marks_current_session_and_shows_last_user_preview(tmp_path) -> None:  # noqa: ANN001
+    output = StringIO()
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.store.add_message(cli.session_id, "user", "最后一条\n用户消息")
+    cli.store.add_message(cli.session_id, "assistant", "回答")
+    cli.console = Console(file=output, width=180, force_terminal=False)
+
+    cli.show_history()
+
+    rendered = output.getvalue()
+    assert "Last user" in rendered
+    assert "最后一条 用户消息" in rendered
+    assert "*" in rendered
+
+
+def test_resume_command_dispatches_id_to_session_switcher() -> None:
+    calls = []
+    cli = LeonConsole.__new__(LeonConsole)
+    cli._check_active_turn = lambda: None  # type: ignore[method-assign]
+    cli.resume_session = lambda value: calls.append(value)  # type: ignore[method-assign]
+
+    assert cli.handle_interactive_message("/resume session-42") is True
+    assert calls == ["session-42"]
+
+
+def test_slash_commands_are_case_insensitive() -> None:
+    calls = []
+    cli = LeonConsole.__new__(LeonConsole)
+    cli._check_active_turn = lambda: None  # type: ignore[method-assign]
+    cli.resume_session = lambda value: calls.append(value)  # type: ignore[method-assign]
+
+    assert cli.handle_interactive_message("/ReSuMe 2") is True
+    assert calls == ["2"]
+
+
+def test_tools_command_renders_registered_tool_schemas() -> None:
+    output = StringIO()
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.console = Console(file=output, width=160, force_terminal=False)
+    cli.agent = SimpleNamespace(
+        runtime=SimpleNamespace(
+            tools=SimpleNamespace(
+                schemas=[
+                    {
+                        "function": {
+                            "name": "generate_images",
+                            "description": "Generate images",
+                        }
+                    }
+                ]
+            )
+        )
+    )
+    cli._check_active_turn = lambda: None  # type: ignore[method-assign]
+
+    assert cli.handle_interactive_message("/TOOLS") is True
+
+    rendered = output.getvalue()
+    assert "generate_images" in rendered
+    assert "Generate images" in rendered
+
+
+def test_last_and_copy_use_latest_assistant_answer(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    output = StringIO()
+    copied = []
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.store.add_message(cli.session_id, "user", "问题")
+    cli.store.add_message(cli.session_id, "assistant", "**最后回答**")
+    cli.console = Console(file=output, width=120, force_terminal=False)
+    cli._last_answer = ""
+    cli._check_active_turn = lambda: None  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        cli_module,
+        "_copy_to_clipboard",
+        lambda text: copied.append(text) or "fake-clipboard",
+    )
+
+    assert cli.handle_interactive_message("/LAST") is True
+    assert cli.handle_interactive_message("/COPY") is True
+
+    assert copied == ["**最后回答**"]
+    assert "最后回答" in output.getvalue()
+    assert "已复制上一条回答" in output.getvalue()
+
+
+def test_copy_without_answer_is_a_noop(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.console = Console(quiet=True)
+    cli._last_answer = ""
+    monkeypatch.setattr(
+        cli_module,
+        "_copy_to_clipboard",
+        lambda text: pytest.fail(f"clipboard called unexpectedly: {text}"),
+    )
+
+    assert cli.copy_last_answer() is False
+
+
 def _make_process_cli(tmp_path, agent):  # noqa: ANN001
     cli = LeonConsole.__new__(LeonConsole)
     cli.store = SessionStore(tmp_path / "leon.db")
@@ -313,6 +453,78 @@ def test_next_cli_turn_succeeds_after_cancelled_turn(tmp_path) -> None:  # noqa:
     ]
 
 
+def test_retry_replays_last_prompt_and_appends_a_new_turn(tmp_path) -> None:  # noqa: ANN001
+    class RetryAgent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, message, *, history):  # noqa: ANN001, ARG002
+            self.calls += 1
+            return AgentResult(answer=f"answer-{self.calls}")
+
+    agent = RetryAgent()
+    cli = _make_process_cli(tmp_path, agent)
+
+    assert cli.process("请再回答一次") is True
+    assert cli.retry_last_message() is True
+
+    assert agent.calls == 2
+    assert cli.store.load_messages(cli.session_id) == [
+        {"role": "user", "content": "请再回答一次"},
+        {"role": "assistant", "content": "answer-1"},
+        {"role": "user", "content": "请再回答一次"},
+        {"role": "assistant", "content": "answer-2"},
+    ]
+
+
+def test_retry_reuses_cancelled_prompt_after_worker_returns(tmp_path) -> None:  # noqa: ANN001
+    started = threading.Event()
+    release = threading.Event()
+
+    class RetryAfterCancelAgent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, message, *, history):  # noqa: ANN001, ARG002
+            self.calls += 1
+            if self.calls == 1:
+                started.set()
+                release.wait(timeout=2)
+                return AgentResult(answer="迟到")
+            return AgentResult(answer="重试成功")
+
+    agent = RetryAfterCancelAgent()
+    cli = _make_process_cli(tmp_path, agent)
+    cancel_event = threading.Event()
+    outcome = []
+
+    def run_first() -> None:
+        with cancellation_scope(cancel_event):
+            outcome.append(cli.process("网络抖了一下"))
+
+    worker = threading.Thread(target=run_first)
+    worker.start()
+    assert started.wait(timeout=1)
+    cancel_event.set()
+    release.set()
+    worker.join(timeout=1)
+
+    assert outcome == [False]
+    assert cli.retry_last_message() is True
+    assert agent.calls == 2
+    assert cli.store.load_messages(cli.session_id) == [
+        {"role": "user", "content": "网络抖了一下"},
+        {"role": "assistant", "content": "重试成功"},
+    ]
+
+
+def test_retry_without_any_prompt_is_a_noop(tmp_path) -> None:  # noqa: ANN001
+    cli = _make_process_cli(tmp_path, SuccessfulAgent())
+
+    assert cli.retry_last_message() is False
+    assert cli.store.load_messages(cli.session_id) == []
+
+
 def test_terminal_ui_ctrl_c_cancels_current_worker_and_ctrl_q_waits_for_exit(
     monkeypatch,
 ) -> None:  # noqa: ANN001
@@ -375,6 +587,391 @@ def test_terminal_ui_ctrl_c_cancels_current_worker_and_ctrl_q_waits_for_exit(
     assert not worker.is_alive()
     assert ui.busy is False
     assert fake_app.exited is True
+
+
+def test_terminal_ui_enter_sends_and_shift_enter_inserts_newline(monkeypatch) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    class FakeBuffer:
+        def __init__(self) -> None:
+            self.accepted = 0
+            self.newlines = []
+
+        def validate_and_handle(self) -> None:
+            self.accepted += 1
+
+        def newline(self, *, copy_margin) -> None:  # noqa: ANN001
+            self.newlines.append(copy_margin)
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+    buffer = FakeBuffer()
+
+    ui._handle_enter(
+        SimpleNamespace(
+            current_buffer=buffer,
+            key_sequence=[SimpleNamespace(data="\r")],
+        )
+    )
+    ui._handle_enter(
+        SimpleNamespace(
+            current_buffer=buffer,
+            key_sequence=[SimpleNamespace(data="\x1b[27;2;13~")],
+        )
+    )
+    ui._handle_enter(
+        SimpleNamespace(
+            current_buffer=buffer,
+            key_sequence=[SimpleNamespace(data="\x1b[27;5;13~")],
+        )
+    )
+
+    assert ui.input.buffer.multiline()
+    assert ui._input_height().preferred == 1
+    assert ui.input.window.preferred_height(80, 20).preferred == 1
+    ui.input.buffer.text = "a\nb\nc\nd\ne\nf\ng"
+    assert ui._input_height().preferred == 6
+    assert ui.input.window.preferred_height(80, 20).preferred == 6
+    assert buffer.accepted == 1
+    assert buffer.newlines == [False, False]
+
+
+def test_terminal_ui_command_completion_includes_descriptions(monkeypatch) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+
+    completions = list(
+        ui.input.completer.get_completions(
+            Document("/re", cursor_position=3),
+            CompleteEvent(completion_requested=True),
+        )
+    )
+
+    assert [(item.text, item.display_meta_text) for item in completions] == [
+        ("/resume", "切换已有会话"),
+        ("/retry", "重试上一条请求"),
+    ]
+
+
+def test_terminal_ui_history_follows_session_and_preserves_draft(
+    monkeypatch,
+    tmp_path,
+) -> None:  # noqa: ANN001
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    store = SessionStore(tmp_path / "leon.db")
+    first_session = store.create_session()
+    second_session = store.create_session()
+    store.add_message(first_session, "user", "第一问")
+    store.add_message(first_session, "assistant", "第一答")
+    store.add_message(first_session, "user", "第二问")
+    store.add_message(second_session, "user", "另一个会话的问题")
+    owner = SimpleNamespace(
+        llm_model="fake-model",
+        llm_provider_name="fake-provider",
+        session_id=first_session,
+        store=store,
+    )
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(owner)
+
+    assert ui.input.buffer.history.get_strings() == ["第一问", "第二问"]
+
+    ui.input.buffer.text = "未发送草稿"
+    owner.session_id = second_session
+    ui.refresh_input_history()
+
+    assert ui.input.buffer.text == "未发送草稿"
+    assert ui.input.buffer.history.get_strings() == ["另一个会话的问题"]
+
+
+def test_terminal_ui_ctrl_d_deletes_draft_then_exits_when_empty(monkeypatch) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            self.exited = False
+
+        def exit(self) -> None:
+            self.exited = True
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+    ui.input.buffer.text = "draft"
+    ui.input.buffer.cursor_position = 0
+    event = SimpleNamespace(current_buffer=ui.input.buffer, app=ui.app)
+
+    ui._handle_eof(event)
+
+    assert ui.input.buffer.text == "raft"
+    assert ui.app.exited is False
+
+    ui.input.buffer.text = ""
+    ui._handle_eof(event)
+
+    assert ui.app.exited is True
+
+
+def test_terminal_ui_input_editing_shortcuts(monkeypatch) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+    buffer = ui.input.buffer
+
+    buffer.text = "alpha beta   "
+    buffer.cursor_position = len(buffer.text)
+    ui._delete_previous_word(buffer)
+    assert buffer.text == "alpha "
+
+    buffer.text = "left right"
+    buffer.cursor_position = len("left")
+    ui._delete_to_end(buffer)
+    assert buffer.text == "left"
+
+    buffer.text = "clear everything"
+    buffer.cursor_position = len("clear")
+    ui._clear_input(buffer)
+    assert buffer.text == ""
+
+    buffer.text = "first line\nsecond line"
+    buffer.cursor_position = len("first line\nsecond")
+    ui._delete_to_end(buffer)
+    assert buffer.text == "first line\nsecond"
+
+    buffer.text = "first line\nsecond word"
+    buffer.cursor_position = len("first line\nsecond word")
+    ui._delete_previous_word(buffer)
+    assert buffer.text == "first line\nsecond "
+
+    buffer.text = "first line\nsecond line"
+    buffer.cursor_position = len("first line\nsecond")
+    ui._clear_input(buffer)
+    assert buffer.text == "first line\n"
+
+
+def test_copy_to_clipboard_uses_available_platform_helper(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(cli_module.sys, "platform", "linux")
+    monkeypatch.setattr(
+        cli_module.shutil,
+        "which",
+        lambda name: "/usr/bin/xclip" if name == "xclip" else None,
+    )
+
+    def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+
+    executable = cli_module._copy_to_clipboard("answer")
+
+    assert executable == "/usr/bin/xclip"
+    assert calls[0][0] == ["/usr/bin/xclip", "-selection", "clipboard"]
+    assert calls[0][1]["input"] == "answer"
+
+
+def test_native_shift_enter_detection_rejects_ctrl_alt_and_other_keys() -> None:
+    record = SimpleNamespace(VirtualKeyCode=13, ControlKeyState=0x0010)
+    assert _is_native_shift_enter(record) is True
+    assert _is_native_shift_enter(
+        SimpleNamespace(VirtualKeyCode=13, ControlKeyState=0x0018)
+    ) is False
+    assert _is_native_shift_enter(
+        SimpleNamespace(VirtualKeyCode=13, ControlKeyState=0x0011)
+    ) is False
+    assert _is_native_shift_enter(
+        SimpleNamespace(VirtualKeyCode=65, ControlKeyState=0x0010)
+    ) is False
+
+
+@pytest.mark.parametrize(
+    "newline_key",
+    [
+        pytest.param("\x1b[27;2;13~", id="xterm-shift-enter"),
+        pytest.param("\x1b[13;2u", id="kitty-shift-enter"),
+        pytest.param("\x1b[27;5;13~", id="xterm-ctrl-enter"),
+        pytest.param("\x1b\r", id="escape-enter"),
+    ],
+)
+def test_terminal_ui_modified_enter_sequences_create_multiline_prompt(
+    newline_key,
+) -> None:  # noqa: ANN001
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+        def __init__(self) -> None:
+            self.messages = []
+
+        def handle_interactive_message(self, message):  # noqa: ANN001
+            self.messages.append(message)
+            return False
+
+    with create_pipe_input() as pipe_input:
+        with create_app_session(input=pipe_input, output=DummyOutput()):
+            owner = FakeOwner()
+            ui = TerminalChatUI(owner)
+            owner.ui = ui
+            ui.app.run(
+                pre_run=lambda: pipe_input.send_text(f"one{newline_key}two\r")
+            )
+
+    assert owner.messages == ["one\ntwo"]
+    assert ui.input.buffer.history.get_strings() == ["one\ntwo"]
+
+
+def test_terminal_ui_keeps_draft_when_previous_turn_is_busy(monkeypatch) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+    ui.busy = True
+    ui.input.buffer.text = "第二轮草稿\n仍然保留"
+
+    ui._handle_enter(
+        SimpleNamespace(
+            current_buffer=ui.input.buffer,
+            key_sequence=[SimpleNamespace(data="\r")],
+        )
+    )
+
+    assert ui.input.buffer.text == "第二轮草稿\n仍然保留"
+    assert ui.input.buffer.history.get_strings() == []
+    assert "草稿已保留" in ui.blocks[-1]
+    assert ui._active_thread is None
+
+
+def test_terminal_ui_ignores_whitespace_without_polluting_history(monkeypatch) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+    ui.input.buffer.text = "   \n"
+
+    ui.input.buffer.validate_and_handle()
+
+    assert ui.input.buffer.text == ""
+    assert ui.input.buffer.history.get_strings() == []
+    assert ui._active_thread is None
+
+
+def test_terminal_ui_preserves_multiline_prompt_indentation(monkeypatch) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    messages = []
+
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+        def handle_interactive_message(self, message):  # noqa: ANN001
+            messages.append(message)
+            started.set()
+            release.wait(timeout=2)
+            return True
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            self.exited = False
+
+        def exit(self) -> None:
+            self.exited = True
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+    ui.input.buffer.text = "  请解释代码\n    value = 1\n"
+
+    ui.input.buffer.validate_and_handle()
+    assert started.wait(timeout=1)
+    worker = ui._active_thread
+    assert worker is not None
+    release.set()
+    worker.join(timeout=1)
+
+    assert messages == ["  请解释代码\n    value = 1"]
+    assert ui.input.buffer.text == ""
+    assert ui.input.buffer.history.get_strings() == ["  请解释代码\n    value = 1"]
+    assert not worker.is_alive()
+
+
+def test_interactive_chat_preserves_multiline_prompt_indentation() -> None:
+    calls = []
+    cli = LeonConsole.__new__(LeonConsole)
+    cli._check_active_turn = lambda: None  # type: ignore[method-assign]
+    cli.process = lambda message: calls.append(message)  # type: ignore[method-assign]
+
+    assert cli.handle_interactive_message("  请解释代码\n    value = 1\n") is True
+    assert calls == ["  请解释代码\n    value = 1"]
 
 
 def test_interactive_nsfw_command_is_not_treated_as_unknown_slash_command() -> None:
