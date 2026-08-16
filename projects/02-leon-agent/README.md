@@ -6,7 +6,7 @@
 
 ## 当前能力
 
-- `leon` 交互式 CLI / REPL
+- `leon` 日用全屏 TUI：可滚动聊天记录、1～6 行动态输入框、SQLite 输入历史和 Rich 非 TTY fallback
 - `leon-server`：FastAPI Gateway + SSE + 手机 PWA Web Client
 - 普通问题直接聊天，不调用工具
 - 明确生图请求优先路由工具，用户原话作为 `source_text` 透传，不由 Agent 扩写 Prompt
@@ -81,14 +81,23 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 
 - `/new`：创建新会话
 - `/history`：查看本地会话
+- `/resume <会话ID或历史序号>`：在当前 TUI 内切换已有会话
+- `/retry`：重试上一条请求，并追加一轮会话记录
+- `/last` / `/copy`：重新显示或复制上一条回答
+- `/tools` / `/status`：查看已注册工具或当前运行状态
 - `/model`：显示当前模型与可选模型
 - `/model <序号或任意模型ID>`：切换当前 session 的模型
 - `/model default`：恢复 `~/.codex/config.toml` 的默认模型
+- `/clear`：清空当前终端滚动区
 - `/nsfw <描述>`：绕过 LLM，使用默认的玛莉卡模式直接生图
 - `/nsfw --model <中文名或模式ID> <描述>`：指定生图模式，例如
   `/nsfw --model 蒂法增强 生成一张雨夜人像`
 - `/nsfw` 或 `/nsfw --models`：列出当前安装模式的中文名和真实 ID
 - `/exit`：退出
+
+全屏 TUI 中 Enter 发送，Shift+Enter 换行；终端不支持修饰键时可用 Ctrl+Enter 或 Esc+Enter。
+Esc/Ctrl+C 会协作式取消当前轮并丢弃迟到结果，Ctrl+D/Q 退出。同步 HTTP 在途读取无法安全硬中断，
+因此取消后仍可能等待 provider 返回或 30 秒超时，但不会继续后续 LLM/tool 轮，也不会持久化或渲染迟到结果。
 
 启动时直接读取 CC Switch 写入的 `~/.codex/config.toml`，使用其中当前 provider 的
 `base_url`、`experimental_bearer_token` 和顶层 `model`。`/model` 接受列表序号或任意新

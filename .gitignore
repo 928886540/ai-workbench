@@ -8,6 +8,7 @@ venv/
 dist/
 build/
 .pytest_cache/
+.cli-test-tmp/
 .ruff_cache/
 .mypy_cache/
 .coverage

@@ -12,6 +12,8 @@
 
 ## 当前主线（2026-08-16）
 
+- 当前集成分支：`feat/leon-model-switch`；Web/Gateway SSE 恢复基线为 `df7e92e`，
+  CLI 日用 TUI 基线为 `d520df9`，两条并行改造均已统一审查并推送
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
 - `02-leon-agent`：独立 `leon` CLI、SQLite、5 个生图工具已完成第一版
@@ -41,11 +43,13 @@
   `data/system-prompts/双人成行预设.txt`，CLI 与 Web Gateway 都已接入
 - Web 修复（2026-08-15）：旧 session 聊天记录恢复渲染、任务/图库按 `created_at` 最新优先、
   全屏图片 edge-to-edge `cover` 显示；legacy SW 缓存升到 v17，Vue SW 当前为 v8
-- CLI 已完成第一版全屏 TUI：交互终端使用上方滚动区 + 底部 Enter 输入框，启动面板展示
-  model/provider/base URL/config source；非 TTY 继续使用 Rich fallback。`generate_images` 工具
-  采用 `return_direct`，图片任务完成后直接输出结果，避免再发一轮 provider 请求（低 RPM provider 必须如此）。
-- CLI 普通聊天会在 provider 请求前立即显示状态；默认 LLM 超时降为 30 秒、自动重试关闭，
-  `Ctrl+C` 只取消当前轮且不再输出 traceback，适配 RPM=5 的中转 provider。
+- CLI 已升级为日用全屏 TUI：上方可滚动聊天记录，底部 1～6 行动态输入框；Enter 发送，
+  Shift+Enter 换行，并为不兼容终端保留 Ctrl+Enter / Esc+Enter。非 TTY 继续使用 Rich fallback。
+- CLI 已补 `/resume`、`/retry`、`/last`、`/copy`、`/tools`、`/status`，斜杠命令支持中文说明、
+  大小写不敏感补全；输入历史来自当前 SQLite session，请求期间会保留下一轮草稿。
+- CLI 的 Esc/Ctrl+C 使用协作式取消：会阻止后续 LLM/tool 轮、持久化和迟到结果渲染；
+  已经在途的同步 HTTP 读取不能可靠硬中断，仍需等待返回或 30 秒超时。`generate_images` 继续用
+  `return_direct` 避免图片完成后多打一轮 provider 请求。
 - Vue W2 基座已落地：`projects/02-leon-agent/web/` 提供 Vue 3 + Vite、API client、
   `stores/messages.ts`、ChatView 和 PWA 资产；`LEON_WEB_CLIENT=legacy` 默认保持旧页面，
   显式切为 `vue` 且存在 `web/dist/index.html` 后 FastAPI 才托管新产物。
@@ -57,9 +61,11 @@
 - SSE 事件现在带进程内递增 `id`，Gateway 保留最近 100 条并按 `Last-Event-ID` 补发断线期间事件；
   `session.connected` 是不推进游标的连接标记。Vue 让浏览器原生 EventSource 处理瞬时断线，
   stale token 会回到登录页，系统恢复在线时会重新连接 CLOSED 的流。
-- 当前验证（2026-08-16）：Python 单测、Ruff、Vue `npm run typecheck`、`npm run build`、静态 Vue 契约测试，
-  以及 `tests/manual_vue_web_check.py` 的 provider-free Playwright smoke 均已通过；Vite/FastAPI 两种入口各 **19/19**。
-  该脚本拦截所有 `/api/**`，不代表真实公网/手机验收；legacy 的 `tests/manual_web_check.py` 仍是另一套脚本。
+- 当前验证（2026-08-16）：显式 fake `LLM_SOURCE=env` 下 Python **176 passed**、仓库级 Ruff clean、
+  `uv run leon --help` 通过；Vue `npm run typecheck` / `npm run build` 和 provider-free Playwright smoke
+  也已通过，Vite/FastAPI 两种入口各 **19/19**。浏览器脚本拦截所有 `/api/**`，不代表真实公网/手机验收。
+- 当前真实 `~/.codex/config.toml` 若没有顶层 `model_provider`，直接跑全量测试会有 6 个 Gateway session
+  用例在捕获 TOML provider 时失败；显式 fake env 可稳定复现全绿，且不会请求真实 provider。
 - 元数据边界：Gateway 当前没有权威 `model`/`usage` 字段；Vue 的 elapsed 是客户端观测值，tokens/实际响应模型暂不显示。
 - 流式边界：Gateway 当前没有真正发送 `assistant.delta`；Vue 已兼容该事件，但当前真实回复仍以
   `assistant.started` / `assistant.completed` 为主。
@@ -73,12 +79,15 @@
   `async_autogen/recover`（恢复）、`comic_compose` / `async_comic`（漫画模式）
 - 真实只读探测（2026-08-16）：本机与公网 health 均 `200`，SSE 均立即收到 `session.connected`，stale token 均返回
   `204 no-store`；仍需在 Cloudflare 控制台确认 Cache Bypass Rule，再做手机实机 SSE、生图和 TTS 闭环验收
+- ⚠️ Web session 的完整 provider snapshot 目前只保存在 Gateway 进程内；SQLite 仅保存 provider scope/model。
+  服务重启后恢复旧 session 时可能重新捕获当前 provider，尚不满足“跨重启 provider pin”。下一步应持久化
+  provider identity/base URL（不存 API key），并从安全配置按 identity 重新解析；不匹配时明确失败，禁止静默换站。
 - Vue 页面迁移主体已完成，先保持 `LEON_WEB_CLIENT=legacy` 默认；真实公网/移动端验收通过后再考虑切换入口。
   W1 的 `messages[]` 直接对应 `stores/messages.ts`，不用重写
 - ASR 尚未接入；TTS 已完成，网关使用 `POST /api/agent/tts` 和 `/api/voice/*`
 - 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
-- 下一步可选：做真实 Gateway / Cloudflare / 手机端 SSE、生图和 TTS 验收；CLI TUI 与 Web 改造由两个 Codex 分工，提交前统一审查
+- 下一步优先：修复 Web session 跨重启 provider pin；随后做 Cloudflare Cache Bypass 确认和手机实机 SSE、生图、TTS 验收
 
 ---
 

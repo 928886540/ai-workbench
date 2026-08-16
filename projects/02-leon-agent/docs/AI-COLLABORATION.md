@@ -9,6 +9,8 @@ runtime boundary, canonical path, or known limitation changes.
 ## Current Branch And Runtime
 
 - Active integration branch: `feat/leon-model-switch`
+- Integrated Web/Gateway SSE replay baseline: `df7e92e`
+- Integrated daily CLI TUI baseline: `d520df9`
 - Production command: `uv run leon-server --host 127.0.0.1 --port 8233`
 - Public Web URL: `https://leon.928886540.xyz`
 - Cloudflare Tunnel config: `D:\cloudflared\config.yml`
@@ -66,11 +68,17 @@ Model names are provider-defined identifiers and are case-sensitive.
 - A session override is bound to `profile + base_url`. Changing CC Switch provider invalidates the
   previous provider's session override and restores the new provider's default model.
 
-For the Web client, the complete LLM connection is pinned when its Leon session is created:
-`profile/provider`, `base_url`, API key, and default model. Changing CC Switch or editing TOML must
-not affect an already logged-in Web session. Logging out clears the browser session id; the next
-login creates a new Leon session and captures the then-current TOML provider. Model-catalog refresh
-only retries `/models` against the pinned provider.
+For the Web client, the complete LLM connection is pinned in Gateway process memory when its Leon
+session is created: `profile/provider`, `base_url`, API key, and default model. Changing CC Switch or
+editing TOML does not affect that session while the same Gateway process remains alive. Logging out
+clears the browser session id; the next login creates a new Leon session and captures the then-current
+provider. Model-catalog refresh only retries `/models` against the in-memory pinned provider.
+
+This pin is not restart-safe yet. SQLite currently persists only provider scope and model; after a
+Gateway restart an old Web session can recapture the currently active provider. The next backend task
+must persist provider identity and the required base URL metadata without storing an API key, resolve
+the secret from the current secure configuration by identity, and fail explicitly when the pinned
+provider no longer matches or exists. Never silently move an old session to a different provider.
 
 ## Web Event Contract
 
@@ -130,11 +138,20 @@ expand it into global search/delete APIs. Normalize every `final_image_url` into
 ## CLI Interaction Contract
 
 - `leon` uses `prompt-toolkit` when stdin/stdout are interactive: the upper pane is scrollable
-  output and the bottom pane is the single-line Enter-to-send input. Non-TTY environments keep the
-  Rich prompt fallback.
+  output and the bottom pane is a dynamic 1-to-6-line composer. Enter sends; Shift+Enter inserts a
+  newline, with Ctrl+Enter and Esc+Enter as terminal compatibility fallbacks. Non-TTY environments
+  keep the Rich prompt fallback without interruption tracebacks.
 - The startup panel shows the active model, provider/profile, LLM base URL, configuration source,
   image backend, and session id. All command and answer output goes through the same renderer so
   answers remain visually separated from input.
+- Input history is loaded from the current SQLite session. Up/down recalls it, switching or creating
+  a session refreshes it, and a draft typed while a turn is running remains in the composer.
+- `/resume`, `/retry`, `/last`, `/copy`, `/tools`, and `/status` are part of the CLI contract. Slash
+  completion is case-insensitive and includes Chinese descriptions.
+- Esc/Ctrl+C cooperatively cancels the current turn: late output is not rendered or persisted, and no
+  later LLM/tool round continues. A synchronous HTTP read already in flight cannot be safely killed;
+  it may remain blocked until the provider returns or the 30-second timeout expires. Do not close the
+  shared HTTP client and claim hard cancellation.
 - The shared `AgentTool.return_direct` flag is for deterministic, user-facing tool results that do
   not need another provider round-trip. Leon's `generate_images` uses it and renders image URLs or
   task status directly after the image tool finishes. This avoids an unnecessary second LLM request
@@ -208,6 +225,17 @@ Run in this order:
 uv run leon --help
 ```
 
+If the machine's real TOML currently has no active `model_provider`, make the full suite explicitly
+provider-free instead of editing the real config:
+
+```powershell
+$env:LLM_SOURCE="env"
+$env:LLM_API_KEY="test-key"
+$env:LLM_BASE_URL="http://127.0.0.1:9/v1"
+$env:LLM_MODEL="test-model"
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
 For Web changes also verify a mobile viewport with a real browser:
 
 - login succeeds
@@ -229,6 +257,8 @@ The LLM transport safety fix was validated separately with `101 passed`. Current
 validation additionally includes `npm run typecheck`, `npm run build`, and `manual_vue_web_check.py`
 at `19/19` for both Vite preview and FastAPI Vue entry; these checks use fake API/SSE and do not prove
 real provider or mobile behavior. The Vue source still requires an explicit `LEON_WEB_CLIENT=vue`.
+The integrated CLI/Web baseline was most recently validated with explicit fake LLM environment values
+at `176 passed`, repository-level Ruff clean, and `uv run leon --help` successful.
 
 ## Handoff Format
 
