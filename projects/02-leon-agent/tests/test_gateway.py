@@ -6,6 +6,7 @@ import asyncio
 import importlib
 from threading import Event
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from leon_agent.gateway.app import _resolve_web_dir, _track_image_jobs, app, get_store
@@ -373,6 +374,128 @@ def test_tts_audio_cache_reuses_results_and_keeps_at_least_ten_entries():
     )
     assert recreated == b"recreated"
     assert recreated_hit is False
+
+
+def test_asr_status_and_transcription_are_disabled_without_configuration(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
+    monkeypatch.setenv("LEON_API_TOKEN", "")
+    monkeypatch.setenv("LEON_ASR_BASE_URL", "")
+    monkeypatch.setenv("LEON_ASR_TOKEN", "")
+
+    with TestClient(app, raise_server_exceptions=True) as test_client:
+        assert test_client.get("/api/agent/asr/status").json() == {"enabled": False}
+        response = test_client.post(
+            "/api/agent/asr",
+            files={"audio": ("sample.webm", b"audio", "audio/webm")},
+        )
+
+    assert response.status_code == 503
+    assert "ASR 未配置" in response.json()["detail"]
+
+
+def test_asr_transcription_forwards_audio_and_model(tmp_path, monkeypatch):
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
+    monkeypatch.setenv("LEON_API_TOKEN", "")
+    monkeypatch.setenv("LEON_ASR_BASE_URL", "https://asr.example/v1/")
+    monkeypatch.setenv("LEON_ASR_TOKEN", "asr-test-token")
+    monkeypatch.setenv("LEON_ASR_MODEL", "whisper-test")
+    calls = {}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):  # noqa: ANN001
+            calls["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):  # noqa: ANN001
+            return False
+
+        async def post(self, url, **kwargs):  # noqa: ANN001, ANN003
+            calls["url"] = url
+            calls["kwargs"] = kwargs
+            return httpx.Response(200, json={"text": "  转写成功  "})
+
+    monkeypatch.setattr(gateway_app.httpx, "AsyncClient", FakeAsyncClient)
+
+    with TestClient(app, raise_server_exceptions=True) as test_client:
+        assert test_client.get("/api/agent/asr/status").json() == {"enabled": True}
+        response = test_client.post(
+            "/api/agent/asr",
+            files={"audio": ("sample.webm", b"audio-bytes", "audio/webm")},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"text": "转写成功"}
+    assert calls["url"] == "https://asr.example/v1/audio/transcriptions"
+    assert calls["kwargs"]["headers"] == {"Authorization": "Bearer asr-test-token"}
+    assert calls["kwargs"]["data"] == {"model": "whisper-test"}
+    assert calls["kwargs"]["files"] == {
+        "file": ("sample.webm", b"audio-bytes", "audio/webm")
+    }
+
+
+def test_asr_rejects_empty_and_oversized_audio_before_upstream(tmp_path, monkeypatch):
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
+    monkeypatch.setenv("LEON_API_TOKEN", "")
+    monkeypatch.setenv("LEON_ASR_BASE_URL", "https://asr.example/v1")
+    monkeypatch.setenv("LEON_ASR_TOKEN", "asr-test-token")
+    monkeypatch.setenv("LEON_ASR_MAX_BYTES", "4")
+
+    class UnexpectedAsyncClient:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            raise AssertionError("oversized or empty audio must not call ASR upstream")
+
+    monkeypatch.setattr(gateway_app.httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    with TestClient(app, raise_server_exceptions=True) as test_client:
+        empty = test_client.post(
+            "/api/agent/asr",
+            files={"audio": ("empty.webm", b"", "audio/webm")},
+        )
+        oversized = test_client.post(
+            "/api/agent/asr",
+            files={"audio": ("large.webm", b"12345", "audio/webm")},
+        )
+
+    assert empty.status_code == 400
+    assert oversized.status_code == 413
+
+
+def test_asr_maps_upstream_transport_failure_to_bad_gateway(tmp_path, monkeypatch):
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
+    monkeypatch.setenv("LEON_API_TOKEN", "")
+    monkeypatch.setenv("LEON_ASR_BASE_URL", "https://asr.example/v1")
+    monkeypatch.setenv("LEON_ASR_TOKEN", "asr-test-token")
+
+    class FailingAsyncClient:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):  # noqa: ANN001
+            return False
+
+        async def post(self, url, **kwargs):  # noqa: ANN001, ANN003
+            raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(gateway_app.httpx, "AsyncClient", FailingAsyncClient)
+
+    with TestClient(app, raise_server_exceptions=True) as test_client:
+        response = test_client.post(
+            "/api/agent/asr",
+            files={"audio": ("sample.webm", b"audio", "audio/webm")},
+        )
+
+    assert response.status_code == 502
+    assert "ASR 服务请求失败" in response.json()["detail"]
 
 
 def test_image_modes_endpoint_returns_chinese_names_and_marika_default(client, monkeypatch):

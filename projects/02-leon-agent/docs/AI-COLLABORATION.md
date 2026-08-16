@@ -12,6 +12,8 @@ runtime boundary, canonical path, or known limitation changes.
 - Integrated Web/Gateway SSE replay baseline: `df7e92e`
 - Integrated daily CLI TUI baseline: `d520df9`
 - Production command: `uv run leon-server --host 127.0.0.1 --port 8233`
+- Process model: exactly one Uvicorn worker; the command rejects `--workers` values other than `1`
+  because SSE replay, active turns, provider snapshots, and voice clips are process-local
 - Public Web URL: `https://leon.928886540.xyz`
 - Cloudflare Tunnel config: `D:\cloudflared\config.yml`
 - CLI command: `leon` (editable uv tool install pointing at this repository)
@@ -38,7 +40,12 @@ Never commit `.env`, API tokens, SQLite databases, generated images, caches, or 
 - LLM transport: `packages/workbench_core/src/workbench_core/llm.py`
 - Session persistence: `src/leon_agent/session.py`
 - Model helpers: `src/leon_agent/models.py`
+- Channel-independent Leon image service: `src/leon_agent/service.py`
 - Tests: `tests/` and `packages/workbench_core/tests/`
+
+The first Leon MCP server lives in `projects/04-mcp-lab/leon-mcp-server`. It is a separate
+workspace package and must call `LeonToolService`; do not copy image request construction or tool
+schemas into another channel adapter.
 
 The read-only global latest-image backend lives in the separate ComfyUI repository at
 `D:\apiWorkSpace\ComfyUI-aki\ComfyUI-aki-v3\ComfyUI`:
@@ -104,9 +111,9 @@ The Gateway publishes these SSE events:
 - `voice.ready`
 - `agent.error`
 
-SSE currently transports lifecycle events and final answers. It does not yet provide true LLM token
-streaming. The Web client progressively renders a completed answer for smoother presentation; do not
-describe that as backend token streaming.
+SSE transports lifecycle events, true online-only `assistant.delta` token fragments, and the final
+`assistant.completed` answer. Deltas do not enter the replay window; reconnecting clients recover the
+authoritative full text from `assistant.completed`.
 
 Each replayable SSE event carries a process-local monotonically increasing `id:` field. The Gateway
 retains the latest 100 events per session in memory and honors the browser's `Last-Event-ID` (plus
@@ -383,8 +390,11 @@ The LLM transport safety fix was validated separately with `101 passed`. Current
 validation additionally includes `npm run typecheck`, `npm run build`, and `manual_vue_web_check.py`
 at `76/76` for both Vite preview and FastAPI Vue entry; these checks use fake API/SSE and do not prove
 real provider or mobile behavior. Vue is the only Web entry.
-The integrated CLI/Web baseline was most recently validated at `175 passed`, repository-level Ruff
+The integrated CLI/Web baseline was most recently validated at `188 passed`, repository-level Ruff
 clean, and `uv run leon --help` successful.
+The MCP slice was additionally validated with `leon-mcp --help`, stdio `initialize/tools/list`, and
+Streamable HTTP `initialize/tools/list`; both transports expose five tools and no smoke test calls
+`generate_images`.
 
 ## Handoff Format
 

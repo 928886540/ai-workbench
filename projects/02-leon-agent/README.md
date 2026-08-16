@@ -2,8 +2,6 @@
 
 独立运行的个人 Agent：终端聊天，必要时调用现有 Leon / ComfyUI 生图能力。
 
-![Leon Agent 总体架构](../../docs/assets/leon-agent-architecture.png)
-
 ## 当前能力
 
 - `leon` 日用全屏 TUI：可滚动聊天记录、1～6 行动态输入框、SQLite 输入历史和 Rich 非 TTY fallback
@@ -29,6 +27,9 @@
 - Vue 3 + Vite 迁移已覆盖聊天、任务、图库和设置视图；聊天输入支持 `/nsfw --model` 模式名称补全，按名称、ID 和别名过滤
 - Agent Timeline 可查看最近 100 条 SSE 决策事件，并过滤高频 `assistant.delta` 字符增量
 - SSE 事件带进程内 `id`；Gateway 按 `Last-Event-ID` 补发最近 100 条断线事件，连接标记不推进游标
+- LLM 回复使用真实流式输出；最终事件携带实际模型、耗时和 provider 可用时的 token usage
+- Web session 会把 provider identity 与 base URL 持久化到 SQLite，Gateway 重启后不会静默切换 provider
+- ASR 语音输入已接入 OpenAI-compatible `/audio/transcriptions`，录音转写后只回填输入框，不自动发送
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读
@@ -44,8 +45,8 @@ leon Agent（独立进程）
   -> Leon / ComfyUI 后端
 ```
 
-原 Tavo 插件不依赖 Agent，也不需要为了第一版增加 Agent 代码。未来可把这些工具迁移成
-Leon MCP Server，让 CLI、Codex 或其他 Host 共用。
+原 Tavo 插件不依赖 Agent，也不需要为了第一版增加 Agent 代码。现已通过独立
+Leon MCP Server 让 CLI、Codex 或其他 Host 共用同一套 `LeonToolService`。
 
 完整图见 [Leon Agent 架构](../../docs/leon-agent-architecture.md)。
 
@@ -132,6 +133,17 @@ uv tool install --editable .\projects\02-leon-agent `
 | `LEON_SESSION_DB` | `data/leon-agent.db` | 本地会话数据库 |
 | `LEON_API_TOKEN` | 空 | Web Gateway 鉴权 token；公网暴露时必须设置 |
 | `LEON_SYSTEM_PROMPT_FILE` | 空 | 可选 UTF-8 TXT；内容原样追加到 Agent system prompt，相对路径从仓库根目录解析 |
+| `LEON_HTTP_TIMEOUT_SECONDS` | `30` | Leon HTTP 请求超时秒数 |
+| `LEON_BRIDGE_TIMEOUT_SECONDS` | `20` | Node bridge 执行超时秒数 |
+| `VOLINK_API_KEY` | 空 | Volink TTS 密钥；未配置时 Web 隐藏语音目录与朗读能力 |
+| `VOLINK_BASE_URL` | `https://api.volink.org/v1` | Volink API 地址 |
+| `VOLINK_DEFAULT_VOICE_ID` | `689334e84d3396ad1d28ee9e` | 默认 TTS 音色 ID |
+| `LEON_VOICE_CLIP_TTL_SECONDS` | `3600` | Agent 语音气泡的进程内缓存时长 |
+| `LEON_VOICE_CLIP_MAX_COUNT` | `200` | Agent 语音气泡的最大进程内缓存数量 |
+| `LEON_ASR_BASE_URL` | 空 | OpenAI-compatible ASR 服务地址；需与 token 同时配置 |
+| `LEON_ASR_TOKEN` | 空 | ASR 服务密钥，仅保留在 Gateway |
+| `LEON_ASR_MODEL` | `whisper-1` | `/audio/transcriptions` 使用的模型 ID |
+| `LEON_ASR_MAX_BYTES` | `15728640` | 单次 ASR 音频最大字节数 |
 
 后端返回的图片可能是 `/view?filename=...` 这类相对路径。工具层会把它拼成
 `LEON_PUBLIC_IMAGE_BASE_URL`（未配置时用 `LEON_BACKEND_URL`）下的绝对地址，已经是
@@ -195,5 +207,5 @@ Web 前端的 Vue3 迁移边界、模式补全、Agent Timeline、TTS/`voice.rea
 已记录三条扩展需求：面试 MCP、Telegram Bot、Tavo 互通。详细边界与实施顺序见
 [Leon Agent 扩展路线](../../notes/plans/leon-agent-expansion.md)。
 
-当前优先级是 MCP Server -> Telegram Bot -> Leon Agent 连接 Tavo MCP。Tavo v1.0.0 的聊天
-工具调用暂不能接入外部 MCP Server，等宿主能力开放后再做 Tavo -> Leon MCP。
+当前优先级是 Telegram Bot -> Leon Agent 连接 Tavo MCP。共享 `LeonToolService` 与第一版 MCP Server
+已落地。Tavo v1.0.0 的聊天工具调用暂不能接入外部 MCP Server，等宿主能力开放后再做 Tavo -> Leon MCP。

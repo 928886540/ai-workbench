@@ -9,6 +9,7 @@ dependencies = [
   "llm-core",
   "code-agent",
   "leon-agent",
+  "leon-mcp-server",
   "python-dotenv>=1.0.1",
   "pydantic>=2.7.0",
   "pydantic-settings>=2.3.0",
@@ -29,6 +30,7 @@ members = [
   "projects/01-llm-core",
   "projects/02-code-agent",
   "projects/02-leon-agent",
+  "projects/04-mcp-lab/leon-mcp-server",
 ]
 
 [tool.uv.sources]
@@ -36,6 +38,7 @@ workbench-core = { workspace = true }
 llm-core = { workspace = true }
 code-agent = { workspace = true }
 leon-agent = { workspace = true }
+leon-mcp-server = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [
@@ -43,12 +46,14 @@ testpaths = [
   "projects/01-llm-core/tests",
   "projects/02-code-agent/tests",
   "projects/02-leon-agent/tests",
+  "projects/04-mcp-lab/leon-mcp-server/tests",
 ]
 pythonpath = [
   "packages/workbench_core/src",
   "projects/01-llm-core/src",
   "projects/02-code-agent/src",
   "projects/02-leon-agent/src",
+  "projects/04-mcp-lab/leon-mcp-server/src",
 ]
 
 [tool.ruff]

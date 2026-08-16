@@ -11,7 +11,7 @@
 > Agent Timeline 可查看最近 100 条 SSE 决策事件。ASR 输入、tokens/model 上屏、provider 钉选重启持久化、
 > 时间分割线和 CSS 变量主题底座已实现（ASR 需配置 `LEON_ASR_*` 后方可用）；真实生图/TTS 与手机实机验收仍待进行；
 > SSE 已加入进程内 `id` / `Last-Event-ID` 补发和 stale-token 登录恢复；provider-free Playwright smoke
-> 已在 Vite/FastAPI 各 26/26 通过。
+> 已在 Vite/FastAPI 各 76/76 通过。
 > Vue 已成为唯一入口，`LEON_WEB_CLIENT` 开关已删除。
 
 ---
@@ -22,8 +22,8 @@
 | --- | --- |
 | 现在迁 Vue3？ | **迁移完成并成为唯一入口**。Vue 3 + Vite 已覆盖聊天、任务、图库、设置和 Agent Timeline；provider-free smoke 已通过。 |
 | 界面聊天化？ | **做**，优先级最高。纯前端改动，不动网关协议。 |
-| 气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）？ | **部分完成**。复制、真重试、编辑、朗读和前端耗时已完成；tokens 待后端 usage。 |
-| 语音？ | **TTS 已完成，ASR 待做**。Volink 密钥仅在网关；前端支持目录、手动/自动朗读、`voice.ready`、单例播放器与 iOS 解锁。 |
+| 气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）？ | **已完成**。Gateway 返回权威模型、耗时和可用时的 usage；无 usage 时前端自然降级。 |
+| 语音？ | **TTS 与 ASR 均已完成**。密钥仅在网关；ASR 需配置 `LEON_ASR_*`，转写后回填输入框但不自动发送。 |
 
 ---
 
@@ -249,7 +249,7 @@ SSE 回放窗口是进程内的最近 100 条，服务重启后不提供历史�
 | **W5** | 语音：TTS 朗读（已完成）→ ASR 输入（已完成，需配置 `LEON_ASR_*`） | ASR API |
 | **W6** | Vue 迁移：聊天、任务、图库、设置、Agent Timeline（已完成） | W1-W5 |
 | **W7** | 模式补全与 `voice.ready` 事件（已完成） | W6 |
-| **W8** | provider-free 浏览器回归（Vite/FastAPI 各 26/26） | W6-W7 |
+| **W8** | provider-free 浏览器回归（Vite/FastAPI 各 76/76） | W6-W7 |
 | **W9** | 真实 Gateway/Cloudflare/手机验收并收口上线验证 | W8 |
 
 每个阶段单独一个 commit，Vue 契约/浏览器 smoke 同步补断言，`sw.js` 缓存版本号递增。
@@ -258,8 +258,7 @@ SSE 回放窗口是进程内的最近 100 条，服务重启后不提供历史�
 
 ## 9. 遗留风险
 
-1. HTML 字符串断言很脆：改一行实现就可能红。W1 后将断言转向**函数名与 DOM id**，少碰具体语句。
-2. IDEA 的缓存可能比磁盘旧（本次已踩到）：改 `index.html` 前先用磁盘读确认。
-3. `manual_vue_web_check.py` 不进 CI，不能替代真实公网/手机验收。
-4. Service Worker 缓存：每次前端改动必须同时改 `sw.js` 版本和注册 `?v=`，否则手机拿旧缓存。
-5. Cloudflare 仍需确认 `/api/agent/*/events` 的 Cache Bypass Rule，避免公网 SSE 被缓存或缓冲。
+1. `manual_vue_web_check.py` 不进 CI，不能替代真实公网/手机验收。
+2. Service Worker 缓存：每次前端改动必须同时改 `sw.js` 版本和注册 `?v=`，否则手机拿旧缓存。
+3. Cloudflare 仍需确认 `/api/agent/*/events` 的 Cache Bypass Rule，避免公网 SSE 被缓存或缓冲。
+4. SSE 回放、活动请求和语音 clip 都是进程内状态；当前部署只支持单 worker，进程重启不保留事件回放窗口。

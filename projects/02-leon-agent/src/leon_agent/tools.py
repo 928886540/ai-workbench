@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
-from threading import Event
 from typing import Any
-from uuid import uuid4
 
 from workbench_core.agent import AgentTool, ToolRegistry
-from workbench_core.agent.runtime import AgentCancelled, current_cancel_event
 
-from leon_agent.image_modes import mode_catalog_items
 from leon_agent.leon_client import LeonImageClient
-
-TERMINAL_IMAGE_STATUSES = {"completed", "failed", "cancelled", "canceled"}
+from leon_agent.service import LeonToolService
 
 
 def _format_generation_answer(
@@ -48,99 +42,6 @@ def _format_generation_answer(
     return f"{count} 张图片已经生成完成，正在同步结果，请稍等；图片会自动显示在这里。"
 
 
-def _job_id(item: dict[str, Any]) -> str:
-    return str(item.get("job_id") or "")
-
-
-def _check_cancelled(cancel_event: Event | None) -> None:
-    event = cancel_event if cancel_event is not None else current_cancel_event()
-    if event is not None and event.is_set():
-        raise AgentCancelled("agent turn cancelled")
-
-
-def _wait_for_image_results(
-    client: LeonImageClient,
-    *,
-    chat_id: str,
-    submission: dict[str, Any],
-    timeout_seconds: float = 240.0,
-    poll_interval_seconds: float = 2.0,
-    cancel_event: Event | None = None,
-) -> dict[str, Any]:
-    """Wait for submitted jobs only when the caller needs a synchronous result."""
-    _check_cancelled(cancel_event)
-    job_ids = {
-        str(item.get("job_id"))
-        for item in submission.get("jobs", [])
-        if isinstance(item, dict) and item.get("job_id")
-    }
-    if not job_ids:
-        return {**submission, "waited_for_completion": False, "images": []}
-
-    deadline = time.monotonic() + max(0.0, timeout_seconds)
-    latest_tasks: list[dict[str, Any]] = []
-
-    while True:
-        _check_cancelled(cancel_event)
-        task_result = client.get_image_tasks(
-            chat_id=chat_id,
-            limit=max(20, min(100, len(job_ids) * 4)),
-        )
-        _check_cancelled(cancel_event)
-        task_items = task_result.get("items", []) if isinstance(task_result, dict) else []
-        latest_tasks = [
-            item
-            for item in task_items
-            if isinstance(item, dict) and _job_id(item) in job_ids
-        ]
-        task_by_id = {_job_id(item): item for item in latest_tasks}
-
-        all_seen = job_ids.issubset(task_by_id)
-        all_terminal = all_seen and all(
-            str(task_by_id[job_id].get("status") or "").lower() in TERMINAL_IMAGE_STATUSES
-            for job_id in job_ids
-        )
-        if all_terminal:
-            _check_cancelled(cancel_event)
-            gallery_result = client.get_recent_images(
-                chat_id=chat_id,
-                limit=max(20, min(100, len(job_ids) * 4)),
-            )
-            _check_cancelled(cancel_event)
-            gallery_items = (
-                gallery_result.get("items", []) if isinstance(gallery_result, dict) else []
-            )
-            images = [
-                item
-                for item in gallery_items
-                if isinstance(item, dict) and _job_id(item) in job_ids
-            ]
-            return {
-                **submission,
-                "waited_for_completion": True,
-                "timed_out": False,
-                "tasks": latest_tasks,
-                "images": images,
-            }
-
-        if time.monotonic() >= deadline:
-            _check_cancelled(cancel_event)
-            return {
-                **submission,
-                "waited_for_completion": True,
-                "timed_out": True,
-                "tasks": latest_tasks,
-                "images": [],
-            }
-        wait_seconds = max(0.1, poll_interval_seconds)
-        event = cancel_event if cancel_event is not None else current_cancel_event()
-        if event is not None:
-            if event.wait(wait_seconds):
-                raise AgentCancelled("agent turn cancelled")
-        else:
-            time.sleep(wait_seconds)
-
-
 def create_leon_tools(
     client: LeonImageClient,
     *,
@@ -150,49 +51,13 @@ def create_leon_tools(
     on_generation_submitted: Callable[[dict[str, Any]], None] | None = None,
     speak_handler: Callable[[str, str | None], dict[str, Any]] | None = None,
 ) -> ToolRegistry:
-    chat_id = f"leon-agent:{session_id}"
-
-    def list_image_modes() -> dict[str, Any]:
-        result = client.list_modes()
-        if not isinstance(result, dict):
-            return {"ok": False, "modes": [], "error": "Invalid mode catalog response"}
-        modes = [item for item in result.get("modes", []) if isinstance(item, dict)]
-        return {**result, "modes": mode_catalog_items(modes)}
-
-    def generate_images(
-        source_text: str,
-        workflow_ids: list[str] | None = None,
-        batch_count: int = 1,
-        character_context: str = "",
-        random_workflow: bool = False,
-    ) -> dict[str, Any]:
-        _check_cancelled(None)
-        modes = workflow_ids or default_mode_ids
-        submission = client.generate_images(
-            source_text=source_text,
-            workflow_ids=modes,
-            batch_count=batch_count,
-            chat_id=chat_id,
-            message_id=f"cli-{int(time.time() * 1000)}-{uuid4().hex[:6]}",
-            character_context=character_context,
-            random_workflow=random_workflow,
-        )
-        submission.setdefault("source_text", source_text)
-        submission.setdefault("workflow_ids", list(modes))
-        if on_generation_submitted is not None:
-            on_generation_submitted(submission)
-        _check_cancelled(None)
-        if not wait_for_image_completion:
-            return {
-                **submission,
-                "waited_for_completion": False,
-                "images": submission.get("images", []),
-            }
-        return _wait_for_image_results(
-            client,
-            chat_id=chat_id,
-            submission=submission,
-        )
+    service = LeonToolService(
+        client,
+        session_id=session_id,
+        default_mode_ids=default_mode_ids,
+        wait_for_image_completion=wait_for_image_completion,
+        on_generation_submitted=on_generation_submitted,
+    )
 
     registry = ToolRegistry(
         [
@@ -204,7 +69,7 @@ def create_leon_tools(
                     "an exact id."
                 ),
                 parameters={"type": "object", "properties": {}, "additionalProperties": False},
-                handler=list_image_modes,
+                handler=service.list_image_modes,
             ),
             AgentTool(
                 name="check_image_environment",
@@ -213,7 +78,7 @@ def create_leon_tools(
                     "This does not submit an image task."
                 ),
                 parameters={"type": "object", "properties": {}, "additionalProperties": False},
-                handler=client.check_environment,
+                handler=service.check_image_environment,
             ),
             AgentTool(
                 name="generate_images",
@@ -260,7 +125,7 @@ def create_leon_tools(
                     "required": ["source_text"],
                     "additionalProperties": False,
                 },
-                handler=generate_images,
+                handler=service.generate_images,
                 return_direct=True,
                 answer_formatter=_format_generation_answer,
             ),
@@ -274,7 +139,7 @@ def create_leon_tools(
                     },
                     "additionalProperties": False,
                 },
-                handler=lambda limit=20: client.get_image_tasks(chat_id=chat_id, limit=limit),
+                handler=service.get_image_tasks,
             ),
             AgentTool(
                 name="get_recent_images",
@@ -286,7 +151,7 @@ def create_leon_tools(
                     },
                     "additionalProperties": False,
                 },
-                handler=lambda limit=20: client.get_recent_images(chat_id=chat_id, limit=limit),
+                handler=service.get_recent_images,
             ),
             AgentTool(
                 name="get_latest_images",
@@ -308,7 +173,7 @@ def create_leon_tools(
                     "required": ["limit"],
                     "additionalProperties": False,
                 },
-                handler=lambda limit: client.get_latest_images(limit=limit),
+                handler=service.get_latest_images,
             ),
             AgentTool(
                 name="cancel_image_task",
@@ -334,7 +199,7 @@ def create_leon_tools(
                     "required": ["job_id"],
                     "additionalProperties": False,
                 },
-                handler=lambda job_id: client.cancel_image_task(job_id=job_id),
+                handler=service.cancel_image_task,
             ),
         ]
     )

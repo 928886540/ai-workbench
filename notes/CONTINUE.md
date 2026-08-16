@@ -16,7 +16,7 @@
   CLI 日用 TUI 基线为 `d520df9`，两条并行改造均已统一审查并推送
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
-- `02-leon-agent`：独立 `leon` CLI、SQLite、5 个生图工具已完成第一版
+- `02-leon-agent`：独立 `leon` CLI、SQLite、7 个生图工具和 `speak_text` 已完成
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
 - CLI 与 Web 已接入 CCS 模型切换；Web 会话会继承已有 session 的模型选择
 - 公网入口已部署到 `https://leon.928886540.xyz`，由 Cloudflare Tunnel 转发到 `127.0.0.1:8233`
@@ -60,14 +60,15 @@
 - SSE 事件现在带进程内递增 `id`，Gateway 保留最近 100 条并按 `Last-Event-ID` 补发断线期间事件；
   `session.connected` 是不推进游标的连接标记。Vue 让浏览器原生 EventSource 处理瞬时断线，
   stale token 会回到登录页，系统恢复在线时会重新连接 CLOSED 的流。
-- 当前验证（2026-08-16）：显式 fake `LLM_SOURCE=env` 下 Python **175 passed**、仓库级 Ruff clean、
+- 当前验证（2026-08-16）：显式 fake `LLM_SOURCE=env` 下 Python **188 passed**、仓库级 Ruff clean、
   `uv run leon --help` 通过；Vue `npm run typecheck` / `npm run build` 和 provider-free Playwright smoke
   也已通过，Vite/FastAPI 两种入口各 **76/76**。浏览器脚本拦截所有 `/api/**`，不代表真实公网/手机验收。
 - 当前真实 `~/.codex/config.toml` 若没有顶层 `model_provider`，直接跑全量测试会有 6 个 Gateway session
   用例在捕获 TOML provider 时失败；显式 fake env 可稳定复现全绿，且不会请求真实 provider。
-- 元数据边界：Gateway 当前没有权威 `model`/`usage` 字段；Vue 的 elapsed 是客户端观测值，tokens/实际响应模型暂不显示。
-- 流式边界：Gateway 当前没有真正发送 `assistant.delta`；Vue 已兼容该事件，但当前真实回复仍以
-  `assistant.started` / `assistant.completed` 为主。
+- 元数据已补齐：Gateway 在 `assistant.completed` 返回权威 `model` / `elapsed_ms` / `usage`；provider 不返回
+  usage 时前端按无值降级。
+- 真实流式已补齐：LLM transport 使用 `stream=True`，Gateway 在线推送 `assistant.delta`，重连后以
+  `assistant.completed` 全文恢复；delta 不占用 100 条回放窗口。
 - ⚠️ LLM provider 已被 CC Switch 换过（`~/.codex/config.toml`，8/15 09:30）：
   `anyrouter.top` → `new-api.abrdns.com`，默认模型 `gpt-5.6-sol` → `DeepSeek-V4-Flash-0731`，目录从 17 个模型变成 96 个。
   会话里「同样的话上次能答、这次不能答」优先怀疑这里，而不是提示词。
@@ -78,15 +79,33 @@
   `async_autogen/recover`（恢复）、`comic_compose` / `async_comic`（漫画模式）
 - 真实只读探测（2026-08-16）：本机与公网 health 均 `200`，SSE 均立即收到 `session.connected`，stale token 均返回
   `204 no-store`；仍需在 Cloudflare 控制台确认 Cache Bypass Rule，再做手机实机 SSE、生图和 TTS 闭环验收
-- ⚠️ Web session 的完整 provider snapshot 目前只保存在 Gateway 进程内；SQLite 仅保存 provider scope/model。
-  服务重启后恢复旧 session 时可能重新捕获当前 provider，尚不满足“跨重启 provider pin”。下一步应持久化
-  provider identity/base URL（不存 API key），并从安全配置按 identity 重新解析；不匹配时明确失败，禁止静默换站。
+- Web session 已把 provider identity 与 base URL（不含 API key）持久化到 SQLite；Gateway 重启后按 identity
+  安全重解析密钥，不匹配时返回 409，禁止静默切换 provider。
 - Vue 页面迁移主体已完成并成为唯一入口；旧单文件 Web、`LEON_WEB_CLIENT` 开关及旧浏览器脚本已删除。
   W1 的 `messages[]` 直接对应 `stores/messages.ts`，不用重写
-- ASR 尚未接入；TTS 已完成，网关使用 `POST /api/agent/tts` 和 `/api/voice/*`
-- 后续优先级：面试用 Leon MCP Server -> 共享 Service -> Telegram Bot
+- ASR 已接入：`POST /api/agent/asr` 代理 OpenAI-compatible 转写服务，需配置 `LEON_ASR_*`；前端录音后只回填输入框。
+- `LeonToolService` 已抽出，Leon MCP Server 第一版已完成：5 个工具、stdio/Streamable HTTP，协议
+  `initialize/tools/list` smoke 通过。
+- 后续优先级：Telegram Bot -> Leon Agent 连接 Tavo MCP
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
-- 下一步优先：修复 Web session 跨重启 provider pin；随后做 Cloudflare Cache Bypass 确认和手机实机 SSE、生图、TTS 验收
+- 下一步优先：Cloudflare Cache Bypass 确认和手机实机 SSE、生图、TTS、ASR 验收；随后做 Telegram Bot
+
+### 本轮可中断 checkpoint（2026-08-16）
+
+- 已完成：README/架构/协作文档对齐；ASR Gateway 禁用、成功、超限、上游失败测试；`leon-server`
+  多 worker 拒绝；`LeonToolService` 抽取；`projects/04-mcp-lab/leon-mcp-server` 第一版。
+- MCP 当前提供 5 个工具，stdio 与 Streamable HTTP 均已完成真实 `initialize -> tools/list`；
+  `scripts/mcp_smoke.py` 默认只读，加 `--check-environment` 才调用环境自检。MCP 依赖下限固定为
+  `mcp>=1.14`，规避 1.10–1.13 的 postponed-annotation 注册 bug。
+- 验证：fake env 下 `uv run pytest -q` **188 passed**；`uv run ruff check .`；Vue build；Vite/FastAPI
+  provider-free smoke 各 **76/76**；MCP 真实只读环境自检为 19 模式、38 节点、39 LoRA 全通过。
+- 运行态：已真正重启 `leon-server`（PID 已变化），本机/公网 health `200`，公网 SSE 首事件正常，
+  `CF-Cache-Status=DYNAMIC`。Cloudflare 控制台规则和真实手机触控/麦克风仍需人工确认。
+- 本 checkpoint 对应的 Service/MCP 变更已独立提交；工作区还包含另一位 Codex 的 CLI/TUI 与
+  Web Search 并行改动（`.env.example`、`src/leon_agent/{agent,cli,config}.py`、
+  `src/leon_agent/gateway/app.py`、`src/leon_agent/tools.py` 的 search hunks、`src/leon_agent/search/`、
+  `tests/{test_cli,test_search}.py`、`docs/TUI-REDESIGN-COLLABORATION.md`），不要回滚、覆盖或混入
+  Service/MCP 提交。下一条主线是 Telegram Bot。
 
 ---
 

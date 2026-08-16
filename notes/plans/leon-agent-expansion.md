@@ -1,8 +1,9 @@
 # Leon Agent 扩展路线
 
 - 记录日期：2026-08-14
-- 状态：Planned
-- 当前基线：独立 `leon` CLI、共享 Agent Runtime、5 个 Leon 生图工具、SQLite 会话已跑通
+- 状态：In Progress（Phase A 已完成）
+- 当前基线：独立 `leon` CLI、共享 Agent Runtime、7 个 Leon 生图工具、`speak_text`、SQLite 会话、
+  `LeonToolService` 和第一版 MCP Server 已跑通
 
 ## 新需求
 
@@ -15,7 +16,7 @@
 
 | 方向 | 可行性 | 难度 | 当前判断 |
 |---|---|---|---|
-| 面试 MCP | 高 | 中低 | 现有 5 个工具已有 schema 和 handler，主要工作是增加 MCP transport 与演示脚本 |
+| 面试 MCP | 高 | 中低 | **第一版已完成**：5 个工具、stdio/Streamable HTTP、fake service 测试、协议 smoke 和演示脚本 |
 | Telegram Bot | 高 | 中 | 需要 channel adapter、用户/session 映射、后台任务轮询和图片回传 |
 | Leon Agent 连接 Tavo MCP | 高 | 中 | Tavo 已有 MCP Server；Leon Agent 可作为 MCP Client 使用 Tavo 工具 |
 | Tavo 聊天直接调用 Leon MCP | 当前受限 | 非代码难度 | Tavo v1.0.0 文档明确：外部 MCP Server 尚未接入聊天工具调用 |
@@ -38,12 +39,12 @@ Tavo Chat --外部 MCP--> Leon MCP Server
   当前 v1.0.0 尚不可用，等 Tavo 接入后复用同一个 Leon MCP Server
 ```
 
-CLI、Telegram 和 MCP 不能各复制一套生成逻辑。下一步应先把现有工具 handler 收口为
-`LeonToolService` / `LeonAgentService`，入口只负责协议转换和展示。
+CLI、Telegram 和 MCP 不能各复制一套生成逻辑。现有图片 handler 已收口为
+`LeonToolService`，入口只负责协议转换和展示；Telegram 后续沿用这一边界。
 
 ## Phase A：面试 MCP（最高优先级）
 
-在 `projects/04-mcp-lab/leon-mcp-server` 实现独立 MCP Server，第一版开放：
+在 `projects/04-mcp-lab/leon-mcp-server` 已实现独立 MCP Server，第一版开放：
 
 - `list_image_modes`
 - `check_image_environment`
@@ -51,7 +52,7 @@ CLI、Telegram 和 MCP 不能各复制一套生成逻辑。下一步应先把现
 - `get_image_tasks`
 - `get_recent_images`
 
-同时支持：
+已支持：
 
 - stdio：方便 Codex、Claude Code 和本机 MCP Inspector 演示
 - Streamable HTTP：方便后续 Telegram 服务、局域网和未来 Tavo 接入
@@ -68,6 +69,9 @@ CLI、Telegram 和 MCP 不能各复制一套生成逻辑。下一步应先把现
 6. 解释同一业务工具同时服务 CLI、MCP 和未来 Telegram/Tavo，没有重复实现。
 
 这个演示能覆盖：tool schema、MCP transport、异步任务、幂等身份、真实外部系统集成和测试边界。
+
+可复现脚本：`uv run python projects/04-mcp-lab/leon-mcp-server/scripts/mcp_smoke.py`；默认只做
+`initialize/tools/list`，加 `--check-environment` 才调用只读环境检查。
 
 ## Phase B：Telegram Bot
 
@@ -113,12 +117,10 @@ Telegram update
 
 ## 推荐顺序
 
-1. MCP Server：面试价值最高，也为未来 Tavo 接入准备标准协议。
-2. 抽取 Channel-independent Service：防止 CLI / MCP / Telegram 分叉。
-3. Telegram Bot：形成手机端真实使用闭环。
-4. Leon Agent 接入 Tavo MCP Server：展示 Agent 同时编排 Tavo 与 ComfyUI。
-5. 等 Tavo 外部 MCP Client 能力正式可用，再做 Tavo -> Leon MCP。
-6. 流式输出、完成通知和基础 TUI 持续增强；完整 Codex 风格界面后置。
+1. Telegram Bot：形成手机端真实使用闭环。
+2. Leon Agent 接入 Tavo MCP Server：展示 Agent 同时编排 Tavo 与 ComfyUI。
+3. 等 Tavo 外部 MCP Client 能力正式可用，再做 Tavo -> Leon MCP。
+4. 流式输出、完成通知和 TUI 体验持续增强，但不阻塞协议主线。
 
 ## 不做的捷径
 

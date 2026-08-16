@@ -2,7 +2,7 @@ import threading
 import time
 
 import pytest
-from leon_agent.tools import _wait_for_image_results
+from leon_agent.service import _wait_for_image_results
 from workbench_core.agent.runtime import AgentCancelled
 
 

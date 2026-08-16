@@ -14,8 +14,15 @@ def main() -> None:
     )
     parser.add_argument("--port", type=int, default=8233, help="Bind port (default: 8233)")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
-    parser.add_argument("--workers", type=int, default=1, help="Uvicorn worker count")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Uvicorn worker count (must remain 1; gateway state is process-local)",
+    )
     args = parser.parse_args()
+    if args.workers != 1:
+        parser.error("leon-server only supports one worker; gateway state is process-local")
 
     import uvicorn
 
@@ -24,7 +31,7 @@ def main() -> None:
         host=args.host,
         port=args.port,
         reload=args.reload,
-        workers=args.workers if not args.reload else 1,
+        workers=1,
     )
 
 
