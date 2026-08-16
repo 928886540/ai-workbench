@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, RefreshCw, X } from "@lucide/vue";
+import { ChevronLeft, ChevronRight, X } from "@lucide/vue";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { galleryImages } from "../stores/images";
 
@@ -8,7 +8,6 @@ defineProps<{
   error: string;
 }>();
 
-const emit = defineEmits<{ refresh: [] }>();
 const selectedJobId = ref("");
 const viewer = ref<HTMLElement | null>(null);
 const selectedIndex = computed(() =>
@@ -46,14 +45,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
 </script>
 
 <template>
-  <section class="page-panel" aria-labelledby="gallery-title">
-    <header class="page-panel__header">
-      <h2 id="gallery-title">图库</h2>
-      <button class="icon-button" type="button" :disabled="loading" aria-label="刷新图库" title="刷新图库" @click="emit('refresh')">
-        <RefreshCw :class="{ spinning: loading }" :size="17" :stroke-width="2" aria-hidden="true" />
-      </button>
-    </header>
-
+  <section class="page-panel" aria-label="图库">
     <p v-if="error" class="panel-error">{{ error }}</p>
     <div v-if="loading && !galleryImages.length" class="panel-empty">正在加载图库…</div>
     <div v-else-if="!galleryImages.length" class="panel-empty">

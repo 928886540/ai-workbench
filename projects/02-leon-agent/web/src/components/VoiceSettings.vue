@@ -48,8 +48,6 @@ const pagedVoices = computed(() =>
   filteredVoices.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE),
 );
 
-const favoriteCount = computed(() => voices.value.filter((voice) => isFavoriteVoice(voice.id)).length);
-
 const active = computed(() => activeVoice());
 
 watch([search, voiceTab], () => {
@@ -132,7 +130,7 @@ onBeforeUnmount(() => {
 
     <template v-if="voiceEnabled">
       <label class="settings-toggle">
-        <span>
+        <span class="settings-toggle__copy">
           <strong>自动朗读每条回复</strong>
         </span>
         <input
@@ -140,6 +138,7 @@ onBeforeUnmount(() => {
           :checked="autoplayAll"
           @change="setAutoplayAll(($event.target as HTMLInputElement).checked)"
         />
+        <span class="settings-switch" aria-hidden="true"></span>
       </label>
       <button
         class="voice-catalog-toggle"
@@ -170,7 +169,7 @@ onBeforeUnmount(() => {
             :class="{ active: voiceTab === 'favorites' }"
             @click="voiceTab = 'favorites'"
           >
-            收藏<template v-if="favoriteCount"> {{ favoriteCount }}</template>
+            收藏
           </button>
         </div>
         <div class="voice-search-row">

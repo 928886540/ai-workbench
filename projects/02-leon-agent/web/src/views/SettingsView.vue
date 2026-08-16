@@ -114,14 +114,24 @@ onMounted(() => void loadSettings());
 </script>
 
 <template>
-  <section class="page-panel settings-panel" aria-labelledby="settings-title">
-    <header class="page-panel__header">
-      <h2 id="settings-title">设置</h2>
-    </header>
-
+  <section class="page-panel settings-panel" aria-label="设置">
     <article class="settings-card">
-      <h3>模型</h3>
-      <p class="settings-subtitle">当前：{{ activeModel || "未知" }}</p>
+      <header class="settings-card__header">
+        <div>
+          <h3>模型</h3>
+          <p class="settings-subtitle">当前：{{ activeModel || "未知" }}</p>
+        </div>
+        <button
+          class="icon-button icon-button--subtle"
+          type="button"
+          :disabled="loading"
+          aria-label="刷新模型目录"
+          title="刷新模型目录"
+          @click="void loadSettings(true)"
+        >
+          <RefreshCw :class="{ spinning: loading }" :size="16" :stroke-width="2" aria-hidden="true" />
+        </button>
+      </header>
 
       <div class="settings-row">
         <input
@@ -143,16 +153,6 @@ onMounted(() => void loadSettings());
           @click="void saveSettings()"
         >
           {{ saving ? "保存中…" : "保存" }}
-        </button>
-        <button
-          class="icon-button icon-button--subtle"
-          type="button"
-          :disabled="loading"
-          aria-label="刷新模型目录"
-          title="刷新模型目录"
-          @click="void loadSettings(true)"
-        >
-          <RefreshCw :class="{ spinning: loading }" :size="15" :stroke-width="2" aria-hidden="true" />
         </button>
       </div>
 

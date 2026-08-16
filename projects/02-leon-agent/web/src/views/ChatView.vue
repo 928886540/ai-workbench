@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, History, LoaderCircle, Mic, Send, Square, X } from "@lucide/vue";
+import { ArrowDown, History, LoaderCircle, Mic, RefreshCw, Send, Square, X } from "@lucide/vue";
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
@@ -1047,12 +1047,26 @@ onBeforeUnmount(() => {
     </section>
 
     <section v-else class="chat-app" aria-label="Leon 工作台">
-      <header v-if="activeView === 'chat'" class="chat-header">
+      <header class="chat-header">
         <div class="chat-header__brand">
-          <h1>Leon</h1>
-          <AppStatus :label="connectionLabel" :tone="connectionTone" />
+          <span class="chat-header__mark" aria-hidden="true">L</span>
+          <div class="chat-header__identity">
+            <h1>Leon</h1>
+            <AppStatus :label="connectionLabel" :tone="connectionTone" />
+          </div>
         </div>
         <div class="header-actions">
+          <button
+            v-if="activeView === 'tasks' || activeView === 'gallery'"
+            class="header-icon-button"
+            type="button"
+            :disabled="imageStateLoading"
+            :aria-label="activeView === 'tasks' ? '刷新任务' : '刷新图库'"
+            :title="activeView === 'tasks' ? '刷新任务' : '刷新图库'"
+            @click="refreshImageState"
+          >
+            <RefreshCw :class="{ spinning: imageStateLoading }" :size="18" :stroke-width="2" aria-hidden="true" />
+          </button>
           <button
             class="header-icon-button timeline-toggle"
             type="button"
@@ -1226,13 +1240,11 @@ onBeforeUnmount(() => {
         v-else-if="activeView === 'tasks'"
         :loading="imageStateLoading"
         :error="imageStateError"
-        @refresh="refreshImageState"
       />
       <GalleryView
         v-else-if="activeView === 'gallery'"
         :loading="imageStateLoading"
         :error="imageStateError"
-        @refresh="refreshImageState"
       />
       <SettingsView v-else :session-id="api.sessionId" @logout="logout" />
 

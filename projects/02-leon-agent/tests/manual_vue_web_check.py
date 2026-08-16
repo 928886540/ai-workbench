@@ -711,8 +711,25 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 repr(message_calls[-1]["body"] if message_calls else None),
             )
 
+            page.get_by_role("button", name="任务").click()
+            page.locator(".page-panel[aria-label='生图任务']").wait_for(state="visible")
+            check(
+                "任务页复用固定公共头部",
+                page.locator(".chat-header").is_visible()
+                and page.get_by_role("button", name="刷新任务").is_visible()
+                and page.locator(
+                    ".page-panel[aria-label='生图任务'] > .page-panel__header"
+                ).count()
+                == 0,
+            )
+
             page.get_by_role("button", name="图库").click()
-            page.get_by_role("heading", name="图库").wait_for(state="visible")
+            page.locator(".gallery-grid").wait_for(state="visible")
+            check(
+                "图库页复用固定公共头部",
+                page.locator(".chat-header").is_visible()
+                and page.get_by_role("button", name="刷新图库").is_visible(),
+            )
             page.get_by_role("button", name="查看 测试图片").click()
             viewer = page.locator(".image-viewer")
             viewer.wait_for(state="visible")
@@ -809,10 +826,17 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             )
 
             page.get_by_role("button", name="设置").click()
-            page.get_by_role("heading", name="设置").wait_for(state="visible")
+            page.locator(".settings-panel").wait_for(state="visible")
             check(
-                "产品大标题只出现在聊天页",
-                not page.locator(".chat-header").is_visible(),
+                "设置页复用固定公共头部且没有独立页面标题",
+                page.locator(".chat-header").is_visible()
+                and page.locator(".settings-panel > .page-panel__header").count() == 0,
+            )
+            nav_box = page.locator(".bottom-nav").bounding_box()
+            check(
+                "底部导航固定在视口底部区域",
+                nav_box is not None and nav_box["y"] + nav_box["height"] >= 820,
+                repr(nav_box),
             )
             check(
                 "设置页底部提供大号退出登录按钮",
@@ -830,7 +854,7 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 "音色目录提供全部/收藏页签",
                 voice_tabs.count() == 2
                 and "全部" in voice_tabs.nth(0).inner_text()
-                and "收藏" in voice_tabs.nth(1).inner_text(),
+                and voice_tabs.nth(1).inner_text().strip() == "收藏",
             )
             autoplay_input = page.locator(".settings-toggle input")
             check(

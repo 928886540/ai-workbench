@@ -35,8 +35,8 @@ def test_vue_entry_is_the_only_web_client() -> None:
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-12"' in main
-    assert "leon-vue-v12" in service_worker
+    assert 'register("/sw.js?v=vue-13"' in main
+    assert "leon-vue-v13" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:
@@ -161,6 +161,7 @@ def test_vue_model_and_voice_settings_dom_contract() -> None:
     for fragment in (
         'class="settings-card voice-settings"',
         'class="settings-toggle"',
+        'class="settings-switch"',
         'type="checkbox"',
         'class="voice-search-row"',
         'aria-label="搜索音色"',

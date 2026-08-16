@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { RefreshCw } from "@lucide/vue";
 import { imageTasks } from "../stores/images";
 
 defineProps<{
   loading: boolean;
   error: string;
 }>();
-
-const emit = defineEmits<{ refresh: [] }>();
 
 function statusKey(status: string): string {
   const value = status.trim().toLowerCase();
@@ -36,14 +33,7 @@ function progressLabel(progress: number | null): string {
 </script>
 
 <template>
-  <section class="page-panel" aria-labelledby="tasks-title">
-    <header class="page-panel__header">
-      <h2 id="tasks-title">生图任务</h2>
-      <button class="icon-button" type="button" :disabled="loading" aria-label="刷新任务" title="刷新任务" @click="emit('refresh')">
-        <RefreshCw :class="{ spinning: loading }" :size="17" :stroke-width="2" aria-hidden="true" />
-      </button>
-    </header>
-
+  <section class="page-panel" aria-label="生图任务">
     <p v-if="error" class="panel-error">{{ error }}</p>
     <div v-if="loading && !imageTasks.length" class="panel-empty">正在加载任务…</div>
     <div v-else-if="!imageTasks.length" class="panel-empty">

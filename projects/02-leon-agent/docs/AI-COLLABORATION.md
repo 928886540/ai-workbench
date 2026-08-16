@@ -236,9 +236,8 @@ W4/W5 completion pass (SW cache `leon-vue-v11`):
 
 De-clutter pass (SW cache `leon-vue-v12`):
 
-- Blue `Leon` brand + connection status render side by side, chat view only; Tasks/Gallery/Settings
-  show no product header. Logout is a full-width danger button at the bottom of Settings; the header
-  no longer exposes logout
+- Blue `Leon` brand + connection status render side by side. Logout is a full-width danger button at
+  the bottom of Settings; the header no longer exposes logout
 - Settings cards dropped one-time hints (base URL, provider id, "留空保存…", "N 个可用模型…",
   "★ 可收藏"); status lines appear only while loading or on error
 - Model/voice refresh controls are subtle in-row icon buttons inside their cards
@@ -247,6 +246,15 @@ De-clutter pass (SW cache `leon-vue-v12`):
   the catalog behind a single favorite) is gone
 - Agent bubble meta shows elapsed + `↑in/↓out` tokens only (model name removed) in a spaced,
   right-aligned muted group
+
+Fixed shell redesign (SW cache `leon-vue-v13`):
+
+- Chat/Tasks/Gallery/Settings share one fixed branded header; secondary views no longer render their
+  own page-title rows. Tasks/Gallery expose refresh as a contextual action in the shared header.
+- The app shell uses explicit header/content/navigation grid areas, preventing the bottom navigation
+  from falling into the stretch row when switching away from Chat.
+- Model refresh sits in the model-card top-right corner; voice autoplay uses an explicit switch track
+  and thumb; the voice tab label stays `收藏` without appending the favorite count.
 
 True streaming:
 
