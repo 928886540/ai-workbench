@@ -23,6 +23,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event, RLock
 from typing import Any
 from uuid import uuid4
 
@@ -31,7 +32,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Uploa
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
-from workbench_core.agent import AgentResult, ToolStep
+from workbench_core.agent import AgentCancelled, AgentResult, ToolStep, cancellation_scope
 from workbench_core.ccs import resolve_provider
 from workbench_core.config import Settings, get_settings, reset_settings_cache
 from workbench_core.llm import LLMClient
@@ -54,6 +55,12 @@ from leon_agent.voice_client import VoiceError, VolinkVoiceClient, prepare_speec
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class ActiveTurnState:
+    cancel_event: Event
+    retry_latest: bool = False
+
 # ---------------------------------------------------------------------------
 # Process-global singletons
 # ---------------------------------------------------------------------------
@@ -62,6 +69,7 @@ _config: LeonSettings | None = None
 _store: SessionStore | None = None
 _bus_registry: EventBusRegistry = EventBusRegistry()
 _llm_snapshots: dict[str, SessionLLMSnapshot] = {}
+_active_turns: dict[str, ActiveTurnState] = {}
 
 # Vue is the only Web client. Build output remains generated under web/dist.
 _VUE_WEB_DIST_DIR: Path = Path(__file__).resolve().parents[3] / "web" / "dist"
@@ -85,12 +93,13 @@ _WEB_DIR: Path = _resolve_web_dir()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _config, _store, _bus_registry, _llm_snapshots
+    global _config, _store, _bus_registry, _llm_snapshots, _active_turns
     _config = LeonSettings()
     _config.read_additional_system_prompt()
     _store = SessionStore(_config.session_db)
     _bus_registry = EventBusRegistry()
     _llm_snapshots = {}
+    _active_turns = {}
     try:
         yield
     finally:
@@ -170,12 +179,18 @@ class CreateSessionResponse(BaseModel):
 
 class MessageRequest(BaseModel):
     content: str
+    retry: bool = False
 
 
 class MessageResponse(BaseModel):
     session_id: str
     answer: str
     ok: bool
+
+
+class CancelResponse(BaseModel):
+    session_id: str
+    cancelled: bool
 
 
 class ModelSelectionRequest(BaseModel):
@@ -492,13 +507,16 @@ async def _track_image_jobs(
                     f"![生成图片 {index}]({item['image_url']})"
                     for index, item in enumerate(completed_now, start=1)
                 )
-                store.add_message(session_id, "assistant", image_markdown)
                 if completion_message_factory is not None:
                     try:
                         completion = await asyncio.to_thread(completion_message_factory, count)
                     except Exception:  # noqa: BLE001 - never lose the completion notice
                         completion = _fallback_image_completion(count)
-                    store.add_message(session_id, "assistant", completion)
+                    store.add_message(
+                        session_id,
+                        "assistant",
+                        f"{image_markdown}\n\n{completion}",
+                    )
                     bus.get_or_create(session_id, asyncio.get_running_loop()).publish(
                         LeonEvent(
                             event="assistant.notice",
@@ -509,6 +527,8 @@ async def _track_image_jobs(
                             },
                         )
                     )
+                else:
+                    store.add_message(session_id, "assistant", image_markdown)
         if pending:
             await asyncio.sleep(1.0)
 
@@ -586,9 +606,13 @@ async def list_sessions(store: SessionStore = Depends(get_store)):
 async def get_session(session_id: str, store: SessionStore = Depends(get_store)):
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
+    active_turn = _active_turns.get(session_id)
     return {
         "session_id": session_id,
         "messages": store.load_messages(session_id, limit=100, include_created_at=True),
+        "active_turn": (
+            {"retry": active_turn.retry_latest} if active_turn is not None else None
+        ),
     }
 
 
@@ -600,7 +624,13 @@ async def get_session(session_id: str, store: SessionStore = Depends(get_store))
 async def get_messages(session_id: str, store: SessionStore = Depends(get_store)):
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    return {"messages": store.load_messages(session_id, limit=100, include_created_at=True)}
+    active_turn = _active_turns.get(session_id)
+    return {
+        "messages": store.load_messages(session_id, limit=100, include_created_at=True),
+        "active_turn": (
+            {"retry": active_turn.retry_latest} if active_turn is not None else None
+        ),
+    }
 
 
 @app.get(
@@ -724,6 +754,31 @@ async def set_session_model(
 
 
 @app.post(
+    "/api/agent/sessions/{session_id}/cancel",
+    response_model=CancelResponse,
+    tags=["chat"],
+    dependencies=[Depends(verify_token)],
+)
+@app.delete(
+    "/api/agent/sessions/{session_id}/cancel",
+    response_model=CancelResponse,
+    tags=["chat"],
+    dependencies=[Depends(verify_token)],
+)
+async def cancel_message(
+    session_id: str,
+    store: SessionStore = Depends(get_store),
+):
+    if not store.has_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    active_turn = _active_turns.pop(session_id, None)
+    if active_turn is None:
+        return CancelResponse(session_id=session_id, cancelled=False)
+    active_turn.cancel_event.set()
+    return CancelResponse(session_id=session_id, cancelled=True)
+
+
+@app.post(
     "/api/agent/sessions/{session_id}/messages",
     response_model=MessageResponse,
     tags=["chat"],
@@ -737,6 +792,12 @@ async def send_message(
 ):
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
+    if session_id in _active_turns:
+        raise HTTPException(status_code=409, detail="当前会话仍有请求正在处理中")
+
+    active_turn = ActiveTurnState(cancel_event=Event())
+    _active_turns[session_id] = active_turn
+    cancel_event = active_turn.cancel_event
 
     loop = asyncio.get_running_loop()
     bus = _bus_registry.get_or_create(session_id, loop)
@@ -746,7 +807,24 @@ async def send_message(
     )
 
     history = store.load_messages(session_id)
-    store.add_message(session_id, "user", body.content)
+    retry_latest = bool(
+        body.retry
+        and len(history) >= 2
+        and history[-1].get("role") == "assistant"
+        and history[-2].get("role") == "user"
+    )
+    active_turn.retry_latest = retry_latest
+    if retry_latest:
+        history = history[:-2]
+        store.replace_latest_user(session_id, body.content)
+    else:
+        store.add_message(session_id, "user", body.content)
+
+    def persist_assistant(content: str) -> None:
+        if retry_latest:
+            store.replace_latest_assistant(session_id, content)
+        else:
+            store.add_message(session_id, "assistant", content)
     stripped_content = body.content.strip()
     folded_content = stripped_content.casefold()
     is_nsfw_command = folded_content == "/nsfw" or folded_content.startswith("/nsfw ")
@@ -848,7 +926,7 @@ async def send_message(
                 command = parse_nsfw_command(stripped_content, modes)
             except ValueError as exc:
                 answer = f"{exc}\n\n{format_mode_catalog(modes)}"
-                store.add_message(session_id, "assistant", answer)
+                persist_assistant(answer)
                 bus.publish(
                     LeonEvent(
                         event="assistant.completed",
@@ -859,7 +937,7 @@ async def send_message(
                 return MessageResponse(session_id=session_id, answer=answer, ok=False)
             if command is None:
                 answer = format_mode_catalog(modes)
-                store.add_message(session_id, "assistant", answer)
+                persist_assistant(answer)
                 bus.publish(
                     LeonEvent(
                         event="assistant.completed",
@@ -887,11 +965,11 @@ async def send_message(
                 wait_for_image_completion=False,
                 on_generation_submitted=on_generation_submitted,
             )
-            submission = await asyncio.to_thread(
-                direct_tools.execute,
-                "generate_images",
-                arguments,
-            )
+            def execute_direct_generation() -> dict[str, Any]:
+                with cancellation_scope(cancel_event):
+                    return direct_tools.execute("generate_images", arguments)
+
+            submission = await asyncio.to_thread(execute_direct_generation)
             ok = bool(submission.get("ok"))
             bus.publish(
                 LeonEvent(
@@ -905,7 +983,8 @@ async def send_message(
                 )
             )
             answer = (
-                f"已使用 {command.mode_name} 模式提交生图任务，完成后会自动在聊天里显示图片。"
+                f"已使用 {command.mode_name} 模式提交 1 张图片任务，正在后台生成，请稍等；"
+                "完成后会自动显示在这里。"
                 if ok
                 else f"直达生图提交失败：{submission.get('error') or '未知错误'}"
             )
@@ -914,7 +993,7 @@ async def send_message(
                 steps=[ToolStep("generate_images", arguments, submission)],
             )
             store.record_result(session_id, result)
-            store.add_message(session_id, "assistant", answer)
+            persist_assistant(answer)
             bus.publish(
                 LeonEvent(
                     event="assistant.completed",
@@ -947,11 +1026,16 @@ async def send_message(
         )
 
         started = time.monotonic()
-        result = await asyncio.to_thread(agent.run, body.content, history=history)
+        result = await asyncio.to_thread(
+            agent.run,
+            body.content,
+            history=history,
+            cancel_event=cancel_event,
+        )
         elapsed_ms = int((time.monotonic() - started) * 1000)
 
         store.record_result(session_id, result)
-        store.add_message(session_id, "assistant", result.answer)
+        persist_assistant(result.answer)
 
         completed_data: dict[str, Any] = {
             "content": result.answer,
@@ -968,12 +1052,20 @@ async def send_message(
         )
         return MessageResponse(session_id=session_id, answer=result.answer, ok=True)
 
+    except AgentCancelled:
+        bus.publish(
+            LeonEvent(event="assistant.cancelled", session_id=session_id, data={})
+        )
+        return MessageResponse(session_id=session_id, answer="已停止", ok=False)
     except Exception as exc:
         err_msg = f"{type(exc).__name__}: {exc}"
         bus.publish(
             LeonEvent(event="agent.error", session_id=session_id, data={"error": err_msg})
         )
         raise HTTPException(status_code=500, detail=err_msg) from exc
+    finally:
+        if _active_turns.get(session_id) is active_turn:
+            _active_turns.pop(session_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1072,8 +1164,54 @@ class VoiceClipStore:
         return audio
 
 
+class TTSAudioCache:
+    """Reuse the newest synthesized results by normalized text and voice."""
+
+    def __init__(self, *, max_count: int = 10) -> None:
+        self.max_count = max(10, max_count)
+        self._items: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+        self._lock = RLock()
+
+    def get_or_create(
+        self,
+        *,
+        text: str,
+        voice_id: str,
+        factory: Callable[[], bytes],
+    ) -> tuple[bytes, bool]:
+        key = (voice_id, prepare_speech_text(text))
+        with self._lock:
+            cached = self._items.get(key)
+            if cached is not None:
+                self._items.move_to_end(key)
+                return cached, True
+            audio = factory()
+            self._items[key] = audio
+            while len(self._items) > self.max_count:
+                self._items.popitem(last=False)
+            return audio, False
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
+
 _voice_clips = VoiceClipStore()
+_tts_audio_cache = TTSAudioCache(max_count=10)
 _voice_client_cache: dict[str, VolinkVoiceClient] = {}
+
+
+def _synthesize_cached(
+    client: VolinkVoiceClient,
+    *,
+    text: str,
+    voice_id: str,
+) -> tuple[bytes, bool]:
+    return _tts_audio_cache.get_or_create(
+        text=text,
+        voice_id=voice_id,
+        factory=lambda: client.synthesize(text=text, voice_id=voice_id),
+    )
 
 
 def _get_voice_client(config: LeonSettings) -> VolinkVoiceClient:
@@ -1119,8 +1257,11 @@ async def synthesize_speech(
     client = _get_voice_client(config)
     voice_id = (body.voice_id or config.volink_default_voice_id).strip()
     try:
-        audio = await asyncio.to_thread(
-            client.synthesize, text=body.text, voice_id=voice_id
+        audio, cache_hit = await asyncio.to_thread(
+            _synthesize_cached,
+            client,
+            text=body.text,
+            voice_id=voice_id,
         )
     except VoiceError as exc:
         logger.warning(
@@ -1134,7 +1275,10 @@ async def synthesize_speech(
     return Response(
         content=audio,
         media_type="audio/mpeg",
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "X-Leon-TTS-Cache": "hit" if cache_hit else "miss",
+        },
     )
 
 
@@ -1214,7 +1358,7 @@ def _session_speak_factory(
 
     def speak(text: str, voice_id: str | None = None) -> dict[str, Any]:
         target = (voice_id or config.volink_default_voice_id).strip()
-        audio = client.synthesize(text=text, voice_id=target)
+        audio, cache_hit = _synthesize_cached(client, text=text, voice_id=target)
         clip_id = _voice_clips.put(audio)
         voice = client.resolve_voice(target) or {}
         bus_publish(
@@ -1238,6 +1382,7 @@ def _session_speak_factory(
             "spoken": True,
             "voice_name": voice.get("name") or "",
             "characters": len(text),
+            "cache_hit": cache_hit,
         }
 
     return speak

@@ -6,7 +6,16 @@ export interface HealthResponse {
 
 export interface SessionResponse {
   session_id: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: SessionMessage[];
+  active_turn: { retry: boolean } | null;
+}
+
+export interface SessionMessage {
+  id?: number;
+  role: string;
+  content: string;
+  created_at?: number;
+  revisions?: Array<{ content: string; created_at?: number }>;
 }
 
 export interface CreateSessionResponse {
@@ -18,6 +27,11 @@ export interface MessageResponse {
   session_id: string;
   answer: string;
   ok: boolean;
+}
+
+export interface CancelResponse {
+  session_id: string;
+  cancelled: boolean;
 }
 
 export interface ImageStateResponse {
@@ -130,11 +144,26 @@ export class LeonApi {
     return this.request<CreateSessionResponse>("/api/agent/sessions", { method: "POST" });
   }
 
-  async sendMessage(sessionId: string, content: string): Promise<MessageResponse> {
+  async sendMessage(
+    sessionId: string,
+    content: string,
+    options: { signal?: AbortSignal; retry?: boolean } = {},
+  ): Promise<MessageResponse> {
     return this.request<MessageResponse>(`/api/agent/sessions/${sessionId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, retry: Boolean(options.retry) }),
+      signal: options.signal,
     });
+  }
+
+  async cancelMessage(sessionId: string): Promise<CancelResponse> {
+    const path = `/api/agent/sessions/${sessionId}/cancel`;
+    try {
+      return await this.request<CancelResponse>(path, { method: "POST" });
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 405) throw error;
+      return this.request<CancelResponse>(path, { method: "DELETE" });
+    }
   }
 
   async getImageState(sessionId: string, limit = 100): Promise<ImageStateResponse> {

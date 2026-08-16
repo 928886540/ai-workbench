@@ -62,6 +62,10 @@ understand goal
 - Tools are read-only by default; write tools need explicit permission design.
 - Path tools must stay inside workspace root.
 - If root cause is still uncertain, say so directly.
+- Backend code is not considered live until the owning process is restarted and the served runtime
+  is verified. Changes under `projects/02-leon-agent/src/` require restarting `leon-server`; changes
+  in the external Leon / ComfyUI backend or plugin require restarting ComfyUI. If both sides changed,
+  restart and verify both before reporting completion.
 
 ## Validation Order
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from threading import Event
 from typing import Any
 
 from workbench_core.agent import AgentEvent, AgentResult, AgentRuntime
 from workbench_core.llm import LLMClient
 
+from leon_agent.image_modes import mode_catalog_items
 from leon_agent.leon_client import LeonImageClient
 from leon_agent.tools import create_leon_tools
 
@@ -24,10 +26,11 @@ Rules:
   generate_images instead of answering with a rewritten image prompt.
 - Pass the user's current image request through source_text verbatim whenever it is self-contained.
   Do not translate, summarize, sanitize, expand, beautify, or add visual details to it.
-- Extract only parameters the user explicitly supplied, such as count, an exact Leon mode id, or
-  random mode. Do not choose Prompt, Workflow, LoRA, composition, style, or aesthetics for them.
-- If no exact mode id is supplied, use the configured default. Call list_image_modes only when the
-  user asks which modes exist; descriptive styles stay inside source_text.
+- Extract only parameters the user explicitly supplied, such as count, a Leon mode, or random mode.
+  Do not choose Prompt, Workflow, LoRA, composition, style, or aesthetics for them.
+- The current user turn is authoritative. If it names a mode, resolve that name from the supplied
+  mode catalog and never reuse a different mode from an earlier turn.
+- If no mode is supplied, use the configured default. Descriptive styles stay inside source_text.
 - If a contextual request such as "again" cannot stand alone, ask one short clarification instead
   of inventing the missing image description.
 - A successful generate_images result means the task was submitted, not necessarily that rendering
@@ -58,6 +61,23 @@ def build_system_prompt(additional_system_prompt: str | None = None) -> str:
     return f"{SYSTEM_PROMPT}\n\n{additional_system_prompt.strip()}"
 
 
+def image_mode_context(image_client: LeonImageClient) -> str:
+    """Give the model current product metadata instead of parsing user text in code."""
+    try:
+        result = image_client.list_modes()
+    except Exception:  # noqa: BLE001 - image generation can still use its configured default
+        return ""
+    modes = result.get("modes", []) if isinstance(result, dict) else []
+    items = mode_catalog_items([item for item in modes if isinstance(item, dict)])
+    if not items:
+        return ""
+    lines = ["Current installed Leon image modes (name -> exact workflow id; aliases):"]
+    for item in items:
+        aliases = ", ".join(item.get("aliases", [])) or "none"
+        lines.append(f"- {item['name']} -> {item['id']} (aliases: {aliases})")
+    return "\n".join(lines)
+
+
 class LeonAgent:
     def __init__(
         self,
@@ -81,10 +101,14 @@ class LeonAgent:
             on_generation_submitted=on_generation_submitted,
             speak_handler=speak_handler,
         )
+        system_prompt = build_system_prompt(additional_system_prompt)
+        mode_context = image_mode_context(image_client)
+        if mode_context:
+            system_prompt = f"{system_prompt}\n\n{mode_context}"
         self.runtime = AgentRuntime(
             client=llm_client,
             tools=tools,
-            system_prompt=build_system_prompt(additional_system_prompt),
+            system_prompt=system_prompt,
             max_turns=max_turns,
             temperature=0.2,
             on_event=on_event,
@@ -95,5 +119,6 @@ class LeonAgent:
         message: str,
         *,
         history: Sequence[dict[str, Any]] = (),
+        cancel_event: Event | None = None,
     ) -> AgentResult:
-        return self.runtime.run(message, history=history)
+        return self.runtime.run(message, history=history, cancel_event=cancel_event)

@@ -3,7 +3,7 @@
 These checks intentionally inspect source rather than booting a Gateway or
 calling Volink.  The browser behavior is covered by the implementation's
 small, explicit seams: messages[] is the source of truth, URL normalization
-is centralized in speech.ts, and the singleton player owns autoplay.
+is centralized in speech.ts, and the visible bubble player owns playback.
 """
 
 from __future__ import annotations
@@ -43,7 +43,6 @@ def test_chat_handles_voice_ready_and_delta_without_provider_calls() -> None:
         "function handleVoiceReady(data: Record<string, unknown>): void",
         "if (!clip || hasVoiceClip(clip.clipId)) return;",
         "insertMessageBefore(message, pending?.id || null);",
-        "void playVoiceClip(message.id, clip.url, api.token);",
         'case "voice.ready":',
         'case "assistant.delta":',
         'const delta = asString(data.delta);',
@@ -54,8 +53,10 @@ def test_chat_handles_voice_ready_and_delta_without_provider_calls() -> None:
     ):
         assert fragment in chat, fragment
 
+    assert "void playVoiceClip(message.id, clip.url, api.token);" not in chat
+
     # An explicit voice.ready event must not be gated by the text autoplay
-    # preference; the handler calls the clip player directly.
+    # preference; the rendered voice bubble decides whether autoplay succeeds.
     ready_region = chat.split('case "voice.ready":', 1)[0]
     assert "autoplayAll" not in ready_region[-700:]
 
@@ -83,26 +84,31 @@ def test_clip_urls_are_same_origin_and_remote_urls_are_not_revoked() -> None:
     assert "revokeObjectUrl(operation.remoteUrl)" not in speech
 
 
-def test_voice_bubble_exposes_audio_metadata_without_message_actions() -> None:
+def test_voice_bubble_owns_visible_custom_player_without_message_actions() -> None:
     bubble = _read("web/src/components/MessageBubble.vue")
+    styles = _read("web/src/styles.css")
 
     for fragment in (
-        "const voiceClip = computed(() => props.message.audio || props.message.voice || null);",
+        "const voiceClip = computed(() => displayedMessage.value.audio || "
+        "displayedMessage.value.voice || null);",
         "const isVoiceMessage = computed(() => voiceClip.value !== null);",
         'class="voice-bubble"',
         'class="voice-bubble__name"',
         'class="voice-bubble__size"',
+        'class="voice-player"',
+        'class="voice-player__toggle"',
+        'aria-label="语音播放进度"',
         'class="voice-bubble__audio"',
-        "controls",
+        '@canplay="tryAutoplayVoice"',
+        "await audio.play();",
         'class="voice-bubble__text"',
         "!isVoiceMessage &&",
     ):
         assert fragment in bubble, fragment
+    assert " controls" not in bubble
+    assert ".voice-bubble__audio" in styles and "display: none;" in styles
+    assert ".voice-player__toggle" in styles
 
     # Voice bubbles are rendered outside both action-toolbar branches, so a
     # voice.ready event cannot expose edit/retry controls.
-    assert (
-        'v-if="!isVoiceMessage && message.role === \'agent\' && message.status === \'error\'"'
-        in bubble
-    )
-    assert 'v-else-if="!isVoiceMessage && showToolbar && !editing"' in bubble
+    assert 'v-if="!isVoiceMessage && showToolbar && !editing"' in bubble

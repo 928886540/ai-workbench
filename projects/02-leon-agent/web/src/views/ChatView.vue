@@ -1,23 +1,34 @@
 <script setup lang="ts">
-import { ArrowDown, History, LoaderCircle, Mic, RefreshCw, Send, Square, X } from "@lucide/vue";
+import { ArrowDown, History, LoaderCircle, Mic, RefreshCw, Send, Sparkles, Square, X } from "@lucide/vue";
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
 import MessageBubble from "../components/MessageBubble.vue";
-import { ApiError, api, type ImageMode, type LeonEvent } from "../api/client";
+import {
+  ApiError,
+  api,
+  type ImageMode,
+  type LeonEvent,
+  type SessionMessage,
+  type SessionResponse,
+} from "../api/client";
 import GalleryView from "./GalleryView.vue";
 import SettingsView from "./SettingsView.vue";
 import TasksView from "./TasksView.vue";
 import {
   appendMessage,
+  beginMessageRevision,
   clearMessages,
+  cycleMessageRevision,
   findMessage,
   hasVoiceClip,
   insertMessageBefore,
   latestMessage,
   makeMessage,
   messages,
+  removeMessage,
   type ChatMessage,
+  type MessageRevision,
   type VoiceClip,
 } from "../stores/messages";
 import {
@@ -36,7 +47,6 @@ import {
   audioUnlockRequired,
   buildVoiceClipUrl,
   clearSpeechState,
-  playVoiceClip,
   speakMessage,
   unlockAudio,
 } from "../utils/speech";
@@ -49,7 +59,6 @@ const draft = ref("");
 const sending = ref(false);
 const connectionLabel = ref("未连接");
 const connectionTone = ref<"neutral" | "ok" | "error">("neutral");
-const taskStatus = ref("");
 const activeView = ref<WorkbenchView>("chat");
 const imageStateLoading = ref(false);
 const imageStateLoaded = ref(false);
@@ -65,6 +74,7 @@ const timelineEntries = ref<TimelineEntry[]>([]);
 const autoFollowMessages = ref(true);
 const showScrollToLatest = ref(false);
 const pendingAssistantId = ref<string | null>(null);
+const pendingImageResultId = ref<string | null>(null);
 const modeSuggestions = ref<ImageMode[]>([]);
 const modeSuggestionIndex = ref(0);
 const modeSuggestionsOpen = ref(false);
@@ -75,12 +85,16 @@ let modeBlurTimer: number | null = null;
 let imageModeCatalog: ImageMode[] | null = null;
 let imageModeCatalogRequest: Promise<ImageMode[]> | null = null;
 let modeSuggestionRequestId = 0;
+let lastAgentErrorFingerprint = "";
 let lastAgentErrorAt = 0;
+let activeSendController: AbortController | null = null;
+let suppressedUserEcho: { content: string; until: number } | null = null;
 const autoplayRequests = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 42;
 const COMPOSER_MAX_HEIGHT = 120;
 const SCROLL_FOLLOW_THRESHOLD = 72;
 const MAX_TIMELINE_ENTRIES = 100;
+const ERROR_DEDUPE_WINDOW_MS = 10_000;
 let timelineSequence = 0;
 
 interface ModeCompletionContext {
@@ -128,6 +142,7 @@ function timelineLabel(eventName: string): string {
     "user.message": "用户消息",
     "assistant.started": "助手开始",
     "assistant.completed": "助手回复",
+    "assistant.cancelled": "已停止",
     "assistant.notice": "助手提示",
     "tool.started": "工具开始",
     "tool.finished": "工具完成",
@@ -500,14 +515,41 @@ function selectView(view: WorkbenchView): void {
 
 function retryMessage(messageId: string): void {
   if (sending.value) return;
+  const selected = findMessage(messageId);
+  if (!selected) return;
   const index = messages.value.findIndex((message) => message.id === messageId);
-  for (let cursor = (index >= 0 ? index : messages.value.length) - 1; cursor >= 0; cursor -= 1) {
-    const candidate = messages.value[cursor];
-    if (candidate.role !== "user" || !candidate.text.trim()) continue;
-    draft.value = candidate.text.trim();
-    void sendMessage();
-    return;
+  let content = "";
+  let target: ChatMessage | null = null;
+  if (selected.role === "user") {
+    content = selected.text.trim();
+    for (let cursor = index + 1; cursor < messages.value.length; cursor += 1) {
+      if (messages.value[cursor].role === "agent") {
+        target = messages.value[cursor];
+        break;
+      }
+    }
+  } else if (selected.role === "agent") {
+    target = selected;
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      const candidate = messages.value[cursor];
+      if (candidate.role !== "user" || !candidate.text.trim()) continue;
+      content = candidate.text.trim();
+      break;
+    }
   }
+  if (!content) return;
+
+  const retryLatest = target?.id === latestMessage("agent")?.id;
+  if (!target) target = appendMessage(makeMessage("agent", "", "pending"));
+  else beginMessageRevision(target);
+  pendingAssistantId.value = target.id;
+  suppressedUserEcho = { content, until: Date.now() + ERROR_DEDUPE_WINDOW_MS };
+  void sendTurn(content, { appendUser: false, retry: retryLatest });
+}
+
+function cycleRevision(messageId: string): void {
+  const message = findMessage(messageId);
+  if (message) cycleMessageRevision(message);
 }
 
 function editMessage(messageId: string, text: string): void {
@@ -589,15 +631,61 @@ function handleOnline(): void {
   if (!eventSource || eventSource.readyState === EventSource.CLOSED) connectEvents();
 }
 
+const IMAGE_MARKDOWN_PATTERN = /!\[[^\]]*\]\(https?:\/\/[^)\s]+\)/gi;
+const PLAIN_IMAGE_URL_PATTERN = /https?:\/\/[^\s<>()]+\.(?:avif|bmp|gif|jpe?g|png|webp)(?:\?[^\s<>()]*)?/i;
+
+function hasImageContent(content: string): boolean {
+  IMAGE_MARKDOWN_PATTERN.lastIndex = 0;
+  return IMAGE_MARKDOWN_PATTERN.test(content) || PLAIN_IMAGE_URL_PATTERN.test(content);
+}
+
+function isImageOnlyContent(content: string): boolean {
+  IMAGE_MARKDOWN_PATTERN.lastIndex = 0;
+  return !content.replace(IMAGE_MARKDOWN_PATTERN, "").trim();
+}
+
 function appendHistory(
-  history: Array<{ role: string; content: string; created_at?: number }>,
+  history: SessionMessage[],
 ): void {
   clearMessages();
-  for (const item of history) {
+  for (let index = 0; index < history.length; index += 1) {
+    const item = history[index];
     if (item.role !== "user" && item.role !== "assistant") continue;
+    let content = item.content;
+    const next = history[index + 1];
+    if (
+      item.role === "assistant" &&
+      isImageOnlyContent(content) &&
+      next?.role === "assistant" &&
+      next.content.trim() &&
+      !hasImageContent(next.content)
+    ) {
+      content = `${content}\n\n${next.content}`;
+      index += 1;
+    }
     const message = appendMessage(
-      makeMessage(item.role === "assistant" ? "agent" : "user", item.content),
+      makeMessage(item.role === "assistant" ? "agent" : "user", content),
     );
+    if (typeof item.id === "number") message.id = `db_${item.id}`;
+    if (item.role === "assistant" && hasImageContent(content)) message.kind = "image-result";
+    if (item.role === "assistant" && Array.isArray(item.revisions)) {
+      message.revisions = item.revisions.map((revision): MessageRevision => ({
+        kind: hasImageContent(revision.content) ? "image-result" : "message",
+        text: revision.content,
+        status: "done",
+        images: [],
+        tools: [],
+        meta: {
+          model: null,
+          startedAt: null,
+          finishedAt: revision.created_at || null,
+          elapsedMs: null,
+          tokensIn: null,
+          tokensOut: null,
+        },
+      }));
+      message.revisionIndex = message.revisions.length;
+    }
     message.createdAt =
       typeof item.created_at === "number" && item.created_at > 0 ? item.created_at : null;
   }
@@ -628,6 +716,71 @@ function showTimeDivider(index: number): boolean {
 
 function pendingAssistant(): ChatMessage | null {
   return findMessage(pendingAssistantId.value);
+}
+
+function cancelPendingAssistant(): void {
+  const message = pendingAssistant();
+  pendingAssistantId.value = null;
+  if (!message) return;
+  const hasVisibleWork = Boolean(
+    message.text.trim() || message.tools.length || message.images.length || message.revisions.length,
+  );
+  if (!hasVisibleWork) {
+    removeMessage(message.id);
+    return;
+  }
+  message.status = "cancelled";
+  message.tools.forEach((tool) => {
+    if (tool.status === "running") tool.status = "cancelled";
+  });
+  message.meta.finishedAt = Date.now();
+  message.meta.elapsedMs = message.meta.startedAt
+    ? message.meta.finishedAt - message.meta.startedAt
+    : null;
+  if (!activeSendController) sending.value = false;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function startTool(data: Record<string, unknown>): void {
+  const message = pendingAssistant() || appendMessage(makeMessage("agent", "", "pending"));
+  message.status = message.text ? "streaming" : "pending";
+  message.meta.startedAt ||= Date.now();
+  message.tools.push({
+    id: `tool_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    name: asString(data.tool_name) || "tool",
+    status: "running",
+    input: asRecord(data.input),
+    output: {},
+  });
+  pendingAssistantId.value = message.id;
+  scrollToLatest();
+}
+
+function finishTool(data: Record<string, unknown>): void {
+  const message = pendingAssistant();
+  if (!message) return;
+  const name = asString(data.tool_name) || "tool";
+  let tool = [...message.tools]
+    .reverse()
+    .find((item) => item.name === name && item.status === "running");
+  if (!tool) {
+    tool = {
+      id: `tool_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      status: "running",
+      input: {},
+      output: {},
+    };
+    message.tools.push(tool);
+  }
+  tool.status = data.ok === false || asString(data.ok) === "false" ? "error" : "done";
+  tool.output = asRecord(data.output);
+  scrollToLatest();
 }
 
 function ensureVoiceCatalog(): Promise<boolean> {
@@ -690,9 +843,29 @@ function finishAssistant(
     if (typeof serverMeta.tokensOut === "number") completed.meta.tokensOut = serverMeta.tokensOut;
   }
   pendingAssistantId.value = null;
-  taskStatus.value = "";
+  if (!activeSendController) sending.value = false;
   if (completed) maybeAutoplay(completed);
   scrollToLatest();
+}
+
+function errorFingerprint(content: string): string {
+  return content.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
+function finishAgentErrorOnce(content: string): void {
+  const resolved = content.trim() || "请求失败";
+  const fingerprint = errorFingerprint(resolved);
+  const now = Date.now();
+  const latest = latestMessage("agent");
+  if (
+    (fingerprint === lastAgentErrorFingerprint && now - lastAgentErrorAt < ERROR_DEDUPE_WINDOW_MS) ||
+    (latest?.status === "error" && errorFingerprint(latest.text) === fingerprint)
+  ) {
+    return;
+  }
+  lastAgentErrorFingerprint = fingerprint;
+  lastAgentErrorAt = now;
+  finishAssistant(resolved, "error");
 }
 
 function parseCompletedMeta(data: Record<string, unknown>): CompletedMeta {
@@ -744,10 +917,6 @@ function handleVoiceReady(data: Record<string, unknown>): void {
   const pending = pendingAssistant();
   insertMessageBefore(message, pending?.id || null);
   scrollToLatest();
-
-  // This is an explicit agent request, not the user's "autoplay all answers"
-  // preference. The singleton player handles browser unlock/pending playback.
-  void playVoiceClip(message.id, clip.url, api.token);
 }
 
 function handleEvent(event: LeonEvent): void {
@@ -759,6 +928,14 @@ function handleEvent(event: LeonEvent): void {
       break;
     case "user.message": {
       const content = asString(data.content);
+      if (
+        content &&
+        suppressedUserEcho?.content === content &&
+        suppressedUserEcho.until >= Date.now()
+      ) {
+        suppressedUserEcho = null;
+        break;
+      }
       const last = latestMessage("user");
       if (content && last?.text !== content) appendMessage(makeMessage("user", content));
       break;
@@ -768,7 +945,6 @@ function handleEvent(event: LeonEvent): void {
       message.status = "pending";
       message.meta.startedAt = Date.now();
       pendingAssistantId.value = message.id;
-      taskStatus.value = "正在请求模型…";
       scrollToLatest();
       break;
     }
@@ -780,7 +956,6 @@ function handleEvent(event: LeonEvent): void {
       message.meta.startedAt ||= Date.now();
       message.text += delta;
       pendingAssistantId.value = message.id;
-      taskStatus.value = "正在生成…";
       scrollToLatest();
       break;
     }
@@ -791,27 +966,39 @@ function handleEvent(event: LeonEvent): void {
         parseCompletedMeta(data),
       );
       break;
-    case "assistant.notice":
-      if (data.content) appendMessage(makeMessage("agent", asString(data.content)));
+    case "assistant.cancelled":
+      cancelPendingAssistant();
       scrollToLatest();
       break;
+    case "assistant.notice": {
+      const content = asString(data.content);
+      const jobIds = Array.isArray(data.job_ids) ? data.job_ids : [];
+      const imageResult = jobIds.length ? findMessage(pendingImageResultId.value) : null;
+      if (content && imageResult?.kind === "image-result") {
+        imageResult.text = content;
+        imageResult.status = "done";
+        pendingImageResultId.value = null;
+        maybeAutoplay(imageResult);
+      } else if (content) {
+        appendMessage(makeMessage("agent", content));
+      }
+      scrollToLatest();
+      break;
+    }
     case "agent.error":
-      lastAgentErrorAt = Date.now();
-      finishAssistant(asString(data.error) || "请求失败", "error");
+      finishAgentErrorOnce(asString(data.error) || "请求失败");
       break;
     case "tool.started":
-      taskStatus.value = `正在执行：${asString(data.tool_name) || "工具"}`;
+      startTool(data);
       break;
     case "tool.finished":
-      taskStatus.value = asString(data.ok) === "false" ? "工具执行失败" : "工具已完成";
+      finishTool(data);
       break;
     case "image.task.created":
       upsertImageTask({ ...data, created_at: eventTime(event.timestamp) });
-      taskStatus.value = "图片任务已提交，等待完成…";
       break;
     case "image.task.updated":
       upsertImageTask(data);
-      taskStatus.value = `图片任务：${asString(data.status) || "处理中"}`;
       break;
     case "image.completed": {
       const imageUrl = asString(data.image_url);
@@ -819,10 +1006,14 @@ function handleEvent(event: LeonEvent): void {
       const jobId = asString(data.job_id);
       if (jobId) completeImageTask(jobId, imageUrl, eventTime(event.timestamp));
       if (!messages.value.some((message) => message.images.includes(imageUrl))) {
-        const target = appendMessage(makeMessage("agent"));
+        let target = findMessage(pendingImageResultId.value);
+        if (!target || target.kind !== "image-result") {
+          target = appendMessage(makeMessage("agent"));
+          target.kind = "image-result";
+          pendingImageResultId.value = target.id;
+        }
         target.images.push(imageUrl);
       }
-      taskStatus.value = "";
       scrollToLatest();
       break;
     }
@@ -845,9 +1036,42 @@ function connectEvents(): void {
   );
 }
 
+function restoreActiveTurn(activeTurn: { retry: boolean } | null): void {
+  if (!activeTurn) return;
+  let target: ChatMessage | null = null;
+  if (activeTurn.retry) {
+    target = latestMessage("agent");
+    if (target) beginMessageRevision(target);
+  }
+  if (!target) target = appendMessage(makeMessage("agent", "", "pending"));
+  target.status = "pending";
+  target.meta.startedAt ||= Date.now();
+  pendingAssistantId.value = target.id;
+  sending.value = true;
+  scrollToLatest(true);
+}
+
+async function reconcileActiveTurn(sessionId: string): Promise<void> {
+  try {
+    const refreshed = await api.getSession(sessionId);
+    if (api.sessionId !== sessionId) return;
+    if (refreshed.active_turn) {
+      if (!pendingAssistant()) restoreActiveTurn(refreshed.active_turn);
+      return;
+    }
+    if (sending.value && !activeSendController) {
+      pendingAssistantId.value = null;
+      sending.value = false;
+      appendHistory(refreshed.messages);
+    }
+  } catch {
+    // SSE remains authoritative; the next explicit refresh can retry hydration.
+  }
+}
+
 async function openSession(): Promise<void> {
   clearTimeline(true);
-  let session: { messages: Array<{ role: string; content: string }> } | null = null;
+  let session: SessionResponse | null = null;
   if (api.sessionId) {
     try {
       session = await api.getSession(api.sessionId);
@@ -858,9 +1082,10 @@ async function openSession(): Promise<void> {
   if (!session) {
     const created = await api.createSession();
     api.setSession(created.session_id);
-    session = { messages: [] };
+    session = { session_id: created.session_id, messages: [], active_turn: null };
   }
   appendHistory(session.messages);
+  restoreActiveTurn(session.active_turn);
   clearImageState();
   imageStateLoading.value = false;
   imageStateLoaded.value = false;
@@ -868,6 +1093,7 @@ async function openSession(): Promise<void> {
   authenticated.value = true;
   void nextTick(resizeComposer);
   connectEvents();
+  if (session.active_turn) void reconcileActiveTurn(api.sessionId);
   void loadImageState();
   void ensureVoiceCatalog();
   void probeAsrAvailability();
@@ -897,7 +1123,6 @@ async function login(): Promise<void> {
   try {
     await api.checkHealth(undefined, token);
     api.setToken(token);
-    api.clearSession();
     await openSession();
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : "登录失败";
@@ -919,29 +1144,45 @@ function logout(): void {
   showScrollToLatest.value = false;
   previewUrl.value = "";
   pendingAssistantId.value = null;
+  pendingImageResultId.value = null;
+  activeSendController?.abort();
+  activeSendController = null;
+  sending.value = false;
+  suppressedUserEcho = null;
   autoplayRequests.clear();
   clearSpeechState();
   clearVoiceCatalog();
   setConnection("已退出", "neutral");
 }
 
-async function sendMessage(): Promise<void> {
-  hideModeSuggestions();
-  const content = draft.value.trim();
-  if (!content || sending.value || !api.sessionId) return;
+interface SendTurnOptions {
+  appendUser: boolean;
+  retry: boolean;
+}
+
+async function sendTurn(content: string, options: SendTurnOptions): Promise<void> {
+  const sessionId = api.sessionId;
+  if (!content || sending.value || !sessionId) return;
   const previousAgentId = latestMessage("agent")?.id || null;
   // A POST fallback may retain its id to absorb a late SSE completion. Once a
   // new turn starts, that id belongs to the previous turn and must not be
   // reused by the next assistant.started event.
-  pendingAssistantId.value = null;
-  appendMessage(makeMessage("user", content));
-  draft.value = "";
-  void nextTick(resizeComposer);
+  if (options.appendUser) {
+    pendingAssistantId.value = null;
+    suppressedUserEcho = null;
+    appendMessage(makeMessage("user", content));
+    draft.value = "";
+    void nextTick(resizeComposer);
+  }
+  const controller = new AbortController();
+  activeSendController = controller;
   sending.value = true;
-  taskStatus.value = "正在发送…";
   scrollToLatest(true);
   try {
-    const response = await api.sendMessage(api.sessionId, content);
+    const response = await api.sendMessage(sessionId, content, {
+      signal: controller.signal,
+      retry: options.retry,
+    });
     // SSE normally supplies the completed bubble. This fallback keeps the turn
     // visible if a mobile network drops the event right as POST returns.
     let current = pendingAssistant();
@@ -949,7 +1190,7 @@ async function sendMessage(): Promise<void> {
     if (!current && latest && latest.id !== previousAgentId) current = latest;
     if (current) {
       current.text = response.answer;
-      current.status = response.ok ? "done" : "error";
+      current.status = response.ok ? "done" : response.answer === "已停止" ? "cancelled" : "error";
       current.meta.finishedAt = Date.now();
       if (current.status === "done" && current.id === pendingAssistantId.value) {
         // Keep the id briefly so a late assistant.started event can reuse this
@@ -963,16 +1204,41 @@ async function sendMessage(): Promise<void> {
       maybeAutoplay(fallback);
     }
   } catch (error) {
-    // The Gateway publishes agent.error before returning HTTP 500. Mirror the
-    // prior client behavior and avoid rendering the same failure from both channels.
-    if (Date.now() - lastAgentErrorAt > 1000) {
-      finishAssistant(error instanceof Error ? error.message : "发送失败", "error");
+    if (!controller.signal.aborted) {
+      finishAgentErrorOnce(error instanceof Error ? error.message : "发送失败");
     }
   } finally {
-    sending.value = false;
-    taskStatus.value = "";
+    if (activeSendController === controller) {
+      activeSendController = null;
+      sending.value = false;
+    }
     scrollToLatest();
   }
+}
+
+async function sendMessage(): Promise<void> {
+  hideModeSuggestions();
+  const content = draft.value.trim();
+  await sendTurn(content, { appendUser: true, retry: false });
+}
+
+async function stopSending(): Promise<void> {
+  const sessionId = api.sessionId;
+  if (!sending.value || !sessionId) return;
+  const cancelRequest = api.cancelMessage(sessionId);
+  activeSendController?.abort();
+  sending.value = false;
+  cancelPendingAssistant();
+  scrollToLatest();
+  try {
+    await cancelRequest;
+  } catch (error) {
+    showAsrNotice(`停止请求失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+function handleSendButton(): void {
+  if (sending.value) void stopSending();
 }
 
 function handleComposerKeydown(event: KeyboardEvent): void {
@@ -1034,24 +1300,44 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="chat-shell">
-    <section v-if="!authenticated" class="login-card" aria-labelledby="login-title">
-      <h1 id="login-title">Leon</h1>
-      <p class="subtitle">输入访问口令，继续上次对话。</p>
-      <form class="login-form" @submit.prevent="login">
-        <label for="token">访问口令</label>
-        <input id="token" v-model="tokenInput" type="password" autocomplete="current-password" placeholder="请输入访问口令" />
-        <button type="submit" :disabled="booting || !tokenInput.trim()">进入</button>
-      </form>
-      <p v-if="loginError" class="form-error">{{ loginError }}</p>
-      <p v-else-if="booting" class="form-hint">正在连接…</p>
+    <section v-if="!authenticated" class="login-view" aria-labelledby="login-title">
+      <div class="login-card">
+        <div class="login-brand">
+          <span class="login-brand__mark" aria-hidden="true">
+            <Sparkles :size="30" :stroke-width="1.9" />
+          </span>
+          <div>
+            <div class="login-brand__wordmark">
+              <h1 id="login-title">Leon</h1>
+              <span>AGENT</span>
+            </div>
+            <p>聊天 语音 生图  Have Fun 👿</p>
+          </div>
+        </div>
+        <form class="login-form" @submit.prevent="login">
+          <label for="token">访问口令</label>
+          <input
+            id="token"
+            v-model="tokenInput"
+            type="password"
+            autocomplete="current-password"
+            placeholder="输入访问口令"
+          />
+          <button type="submit" :disabled="booting || !tokenInput.trim()">连接</button>
+          <p v-if="loginError" class="form-error">{{ loginError }}</p>
+        </form>
+      </div>
     </section>
 
     <section v-else class="chat-app" aria-label="Leon 工作台">
       <header class="chat-header">
         <div class="chat-header__brand">
-          <span class="chat-header__mark" aria-hidden="true">L</span>
+          <Sparkles class="chat-header__spark" :size="20" :stroke-width="2" aria-hidden="true" />
           <div class="chat-header__identity">
-            <h1>Leon</h1>
+            <div class="chat-header__wordmark">
+              <h1>Leon</h1>
+              <span>AGENT</span>
+            </div>
             <AppStatus :label="connectionLabel" :tone="connectionTone" />
           </div>
         </div>
@@ -1142,6 +1428,7 @@ onBeforeUnmount(() => {
                 :message="message"
                 @retry="retryMessage"
                 @edit="editMessage"
+                @revision="cycleRevision"
                 @preview="openPreview"
                 @media-loaded="scrollToLatest"
               />
@@ -1159,8 +1446,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <p v-if="taskStatus" class="task-status">{{ taskStatus }}</p>
-        <p v-if="asrNotice" class="task-status asr-notice" role="status">{{ asrNotice }}</p>
+        <p v-if="asrNotice" class="composer-notice asr-notice" role="status">{{ asrNotice }}</p>
         <form class="composer" @submit.prevent="sendMessage">
           <div class="composer-wrap">
             <div
@@ -1225,12 +1511,14 @@ onBeforeUnmount(() => {
           </button>
           <button
             class="composer__send"
-            type="submit"
-            :disabled="sending || !draft.trim()"
-            :aria-label="sending ? '正在发送' : '发送消息'"
-            :title="sending ? '正在发送' : '发送消息'"
+            :class="{ 'is-stopping': sending }"
+            :type="sending ? 'button' : 'submit'"
+            :disabled="!sending && !draft.trim()"
+            :aria-label="sending ? '停止生成' : '发送消息'"
+            :title="sending ? '停止生成' : '发送消息'"
+            @click="handleSendButton"
           >
-            <span v-if="sending" class="send-spinner" aria-hidden="true"></span>
+            <Square v-if="sending" :size="15" fill="currentColor" aria-hidden="true" />
             <Send v-else :size="18" :stroke-width="2" aria-hidden="true" />
           </button>
         </form>

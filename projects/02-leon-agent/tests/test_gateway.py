@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+from threading import Event
 
 import pytest
 from fastapi.testclient import TestClient
@@ -299,6 +301,80 @@ def test_send_message_session_not_found(client):
     assert r.status_code == 404
 
 
+def test_cancel_endpoint_sets_and_releases_the_active_turn(client):
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    session_id = client.post("/api/agent/sessions").json()["session_id"]
+    cancel_event = Event()
+    gateway_app._active_turns[session_id] = gateway_app.ActiveTurnState(
+        cancel_event=cancel_event,
+        retry_latest=True,
+    )
+
+    session = client.get(f"/api/agent/sessions/{session_id}")
+    messages = client.get(f"/api/agent/sessions/{session_id}/messages")
+
+    response = client.post(f"/api/agent/sessions/{session_id}/cancel")
+
+    assert session.json()["active_turn"] == {"retry": True}
+    assert messages.json()["active_turn"] == {"retry": True}
+    assert response.status_code == 200
+    assert response.json() == {"session_id": session_id, "cancelled": True}
+    assert cancel_event.is_set()
+    assert session_id not in gateway_app._active_turns
+
+    delete_event = Event()
+    gateway_app._active_turns[session_id] = gateway_app.ActiveTurnState(
+        cancel_event=delete_event
+    )
+    delete_response = client.delete(f"/api/agent/sessions/{session_id}/cancel")
+
+    assert delete_response.status_code == 200
+    assert delete_response.json()["cancelled"] is True
+    assert delete_event.is_set()
+
+
+def test_tts_audio_cache_reuses_results_and_keeps_at_least_ten_entries():
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    cache = gateway_app.TTSAudioCache(max_count=2)
+    calls: list[str] = []
+
+    def create(label: str) -> bytes:
+        calls.append(label)
+        return label.encode()
+
+    first, first_hit = cache.get_or_create(
+        text="同一句话",
+        voice_id="voice-a",
+        factory=lambda: create("first"),
+    )
+    reused, reused_hit = cache.get_or_create(
+        text="同一句话",
+        voice_id="voice-a",
+        factory=lambda: create("unexpected"),
+    )
+
+    assert cache.max_count == 10
+    assert first == reused == b"first"
+    assert first_hit is False
+    assert reused_hit is True
+    assert calls == ["first"]
+
+    for index in range(10):
+        cache.get_or_create(
+            text=f"其他文本 {index}",
+            voice_id="voice-a",
+            factory=lambda index=index: create(f"extra-{index}"),
+        )
+
+    recreated, recreated_hit = cache.get_or_create(
+        text="同一句话",
+        voice_id="voice-a",
+        factory=lambda: create("recreated"),
+    )
+    assert recreated == b"recreated"
+    assert recreated_hit is False
+
+
 def test_image_modes_endpoint_returns_chinese_names_and_marika_default(client, monkeypatch):
     class FakeImageClient:
         def list_modes(self):
@@ -374,7 +450,10 @@ def test_nsfw_message_bypasses_llm_and_resolves_selected_mode(client, monkeypatc
     assert response.status_code == 200
     assert response.json() == {
         "session_id": session_id,
-        "answer": "已使用 蒂法增强 模式提交生图任务，完成后会自动在聊天里显示图片。",
+        "answer": (
+            "已使用 蒂法增强 模式提交 1 张图片任务，正在后台生成，请稍等；"
+            "完成后会自动显示在这里。"
+        ),
         "ok": True,
     }
     assert generate_calls[0]["source_text"] == "原样描述"
@@ -434,10 +513,9 @@ def test_track_image_jobs_uses_task_image_and_publishes_human_notice(tmp_path): 
     assert messages == [
         {
             "role": "assistant",
-            "content": "![生成图片 1](https://images.example/task-job-1.png)",
-        },
-        {
-            "role": "assistant",
-            "content": "这张图做好了，点开看看。",
+            "content": (
+                "![生成图片 1](https://images.example/task-job-1.png)\n\n"
+                "这张图做好了，点开看看。"
+            ),
         }
     ]

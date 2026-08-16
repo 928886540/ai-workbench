@@ -57,6 +57,49 @@ def test_generate_tool_passes_source_text_verbatim() -> None:
     assert result["workflow_ids"] == ["k2_tifa_plus"]
 
 
+def test_generate_tool_marks_background_submission_for_direct_answer() -> None:
+    client = FakeImageClient()
+    tools = create_leon_tools(
+        client,  # type: ignore[arg-type]
+        session_id="session-1",
+        default_mode_ids=["k2_tifa_plus"],
+        wait_for_image_completion=False,
+    )
+
+    arguments = {"source_text": "生成一张海边人像"}
+    result = tools.execute("generate_images", arguments)
+    answer = tools.direct_answer("generate_images", arguments, result)
+
+    assert result["waited_for_completion"] is False
+    assert result["images"] == []
+    assert answer == (
+        "已提交 1 张图片任务，正在后台生成，请稍等；完成后会自动显示在这里。"
+    )
+
+
+def test_mode_catalog_exposes_human_names_and_exact_ids_to_the_model() -> None:
+    client = FakeImageClient()
+    client.list_modes = lambda: {  # type: ignore[method-assign]
+        "ok": True,
+        "modes": [
+            {"id": "k2_red_craft"},
+            {"id": "k2_queen_marika"},
+        ],
+    }
+    tools = create_leon_tools(
+        client,  # type: ignore[arg-type]
+        session_id="session-1",
+        default_mode_ids=["k2_red_craft"],
+        wait_for_image_completion=False,
+    )
+
+    result = tools.execute("list_image_modes", {})
+
+    assert result["modes"][0]["name"] == "红艺"
+    assert result["modes"][1]["name"] == "玛莉卡"
+    assert result["modes"][1]["id"] == "k2_queen_marika"
+
+
 def test_generate_tool_schema_is_gemini_compatible() -> None:
     tools = create_leon_tools(
         FakeImageClient(),  # type: ignore[arg-type]

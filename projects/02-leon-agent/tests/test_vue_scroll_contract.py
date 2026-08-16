@@ -51,10 +51,10 @@ def test_send_and_explicit_navigation_restore_follow_mode() -> None:
     ):
         assert fragment in chat, fragment
 
-    send = chat.split("async function sendMessage", 1)[1].split(
-        "function handleComposerKeydown", 1
+    send_turn = chat.split("async function sendTurn", 1)[1].split(
+        "async function sendMessage", 1
     )[0]
-    assert send.index("scrollToLatest(true);") > send.index(
+    assert send_turn.index("scrollToLatest(true);") > send_turn.index(
         'appendMessage(makeMessage("user", content));'
     )
 

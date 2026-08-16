@@ -10,7 +10,7 @@ const emit = defineEmits<{ logout: [] }>();
 const loading = ref(true);
 const saving = ref(false);
 const status = ref("");
-const statusTone = ref<"neutral" | "error" | "ok">("neutral");
+const statusTone = ref<"neutral" | "error">("neutral");
 const modelInput = ref("");
 const models = ref<string[]>([]);
 const defaultModel = ref("");
@@ -58,7 +58,7 @@ async function loadSettings(refresh = false): Promise<void> {
     return;
   }
   loading.value = true;
-  status.value = refresh ? "正在刷新模型目录…" : "正在加载…";
+  status.value = "";
   statusTone.value = "neutral";
   try {
     applySettings(await api.getModelSettings(props.sessionId, refresh));
@@ -75,13 +75,11 @@ async function saveSettings(): Promise<void> {
   if (!props.sessionId) return;
   saving.value = true;
   statusTone.value = "neutral";
-  status.value = "正在保存…";
+  status.value = "";
   try {
     const model = modelInput.value.trim() || null;
     applySettings(await api.setModelSettings(props.sessionId, model));
     listOpen.value = false;
-    statusTone.value = "ok";
-    status.value = "已保存";
   } catch (error) {
     setError(error, "保存失败");
   } finally {
@@ -91,7 +89,7 @@ async function saveSettings(): Promise<void> {
 
 function chooseModel(model: string): void {
   modelInput.value = model;
-  listOpen.value = true;
+  listOpen.value = false;
 }
 
 function handleInput(): void {
@@ -133,49 +131,51 @@ onMounted(() => void loadSettings());
         </button>
       </header>
 
-      <div class="settings-row">
-        <input
-          v-model="modelInput"
-          type="text"
-          autocomplete="off"
-          spellcheck="false"
-          :placeholder="defaultModel || '默认模型'"
-          aria-label="模型 ID"
-          :disabled="loading || saving"
-          @focus="listOpen = true"
-          @input="handleInput"
-          @keydown="handleKeydown"
-        />
-        <button
-          class="primary-small"
-          type="button"
-          :disabled="loading || saving"
-          @click="void saveSettings()"
-        >
-          {{ saving ? "保存中…" : "保存" }}
-        </button>
-      </div>
+      <div class="model-picker">
+        <div class="settings-row">
+          <input
+            v-model="modelInput"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            :placeholder="defaultModel || '默认模型'"
+            aria-label="模型 ID"
+            :disabled="loading || saving"
+            @focus="listOpen = true"
+            @input="handleInput"
+            @keydown="handleKeydown"
+          />
+          <button
+            class="primary-small"
+            type="button"
+            :disabled="loading || saving"
+            @click="void saveSettings()"
+          >
+            {{ saving ? "保存中…" : "保存" }}
+          </button>
+        </div>
 
-      <div v-if="listOpen" class="model-list" role="listbox" aria-label="可用模型">
-        <button
-          v-for="model in filteredModels"
-          :key="model"
-          class="model-option"
-          :class="{ selected: model === modelInput }"
-          type="button"
-          role="option"
-          :aria-selected="model === modelInput"
-          @click="chooseModel(model)"
-        >
-          <span>{{ model }}</span>
-          <small v-if="model === defaultModel">默认</small>
-        </button>
-        <p v-if="!filteredModels.length" class="model-empty">
-          没有匹配项，可以直接保存自定义 ID。
-        </p>
-        <p v-if="isCustomModel" class="model-hint">
-          “{{ modelInput.trim() }}” 不在目录中，保存后按自定义 ID 使用。
-        </p>
+        <div v-if="listOpen" class="model-list" role="listbox" aria-label="可用模型">
+          <button
+            v-for="model in filteredModels"
+            :key="model"
+            class="model-option"
+            :class="{ selected: model === modelInput }"
+            type="button"
+            role="option"
+            :aria-selected="model === modelInput"
+            @click="chooseModel(model)"
+          >
+            <span>{{ model }}</span>
+            <small v-if="model === defaultModel">默认</small>
+          </button>
+          <p v-if="!filteredModels.length" class="model-empty">
+            没有匹配项，可以直接保存自定义 ID。
+          </p>
+          <p v-if="isCustomModel" class="model-hint">
+            “{{ modelInput.trim() }}” 不在目录中，保存后按自定义 ID 使用。
+          </p>
+        </div>
       </div>
 
       <p v-if="status" class="settings-status" :data-tone="statusTone" role="status">{{ status }}</p>

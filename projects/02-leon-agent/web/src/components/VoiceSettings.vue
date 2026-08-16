@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronUp, LoaderCircle, Pause, Play, RefreshCw, Star } from "@lucide/vue";
+import { ChevronDown, ChevronUp, LoaderCircle, Pause, Play, RefreshCw, Star, X } from "@lucide/vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ApiError } from "../api/client";
 import {
@@ -65,7 +65,7 @@ async function loadCatalog(refresh = false): Promise<void> {
   if (loading.value) return;
   if (voiceCatalogLoaded.value && !refresh) return;
   loading.value = true;
-  status.value = refresh ? "正在刷新…" : "正在加载…";
+  status.value = "";
   statusTone.value = "neutral";
   try {
     await loadVoiceCatalog(refresh);
@@ -83,6 +83,16 @@ async function loadCatalog(refresh = false): Promise<void> {
 
 function chooseVoice(id: string): void {
   selectVoice(id);
+  closeCatalog();
+}
+
+function closeCatalog(): void {
+  catalogOpen.value = false;
+  stopDemo();
+}
+
+function handleDocumentKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape" && catalogOpen.value) closeCatalog();
 }
 
 function playDemo(voice: VoiceOption): void {
@@ -111,8 +121,12 @@ function playDemo(voice: VoiceOption): void {
   });
 }
 
-onMounted(() => void loadCatalog());
+onMounted(() => {
+  document.addEventListener("keydown", handleDocumentKeydown);
+  void loadCatalog();
+});
 onBeforeUnmount(() => {
+  document.removeEventListener("keydown", handleDocumentKeydown);
   stopDemo();
 });
 </script>
@@ -128,7 +142,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <template v-if="voiceEnabled">
+    <template v-if="voiceEnabled || !voiceCatalogLoaded">
       <label class="settings-toggle">
         <span class="settings-toggle__copy">
           <strong>自动朗读每条回复</strong>
@@ -136,103 +150,138 @@ onBeforeUnmount(() => {
         <input
           type="checkbox"
           :checked="autoplayAll"
+          :disabled="!voiceCatalogLoaded"
           @change="setAutoplayAll(($event.target as HTMLInputElement).checked)"
         />
         <span class="settings-switch" aria-hidden="true"></span>
       </label>
-      <button
-        class="voice-catalog-toggle"
-        type="button"
-        :aria-expanded="catalogOpen"
-        aria-controls="voice-catalog-panel"
-        @click="catalogOpen = !catalogOpen"
-      >
-        <span><strong>选择音色</strong><small>{{ voices.length }} 个</small></span>
-        <ChevronUp v-if="catalogOpen" :size="18" aria-hidden="true" />
-        <ChevronDown v-else :size="18" aria-hidden="true" />
-      </button>
-      <div v-if="catalogOpen" id="voice-catalog-panel" class="voice-catalog-panel">
-        <div class="voice-tabs" role="tablist" aria-label="音色分类">
-          <button
-            type="button"
-            role="tab"
-            :aria-selected="voiceTab === 'all'"
-            :class="{ active: voiceTab === 'all' }"
-            @click="voiceTab = 'all'"
-          >
-            全部
-          </button>
-          <button
-            type="button"
-            role="tab"
-            :aria-selected="voiceTab === 'favorites'"
-            :class="{ active: voiceTab === 'favorites' }"
-            @click="voiceTab = 'favorites'"
-          >
-            收藏
-          </button>
-        </div>
-        <div class="voice-search-row">
-          <input v-model="search" type="search" placeholder="搜索音色" aria-label="搜索音色" />
-          <button
-            class="icon-button icon-button--subtle"
-            type="button"
-            :disabled="loading"
-            aria-label="刷新音色"
-            title="刷新音色"
-            @click="void loadCatalog(true)"
-          >
-            <RefreshCw :class="{ spinning: loading }" :size="15" :stroke-width="2" aria-hidden="true" />
-          </button>
-        </div>
-        <div v-if="!filteredVoices.length" class="voice-empty">
-          {{ voiceTab === "favorites" ? "还没有收藏的音色" : "没有匹配的音色" }}
-        </div>
-        <div v-else class="voice-list" role="listbox" aria-label="音色">
-          <div
-            v-for="voice in pagedVoices"
-            :key="voice.id"
-            class="voice-option"
-            :class="{ selected: voice.id === (active?.id || defaultVoiceId) }"
-            role="option"
-            :aria-selected="voice.id === (active?.id || defaultVoiceId)"
-          >
-            <button class="voice-option__main" type="button" @click="chooseVoice(voice.id)">
-              <strong>{{ voice.name }}</strong>
-              <small>{{ voice.model || "默认模型" }}</small>
-            </button>
-            <button
-              class="voice-option__star"
-              type="button"
-              :aria-label="isFavoriteVoice(voice.id) ? '取消收藏' : '收藏音色'"
-              :title="isFavoriteVoice(voice.id) ? '取消收藏' : '收藏音色'"
-              @click="toggleFavoriteVoice(voice.id)"
-            >
-              <Star :size="17" :fill="isFavoriteVoice(voice.id) ? 'currentColor' : 'none'" aria-hidden="true" />
-            </button>
-            <button
-              v-if="voice.demo"
-              class="voice-option__demo"
-              type="button"
-              :data-state="demoVoiceId === voice.id ? demoState : 'idle'"
-              :aria-label="demoVoiceId === voice.id && demoState === 'playing' ? '停止试听' : `试听 ${voice.name}`"
-              :title="demoVoiceId === voice.id && demoState === 'playing' ? '停止试听' : '试听'"
-              @click="playDemo(voice)"
-            >
-              <LoaderCircle v-if="demoVoiceId === voice.id && demoState === 'loading'" class="spinning" :size="17" aria-hidden="true" />
-              <Pause v-else-if="demoVoiceId === voice.id && demoState === 'playing'" :size="17" fill="currentColor" aria-hidden="true" />
-              <Play v-else :size="17" fill="currentColor" aria-hidden="true" />
-            </button>
+      <div class="voice-catalog">
+        <button
+          class="voice-catalog-toggle"
+          type="button"
+          :disabled="!voiceCatalogLoaded"
+          :aria-expanded="catalogOpen"
+          aria-controls="voice-catalog-panel"
+          @click="catalogOpen = !catalogOpen"
+        >
+          <span>
+            <strong>选择音色</strong>
+            <small>{{ voiceCatalogLoaded ? `${voices.length} 个` : "—" }}</small>
+          </span>
+          <ChevronUp v-if="catalogOpen" :size="18" aria-hidden="true" />
+          <ChevronDown v-else :size="18" aria-hidden="true" />
+        </button>
+        <button
+          v-if="catalogOpen"
+          class="voice-catalog-backdrop"
+          type="button"
+          aria-label="关闭音色选择"
+          @click="closeCatalog"
+        ></button>
+        <div
+          v-if="catalogOpen"
+          id="voice-catalog-panel"
+          class="voice-catalog-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-label="选择音色"
+          @keydown.escape.stop="closeCatalog"
+        >
+          <div class="voice-catalog-panel__header">
+            <div class="voice-catalog-panel__top">
+              <div class="voice-tabs" role="tablist" aria-label="音色分类">
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="voiceTab === 'all'"
+                  :class="{ active: voiceTab === 'all' }"
+                  @click="voiceTab = 'all'"
+                >
+                  全部
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  :aria-selected="voiceTab === 'favorites'"
+                  :class="{ active: voiceTab === 'favorites' }"
+                  @click="voiceTab = 'favorites'"
+                >
+                  收藏
+                </button>
+              </div>
+              <button
+                class="voice-catalog-panel__close"
+                type="button"
+                aria-label="关闭音色选择"
+                title="关闭"
+                @click="closeCatalog"
+              >
+                <X :size="18" :stroke-width="2" aria-hidden="true" />
+              </button>
+            </div>
+            <div class="voice-search-row">
+              <input v-model="search" type="search" placeholder="搜索音色" aria-label="搜索音色" />
+              <button
+                class="icon-button icon-button--subtle"
+                type="button"
+                :disabled="loading"
+                aria-label="刷新音色"
+                title="刷新音色"
+                @click="void loadCatalog(true)"
+              >
+                <RefreshCw :class="{ spinning: loading }" :size="15" :stroke-width="2" aria-hidden="true" />
+              </button>
+            </div>
           </div>
-        </div>
-        <div v-if="pageCount > 1" class="voice-pager">
-          <button type="button" :disabled="page <= 1" aria-label="上一页" @click="page -= 1">‹</button>
-          <span>{{ page }} / {{ pageCount }}</span>
-          <button type="button" :disabled="page >= pageCount" aria-label="下一页" @click="page += 1">›</button>
+          <div v-if="!filteredVoices.length" class="voice-empty">
+            {{ voiceTab === "favorites" ? "还没有收藏的音色" : "没有匹配的音色" }}
+          </div>
+          <div v-else class="voice-list" role="listbox" aria-label="音色">
+            <div
+              v-for="voice in pagedVoices"
+              :key="voice.id"
+              class="voice-option"
+              :class="{ selected: voice.id === (active?.id || defaultVoiceId) }"
+              role="option"
+              :aria-selected="voice.id === (active?.id || defaultVoiceId)"
+            >
+              <button class="voice-option__main" type="button" @click="chooseVoice(voice.id)">
+                <strong>{{ voice.name }}</strong>
+                <small>{{ voice.model || "默认模型" }}</small>
+              </button>
+              <button
+                class="voice-option__star"
+                type="button"
+                :aria-label="isFavoriteVoice(voice.id) ? '取消收藏' : '收藏音色'"
+                :title="isFavoriteVoice(voice.id) ? '取消收藏' : '收藏音色'"
+                @click="toggleFavoriteVoice(voice.id)"
+              >
+                <Star :size="17" :fill="isFavoriteVoice(voice.id) ? 'currentColor' : 'none'" aria-hidden="true" />
+              </button>
+              <button
+                v-if="voice.demo"
+                class="voice-option__demo"
+                type="button"
+                :data-state="demoVoiceId === voice.id ? demoState : 'idle'"
+                :aria-label="demoVoiceId === voice.id && demoState === 'playing' ? '停止试听' : `试听 ${voice.name}`"
+                :title="demoVoiceId === voice.id && demoState === 'playing' ? '停止试听' : '试听'"
+                @click="playDemo(voice)"
+              >
+                <LoaderCircle v-if="demoVoiceId === voice.id && demoState === 'loading'" class="spinning" :size="17" aria-hidden="true" />
+                <Pause v-else-if="demoVoiceId === voice.id && demoState === 'playing'" :size="17" fill="currentColor" aria-hidden="true" />
+                <Play v-else :size="17" fill="currentColor" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+          <div class="voice-pager">
+            <button type="button" :disabled="page <= 1" aria-label="上一页" @click="page -= 1">‹</button>
+            <span>{{ page }} / {{ pageCount }}</span>
+            <button type="button" :disabled="page >= pageCount" aria-label="下一页" @click="page += 1">›</button>
+          </div>
         </div>
       </div>
     </template>
-    <p v-else class="voice-disabled">{{ loading ? "正在检查语音配置…" : "语音服务未配置" }}</p>
+    <p v-else class="voice-disabled">语音服务未配置</p>
     <p v-if="status" class="settings-status" :data-tone="statusTone" role="status">{{ status }}</p>
   </article>
 </template>

@@ -23,6 +23,8 @@ const SILENT_MP3 =
 
 const statusState = reactive<Record<string, SpeechStatus>>({});
 const errorState = reactive<Record<string, string>>({});
+const TTS_CACHE_LIMIT = 10;
+const ttsBlobCache = new Map<string, Blob>();
 
 export const speechStatus = readonly(statusState);
 export const speechError = readonly(errorState);
@@ -33,6 +35,29 @@ let audioUnlocked = false;
 let unlockPromise: Promise<boolean> | null = null;
 let active: SpeechOperation | null = null;
 let pending: PendingSpeech | null = null;
+
+function ttsCacheKey(text: string, voiceId?: string): string {
+  return `${voiceId || "default"}\u0000${text}`;
+}
+
+function getCachedTts(key: string): Blob | null {
+  const cached = ttsBlobCache.get(key) || null;
+  if (cached) {
+    ttsBlobCache.delete(key);
+    ttsBlobCache.set(key, cached);
+  }
+  return cached;
+}
+
+function cacheTts(key: string, blob: Blob): void {
+  ttsBlobCache.delete(key);
+  ttsBlobCache.set(key, blob);
+  while (ttsBlobCache.size > TTS_CACHE_LIMIT) {
+    const oldest = ttsBlobCache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    ttsBlobCache.delete(oldest);
+  }
+}
 
 function getPlayer(): HTMLAudioElement | null {
   if (player) return player;
@@ -210,7 +235,9 @@ export async function speakMessage(
 
   stopSpeech();
   delete errorState[messageId];
-  const controller = new AbortController();
+  const cacheKey = ttsCacheKey(text, voiceId);
+  const cachedBlob = getCachedTts(cacheKey);
+  const controller = cachedBlob ? null : new AbortController();
   const operation: SpeechOperation = {
     messageId,
     token: Symbol(messageId),
@@ -221,9 +248,10 @@ export async function speakMessage(
   active = operation;
   setStatus(messageId, "loading");
   try {
-    const blob = await api.synthesizeSpeech(text, voiceId, controller.signal);
+    const blob = cachedBlob || await api.synthesizeSpeech(text, voiceId, controller?.signal);
     if (active?.token !== operation.token) return false;
     operation.controller = null;
+    if (!cachedBlob) cacheTts(cacheKey, blob);
     operation.objectUrl = URL.createObjectURL(blob);
     return playOperation(operation);
   } catch (error) {

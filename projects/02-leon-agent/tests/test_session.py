@@ -64,3 +64,38 @@ def test_load_messages_ignores_failed_cli_turns(tmp_path: Path) -> None:
         {"role": "user", "content": "成功请求"},
         {"role": "assistant", "content": "正常答案"},
     ]
+
+
+def test_replace_latest_assistant_keeps_one_visible_turn(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "retry.db")
+    session_id = store.create_session()
+    store.add_message(session_id, "user", "再试一次")
+    store.add_message(session_id, "assistant", "旧回答")
+
+    store.replace_latest_user(session_id, "编辑后的问题")
+    store.replace_latest_assistant(session_id, "新回答")
+
+    assert store.load_messages(session_id) == [
+        {"role": "user", "content": "编辑后的问题"},
+        {"role": "assistant", "content": "新回答"},
+    ]
+
+
+def test_assistant_revisions_survive_store_reopen(tmp_path: Path) -> None:
+    db_path = tmp_path / "revisions.db"
+    store = SessionStore(db_path)
+    session_id = store.create_session()
+    store.add_message(session_id, "user", "重试这个问题")
+    store.add_message(session_id, "assistant", "第一版")
+    store.replace_latest_assistant(session_id, "第二版")
+
+    reopened = SessionStore(db_path)
+    reopened.replace_latest_assistant(session_id, "第三版")
+    history = reopened.load_messages(session_id, include_created_at=True)
+
+    assert history[-1]["content"] == "第三版"
+    assert [revision["content"] for revision in history[-1]["revisions"]] == [
+        "第一版",
+        "第二版",
+    ]
+    assert all(revision["created_at"] > 0 for revision in history[-1]["revisions"])

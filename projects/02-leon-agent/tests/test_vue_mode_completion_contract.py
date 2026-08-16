@@ -115,8 +115,12 @@ def test_mode_completion_closes_on_send_and_cleans_mobile_blur_state() -> None:
         "function handleComposerKeydown", 1
     )[0]
     assert send.index("hideModeSuggestions();") < send.index(
-        'appendMessage(makeMessage("user", content));'
+        "await sendTurn(content, { appendUser: true, retry: false });"
     )
+    send_turn = chat.split("async function sendTurn", 1)[1].split(
+        "async function sendMessage", 1
+    )[0]
+    assert 'appendMessage(makeMessage("user", content));' in send_turn
 
     unmount = chat.split("onBeforeUnmount(() => {", 1)[1].split("});", 1)[0]
     for fragment in (

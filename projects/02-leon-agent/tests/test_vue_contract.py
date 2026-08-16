@@ -35,8 +35,8 @@ def test_vue_entry_is_the_only_web_client() -> None:
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-13"' in main
-    assert "leon-vue-v13" in service_worker
+    assert 'register("/sw.js?v=vue-16"' in main
+    assert "leon-vue-v16" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:
@@ -50,7 +50,8 @@ def test_vue_api_contract_is_fake_gateway_friendly() -> None:
         'async checkHealth(',
         'async getSession(sessionId: string)',
         'async createSession()',
-        'async sendMessage(sessionId: string, content: string)',
+        'async sendMessage(',
+        'async cancelMessage(sessionId: string)',
         'async getModelSettings(sessionId: string, refresh = false)',
         'async setModelSettings(',
         'async getVoiceCatalog(refresh = false)',
@@ -79,16 +80,24 @@ def test_vue_chat_login_session_restore_and_error_dedup_contract() -> None:
         "api.clearSession()",
         "async function login()",
         "await api.checkHealth(undefined, token)",
+        'placeholder="输入访问口令"',
         "api.clearSession();",
         "function logout()",
         "closeEvents();",
-        "let lastAgentErrorAt = 0",
+        'let lastAgentErrorFingerprint = ""',
+        "const ERROR_DEDUPE_WINDOW_MS = 10_000",
         'case "agent.error":',
-        "lastAgentErrorAt = Date.now();",
-        "if (Date.now() - lastAgentErrorAt > 1000)",
-        "finishAssistant(error instanceof Error ? error.message : \"发送失败\", \"error\")",
+        "function finishAgentErrorOnce(content: string): void",
+        'latest?.status === "error"',
+        "finishAgentErrorOnce(error instanceof Error ? error.message : \"发送失败\")",
+        'case "assistant.cancelled":',
+        "async function stopSending(): Promise<void>",
+        "api.cancelMessage(sessionId)",
+        "activeSendController?.abort()",
     ):
         assert fragment in chat, fragment
+    assert "输入密钥，回到对话" not in chat
+    assert "正在验证连接" not in chat
 
     # Opening a new session must close the previous EventSource first;
     # transient failures stay on the browser's native reconnect path.
@@ -116,26 +125,41 @@ def test_vue_message_bubble_copy_edit_retry_contract() -> None:
         "function startEditing(): void",
         'emit("edit", props.message.id, editDraft.value)',
         "emit('retry', message.id)",
+        "displayedMessage.value.role === \"user\"",
+        'class="message-revision"',
+        "emit('revision', message.id)",
         'class="message-editor"',
         'class="message-edit-actions"',
         'class="message-toolbar"',
+        'class="message-tools"',
+        'class="message-tool"',
     ):
         assert fragment in bubble, fragment
 
     for fragment in (
         "function retryMessage(messageId: string): void",
-        "const candidate = messages.value[cursor];",
-        'if (candidate.role !== "user" || !candidate.text.trim()) continue;',
-        "draft.value = candidate.text.trim();",
-        "void sendMessage();",
+        'if (selected.role === "user")',
+        'else if (selected.role === "agent")',
+        "beginMessageRevision(target);",
+        "void sendTurn(content, { appendUser: false, retry: retryLatest });",
+        "function cycleRevision(messageId: string): void",
         "function editMessage(messageId: string, text: string): void",
         "if (message) message.text = text;",
         "@retry=\"retryMessage\"",
         "@edit=\"editMessage\"",
+        "@revision=\"cycleRevision\"",
+        'case "tool.started":',
+        "startTool(data);",
+        'case "tool.finished":',
+        "finishTool(data);",
     ):
         assert fragment in chat, fragment
 
     assert "export const messages = ref<ChatMessage[]>([]);" in messages
+    assert "tools: MessageToolCall[];" in messages
+    assert "revisions: MessageRevision[];" in messages
+    assert "export function beginMessageRevision(message: ChatMessage): void" in messages
+    assert 'kind: "message",' in messages
     assert "export function findMessage(id: string | null): ChatMessage | null" in messages
 
 
@@ -143,12 +167,14 @@ def test_vue_model_and_voice_settings_dom_contract() -> None:
     settings = _read("web/src/views/SettingsView.vue")
     voice = _read("web/src/components/VoiceSettings.vue")
     voice_store = _read("web/src/stores/voice.ts")
+    styles = _read("web/src/styles.css")
 
     for fragment in (
         'class="page-panel settings-panel"',
         'aria-label="模型 ID"',
         'role="listbox"',
         'class="model-option"',
+        'class="model-picker"',
         'aria-label="可用模型"',
         "@focus=\"listOpen = true\"",
         "@input=\"handleInput\"",
@@ -157,6 +183,8 @@ def test_vue_model_and_voice_settings_dom_contract() -> None:
         "<VoiceSettings />",
     ):
         assert fragment in settings, fragment
+    assert 'status.value = "正在加载…"' not in settings
+    assert 'status.value = "正在保存…"' not in settings
 
     for fragment in (
         'class="settings-card voice-settings"',
@@ -164,8 +192,13 @@ def test_vue_model_and_voice_settings_dom_contract() -> None:
         'class="settings-switch"',
         'type="checkbox"',
         'class="voice-search-row"',
+        'class="voice-catalog"',
         'aria-label="搜索音色"',
         'class="voice-list"',
+        'class="voice-catalog-panel__header"',
+        'class="voice-catalog-backdrop"',
+        'class="voice-catalog-panel__close"',
+        'class="voice-pager"',
         'class="voice-option"',
         'class="voice-option__star"',
         'class="voice-option__demo"',
@@ -174,8 +207,11 @@ def test_vue_model_and_voice_settings_dom_contract() -> None:
         "toggleFavoriteVoice(voice.id)",
         "setAutoplayAll(($event.target as HTMLInputElement).checked)",
         "await loadVoiceCatalog(refresh)",
+        'document.addEventListener("keydown", handleDocumentKeydown)',
+        'if (event.key === "Escape" && catalogOpen.value) closeCatalog();',
     ):
         assert fragment in voice, fragment
+    assert 'status.value = refresh ? "正在刷新…" : "正在加载…"' not in voice
 
     for fragment in (
         'const PREFS_KEY = "leon_voice_prefs"',
@@ -196,3 +232,8 @@ def test_vue_model_and_voice_settings_dom_contract() -> None:
     # silently collapsing to favorites-only.
     assert 'const voiceTab = ref<"all" | "favorites">("all")' in voice
     assert "const PAGE_SIZE = 20" in voice
+    assert "grid-template-rows: auto minmax(0, 1fr) auto;" in styles
+    assert ".voice-catalog-panel" in styles and "overflow: hidden;" in styles
+    assert ".voice-list" in styles and "overflow-y: auto;" in styles
+    assert "align-content: start;" in styles
+    assert "grid-auto-rows: minmax(48px, auto);" in styles

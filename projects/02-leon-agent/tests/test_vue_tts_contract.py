@@ -62,7 +62,7 @@ def test_message_and_chat_wire_manual_and_automatic_speech() -> None:
 
     for fragment in (
         "getSpeechStatus(props.message.id)",
-        "speakMessage(props.message.id, props.message.text, activeVoiceId())",
+        "speakMessage(props.message.id, displayedMessage.value.text, activeVoiceId())",
         "stopSpeech(props.message.id)",
         'class="message-speak"',
         'class="speech-spinner"',

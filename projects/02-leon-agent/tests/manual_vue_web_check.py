@@ -139,6 +139,32 @@ class FakeGateway:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
         self.token_valid = True
+        self.active_turn: dict[str, bool] | None = None
+        self.cancel_post_405 = False
+        self._next_message_id = 3
+        self.session_messages: list[dict[str, Any]] = [
+            {"id": 1, "role": "user", "content": "历史消息一", "created_at": 1_000},
+            {
+                "id": 2,
+                "role": "assistant",
+                "content": "历史回复一",
+                "created_at": 1_000_000,
+                "revisions": [],
+            },
+        ]
+
+    def append_session_message(self, role: str, content: str) -> dict[str, Any]:
+        message: dict[str, Any] = {
+            "id": self._next_message_id,
+            "role": role,
+            "content": content,
+            "created_at": 1_000_000 + self._next_message_id * 1_000,
+        }
+        self._next_message_id += 1
+        if role == "assistant":
+            message["revisions"] = []
+        self.session_messages.append(message)
+        return message
 
     def handle(self, route: Any) -> None:
         request = route.request
@@ -169,14 +195,8 @@ class FakeGateway:
                 route,
                 {
                     "session_id": FAKE_SESSION_ID,
-                    "messages": [
-                        {"role": "user", "content": "历史消息一", "created_at": 1_000},
-                        {
-                            "role": "assistant",
-                            "content": "历史回复一",
-                            "created_at": 1_000_000,
-                        },
-                    ],
+                    "messages": self.session_messages,
+                    "active_turn": self.active_turn,
                 },
             )
             return
@@ -211,13 +231,56 @@ class FakeGateway:
             route.fulfill(status=200, content_type="image/svg+xml", body=fake_svg)
             return
         if path == f"{session_prefix}/messages" and method == "POST":
+            answer = (
+                "这是重试后的本地回复。"
+                if body.get("retry")
+                else "这是 provider-free 的本地回复。"
+            )
+            content = str(body.get("content") or "")
+            if (
+                body.get("retry")
+                and len(self.session_messages) >= 2
+                and self.session_messages[-2].get("role") == "user"
+                and self.session_messages[-1].get("role") == "assistant"
+            ):
+                self.session_messages[-2]["content"] = content
+                assistant = self.session_messages[-1]
+                revisions = assistant.setdefault("revisions", [])
+                revisions.append(
+                    {
+                        "content": assistant.get("content", ""),
+                        "created_at": assistant.get("created_at", 0),
+                    }
+                )
+                assistant["content"] = answer
+                assistant["created_at"] = int(assistant.get("created_at", 0)) + 1
+            else:
+                self.append_session_message("user", content)
+                self.append_session_message("assistant", answer)
             _json_response(
                 route,
                 {
                     "session_id": FAKE_SESSION_ID,
-                    "answer": "这是 provider-free 的本地回复。",
+                    "answer": answer,
                     "ok": True,
                 },
+            )
+            return
+        if path == f"{session_prefix}/cancel" and method == "POST":
+            if self.cancel_post_405:
+                _json_response(route, {"detail": "Method Not Allowed"}, status=405)
+                return
+            self.active_turn = None
+            _json_response(
+                route,
+                {"session_id": FAKE_SESSION_ID, "cancelled": True},
+            )
+            return
+        if path == f"{session_prefix}/cancel" and method == "DELETE":
+            self.active_turn = None
+            _json_response(
+                route,
+                {"session_id": FAKE_SESSION_ID, "cancelled": True},
             )
             return
         if path == f"{session_prefix}/model" and method == "GET":
@@ -275,6 +338,16 @@ class FakeGateway:
                             "languages": ["zh-CN"],
                             "demo": "/api/voice/clips/demo-voice",
                         }
+                    ]
+                    + [
+                        {
+                            "id": f"fake-voice-{index:02d}",
+                            "name": f"扩展音色 {index:02d}",
+                            "model": "index-tts2",
+                            "languages": ["zh-CN"],
+                            "demo": None,
+                        }
+                        for index in range(1, 46)
                     ],
                 },
             )
@@ -523,9 +596,15 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             login_heading = page.get_by_role("heading", name="Leon")
             login_heading.wait_for(state="visible")
             check("登录页可见（初始 token 被拒绝）", login_heading.is_visible())
+            check(
+                "登录页文案真实且不会插入临时加载行",
+                page.locator("#token").get_attribute("placeholder") == "输入访问口令"
+                and "回到对话" not in page.locator(".login-view").inner_text()
+                and "正在验证连接" not in page.locator(".login-view").inner_text(),
+            )
 
             page.locator("#token").fill(FAKE_TOKEN)
-            page.get_by_role("button", name="进入").click()
+            page.get_by_role("button", name="连接").click()
             page.get_by_role("heading", name="Leon").wait_for(state="visible")
             page.get_by_text("已连接").wait_for(state="visible")
             check("登录后 Vue 工作台可见", True)
@@ -551,6 +630,14 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             page.evaluate(
                 "([event, data]) => window.__leonEmit(event, data)",
                 ["tool.finished", {"tool_name": "fake_tool", "ok": True}],
+            )
+            tool_card = page.locator(".message-tool").last
+            tool_card.wait_for(state="visible")
+            check(
+                "工具状态显示在助手气泡内",
+                "调用工具" in tool_card.inner_text()
+                and "已完成" in tool_card.inner_text()
+                and page.locator(".composer-notice").count() == 0,
             )
             timeline_toggle = page.get_by_role("button", name="运行记录")
             timeline_toggle.click()
@@ -582,6 +669,54 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 time_dividers.count() >= 2,
                 f"dividers={time_dividers.count()}",
             )
+
+            gateway.append_session_message("user", "刷新期间的问题")
+            gateway.active_turn = {"retry": False}
+            page.reload(wait_until="domcontentloaded")
+            page.get_by_text("已连接").wait_for(state="visible")
+            thinking = page.locator(".thinking").last
+            thinking.wait_for(state="visible")
+            check(
+                "刷新时恢复在途回复和三点思考态",
+                thinking.locator("i").count() == 3
+                and page.get_by_role("button", name="停止生成").is_visible(),
+            )
+
+            gateway.active_turn = None
+            gateway.append_session_message("assistant", "刷新完成后保留的回复")
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["assistant.completed", {"content": "刷新完成后保留的回复"}],
+            )
+            page.get_by_text("刷新完成后保留的回复").wait_for(state="visible")
+            page.reload(wait_until="domcontentloaded")
+            page.get_by_text("刷新完成后保留的回复").wait_for(state="visible")
+            check(
+                "在途回复完成后再次刷新仍保留",
+                page.locator(".thinking").count() == 0
+                and page.get_by_role("button", name="发送消息").is_visible(),
+            )
+
+            gateway.append_session_message("user", "需要直接停止的问题")
+            gateway.active_turn = {"retry": False}
+            gateway.cancel_post_405 = True
+            page.reload(wait_until="domcontentloaded")
+            page.get_by_role("button", name="停止生成").click()
+            page.get_by_role("button", name="发送消息").wait_for(state="visible")
+            page.wait_for_timeout(200)
+            cancel_calls = [
+                call
+                for call in gateway.calls
+                if call["path"] == f"/api/agent/sessions/{FAKE_SESSION_ID}/cancel"
+            ]
+            check(
+                "停止生成可直接打断并兼容旧服务的 405",
+                len(cancel_calls) >= 2
+                and cancel_calls[-2]["method"] == "POST"
+                and cancel_calls[-1]["method"] == "DELETE",
+                repr(cancel_calls[-2:]),
+            )
+            gateway.cancel_post_405 = False
 
             page.evaluate(
                 "([event, data]) => window.__leonEmit(event, data)",
@@ -619,7 +754,9 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             streaming_bubble.wait_for(state="visible")
             check(
                 "assistant.delta 流式片段实时上屏",
-                page.get_by_text("正在生成…").count() >= 1,
+                streaming_bubble.locator("xpath=ancestor::div[contains(@class, 'message-bubble')]")
+                .get_attribute("data-status")
+                == "streaming",
             )
             page.evaluate(
                 "([event, data]) => window.__leonEmit(event, data)",
@@ -711,6 +848,112 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 repr(message_calls[-1]["body"] if message_calls else None),
             )
 
+            user_row = page.locator(".message-row[data-role='user']").last
+            user_toolbar = user_row.locator(".message-toolbar")
+            check(
+                "用户气泡提供复制、重试和编辑",
+                user_toolbar.get_by_role("button", name="复制").is_visible()
+                and user_toolbar.get_by_role("button", name="重试").is_visible()
+                and user_toolbar.get_by_role("button", name="编辑").is_visible(),
+            )
+            user_toolbar.get_by_role("button", name="编辑").click()
+            user_editor = user_row.locator(".message-editor")
+            user_editor.fill("编辑后的用户消息")
+            user_row.get_by_role("button", name="保存").click()
+            check("用户消息可以原位编辑", "编辑后的用户消息" in user_row.inner_text())
+            user_row.get_by_role("button", name="重试").click()
+            retried_agent = page.locator(".message-row[data-role='agent']").last
+            retried_agent.get_by_text("这是重试后的本地回复。").wait_for(state="visible")
+            revision_button = retried_agent.locator(".message-revision button")
+            check(
+                "重试覆盖当前助手气泡并生成版本入口",
+                "2 / 2" in revision_button.inner_text()
+                and gateway.calls[-1]["body"].get("retry") is True,
+                repr(gateway.calls[-1]),
+            )
+            revision_button.click()
+            check(
+                "版本入口可顺序切换到旧回答",
+                "provider-free 的本地回复" in retried_agent.inner_text(),
+            )
+            revision_button.click()
+            check(
+                "版本入口可切回最新回答",
+                "重试后的本地回复" in retried_agent.inner_text(),
+            )
+            page.reload(wait_until="domcontentloaded")
+            page.get_by_text("已连接").wait_for(state="visible")
+            retried_agent = page.locator(".message-row[data-role='agent']").last
+            retried_agent.wait_for(state="visible")
+            page.get_by_text("这是重试后的本地回复。").wait_for(state="visible")
+            revision_button = retried_agent.locator(".message-revision button")
+            check(
+                "重试版本数量刷新后仍然正确",
+                "2 / 2" in revision_button.inner_text(),
+                revision_button.inner_text(),
+            )
+            revision_button.click()
+            check(
+                "刷新后仍可切换到历史回答",
+                "provider-free 的本地回复" in retried_agent.inner_text(),
+            )
+            revision_button.click()
+
+            tts_calls_before = sum(
+                call["path"] == "/api/agent/tts" for call in gateway.calls
+            )
+            speech_control = retried_agent.locator(".message-speak")
+            speech_control.click()
+            page.wait_for_function(
+                "el => el.getAttribute('aria-label') !== '生成中…'",
+                arg=speech_control.element_handle(),
+            )
+            if speech_control.get_attribute("aria-label") == "停止":
+                speech_control.click()
+            page.wait_for_function(
+                "el => el.getAttribute('aria-label') === '朗读'",
+                arg=speech_control.element_handle(),
+            )
+            speech_control.click()
+            page.wait_for_function(
+                "el => el.getAttribute('aria-label') !== '生成中…'",
+                arg=speech_control.element_handle(),
+            )
+            tts_calls_after = sum(
+                call["path"] == "/api/agent/tts" for call in gateway.calls
+            )
+            check(
+                "同一文字和音色重复朗读复用前端缓存",
+                tts_calls_after - tts_calls_before == 1,
+                f"before={tts_calls_before}, after={tts_calls_after}",
+            )
+
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                [
+                    "image.completed",
+                    {"job_id": "live-image-job", "image_url": "/api/fake-image"},
+                ],
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                [
+                    "assistant.notice",
+                    {
+                        "content": "图片生成好了，1 张图在呢，赶紧点开看！",
+                        "job_ids": ["live-image-job"],
+                    },
+                ],
+            )
+            image_result = page.locator(".message-row[data-kind='image-result']").last
+            image_result.wait_for(state="visible")
+            check(
+                "图片与完成文案合并且不显示文本工具栏",
+                image_result.locator(".markdown-image").count() == 1
+                and "赶紧点开看" in image_result.inner_text()
+                and image_result.locator(".message-toolbar").count() == 0,
+            )
+
             page.get_by_role("button", name="任务").click()
             page.locator(".page-panel[aria-label='生图任务']").wait_for(state="visible")
             check(
@@ -800,6 +1043,16 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 and "HTTP 424 upstream_error" in raw_error.inner_text()
                 and page.get_by_role("button", name="重试").last.is_visible(),
             )
+            error_count = page.locator(".message-bubble[data-status='error']").count()
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["agent.error", {"error": "HTTP 424 upstream_error\ntrace-id=fake"}],
+            )
+            page.wait_for_timeout(50)
+            check(
+                "相同失败事件只显示一个错误气泡",
+                page.locator(".message-bubble[data-status='error']").count() == error_count,
+            )
 
             voice_payload = {
                 "clip_id": "clip-vue-e2e",
@@ -818,8 +1071,24 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             check(
                 "voice.ready 事件追加语音气泡",
                 "fake voice.ready" in voice_bubble.inner_text()
-                and voice_bubble.locator("audio.voice-bubble__audio").count() == 1,
+                and voice_bubble.locator(".voice-player").is_visible()
+                and voice_bubble.locator("audio.voice-bubble__audio").count() == 1
+                and voice_bubble.locator("audio.voice-bubble__audio").evaluate(
+                    "el => getComputedStyle(el).display === 'none'"
+                ),
             )
+            voice_toggle_button = voice_bubble.locator(".voice-player__toggle")
+            if voice_toggle_button.get_attribute("aria-label") == "播放语音":
+                voice_toggle_button.click()
+            page.wait_for_function(
+                "el => el.getAttribute('aria-label') === '暂停语音'",
+                arg=voice_toggle_button.element_handle(),
+            )
+            check(
+                "可见气泡播放器直接控制自身音频",
+                voice_bubble.locator(".voice-player").get_attribute("data-playing") == "true",
+            )
+            voice_toggle_button.click()
             check(
                 "语音 clip 请求保持在同源 fake Gateway",
                 any(call["path"] == "/api/voice/clips/clip-vue-e2e" for call in gateway.calls),
@@ -843,12 +1112,64 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 page.locator(".logout-big").is_visible()
                 and "退出登录" in page.locator(".logout-big").inner_text(),
             )
+            voice_card = page.locator(".voice-settings")
+            voice_before = voice_card.bounding_box()
+            page.get_by_label("模型 ID").click()
+            page.locator(".model-list").wait_for(state="visible")
+            voice_after = voice_card.bounding_box()
+            check(
+                "模型目录悬浮展开且不推动语音卡片",
+                voice_before is not None
+                and voice_after is not None
+                and abs(voice_before["y"] - voice_after["y"]) <= 1,
+                f"before={voice_before}, after={voice_after}",
+            )
+            page.get_by_label("模型 ID").press("Escape")
             voice_toggle = page.get_by_role("button", name="选择音色")
             voice_toggle.wait_for(state="visible")
             check("语音列表默认收起", not page.locator(".voice-list").is_visible())
+            logout_before = page.locator(".logout-big").bounding_box()
             voice_toggle.click()
             voice_list = page.locator(".voice-list")
             voice_list.wait_for(state="visible")
+            voice_panel = page.locator(".voice-catalog-panel")
+            voice_header = page.locator(".voice-catalog-panel__header")
+            voice_pager = page.locator(".voice-pager")
+            logout_after = page.locator(".logout-big").bounding_box()
+            check(
+                "音色目录悬浮展开且退出按钮保持在底部",
+                logout_before is not None
+                and logout_after is not None
+                and abs(logout_before["y"] - logout_after["y"]) <= 1,
+                f"before={logout_before}, after={logout_after}",
+            )
+            voice_panel_box = voice_panel.bounding_box()
+            voice_card_box = voice_card.bounding_box()
+            check(
+                "音色弹层宽度合理、限高且不覆盖底部导航",
+                voice_panel_box is not None
+                and voice_card_box is not None
+                and voice_panel_box["width"] > voice_card_box["width"]
+                and 380 < voice_panel_box["height"] <= 490
+                and voice_panel_box["y"] + voice_panel_box["height"] < 760
+                and voice_panel.evaluate("el => getComputedStyle(el).overflow === 'hidden'"),
+                f"panel={voice_panel_box}, card={voice_card_box}",
+            )
+            header_before = voice_header.bounding_box()
+            pager_before = voice_pager.bounding_box()
+            voice_list.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+            header_after = voice_header.bounding_box()
+            pager_after = voice_pager.bounding_box()
+            check(
+                "音色只滚动中间列表且页签分页固定",
+                voice_list.evaluate("el => getComputedStyle(el).overflowY === 'auto'")
+                and header_before is not None
+                and header_after is not None
+                and pager_before is not None
+                and pager_after is not None
+                and abs(header_before["y"] - header_after["y"]) <= 1
+                and abs(pager_before["y"] - pager_after["y"]) <= 1,
+            )
             voice_tabs = page.locator(".voice-tabs button")
             check(
                 "音色目录提供全部/收藏页签",
@@ -856,6 +1177,31 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 and "全部" in voice_tabs.nth(0).inner_text()
                 and voice_tabs.nth(1).inner_text().strip() == "收藏",
             )
+            voice_list.locator(".voice-option__star").first.click()
+            voice_tabs.nth(1).click()
+            favorite_rows = voice_list.locator(".voice-option")
+            favorite_row_box = favorite_rows.first.bounding_box()
+            check(
+                "收藏只有一条时不会拉伸吃满整页",
+                favorite_rows.count() == 1
+                and favorite_row_box is not None
+                and favorite_row_box["height"] <= 54
+                and voice_list.evaluate("el => getComputedStyle(el).alignContent === 'start'"),
+                f"rows={favorite_rows.count()}, box={favorite_row_box}",
+            )
+            voice_tabs.nth(0).click()
+            voice_search = page.get_by_label("搜索音色")
+            voice_search.fill("测试音色")
+            search_rows = voice_list.locator(".voice-option")
+            search_row_box = search_rows.first.bounding_box()
+            check(
+                "搜索只有一条时保持紧凑行高",
+                search_rows.count() == 1
+                and search_row_box is not None
+                and search_row_box["height"] <= 54,
+                f"rows={search_rows.count()}, box={search_row_box}",
+            )
+            voice_search.fill("")
             autoplay_input = page.locator(".settings-toggle input")
             check(
                 "自动朗读呈现为滑动开关",
@@ -870,6 +1216,19 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             page.get_by_role("button", name="停止试听").wait_for(state="visible")
             check("试听按钮进入播放状态", True)
             page.get_by_role("button", name="停止试听").click()
+            page.get_by_role("button", name="关闭音色选择").last.click()
+            voice_panel.wait_for(state="hidden")
+            check("音色弹层可用右上角按钮关闭", True)
+            voice_toggle.click()
+            voice_panel.wait_for(state="visible")
+            page.keyboard.press("Escape")
+            voice_panel.wait_for(state="hidden")
+            check("音色弹层可用 Escape 关闭", True)
+            voice_toggle.click()
+            voice_panel.wait_for(state="visible")
+            page.locator(".voice-catalog-backdrop").click(position={"x": 4, "y": 4})
+            voice_panel.wait_for(state="hidden")
+            check("音色弹层可点击空白遮罩关闭", True)
             page.get_by_role("button", name="聊天").click()
             page.get_by_role("heading", name="Leon").wait_for(state="visible")
 
@@ -891,6 +1250,9 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 # branch and therefore produces one expected 401 console
                 # entry in Chromium.
                 and "status of 401 (unauthorized)" not in error.lower()
+                # The cancel compatibility check deliberately makes POST
+                # return 405 before the client retries with DELETE.
+                and "status of 405 (method not allowed)" not in error.lower()
             ]
             check("运行期无 Vue 页面错误", not external_errors, "; ".join(external_errors[:3]))
             if args.screenshot:

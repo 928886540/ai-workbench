@@ -11,6 +11,7 @@ from uuid import uuid4
 from workbench_core.agent import AgentTool, ToolRegistry
 from workbench_core.agent.runtime import AgentCancelled, current_cancel_event
 
+from leon_agent.image_modes import mode_catalog_items
 from leon_agent.leon_client import LeonImageClient
 
 TERMINAL_IMAGE_STATUSES = {"completed", "failed", "cancelled", "canceled"}
@@ -29,13 +30,22 @@ def _format_generation_answer(
         for item in result.get("images", [])
         if isinstance(item, dict) and item.get("image_url")
     ]
+    jobs = [item for item in result.get("jobs", []) if isinstance(item, dict)]
+    workflow_ids = result.get("workflow_ids") or arguments.get("workflow_ids") or []
+    try:
+        batch_count = max(1, int(arguments.get("batch_count") or 1))
+    except (TypeError, ValueError):
+        batch_count = 1
+    count = len(jobs) or max(1, len(workflow_ids) or 1) * batch_count
     if images:
-        return "图片生成好了。\n\n" + "\n".join(f"- {url}" for url in images)
+        return f"{len(images)} 张图片生成好了。\n\n" + "\n".join(
+            f"- {url}" for url in images
+        )
     if result.get("timed_out"):
-        return "图片任务已提交，但等待完成超时；稍后可以查询任务状态。"
+        return f"已提交 {count} 张图片任务，仍在生成中，请稍等；完成后会自动显示在这里。"
     if result.get("waited_for_completion") is False:
-        return "图片任务已提交，正在后台生成；稍后可以查询任务状态。"
-    return "图片任务已完成，但暂时没有拿到图片地址。"
+        return f"已提交 {count} 张图片任务，正在后台生成，请稍等；完成后会自动显示在这里。"
+    return f"{count} 张图片已经生成完成，正在同步结果，请稍等；图片会自动显示在这里。"
 
 
 def _job_id(item: dict[str, Any]) -> str:
@@ -142,6 +152,13 @@ def create_leon_tools(
 ) -> ToolRegistry:
     chat_id = f"leon-agent:{session_id}"
 
+    def list_image_modes() -> dict[str, Any]:
+        result = client.list_modes()
+        if not isinstance(result, dict):
+            return {"ok": False, "modes": [], "error": "Invalid mode catalog response"}
+        modes = [item for item in result.get("modes", []) if isinstance(item, dict)]
+        return {**result, "modes": mode_catalog_items(modes)}
+
     def generate_images(
         source_text: str,
         workflow_ids: list[str] | None = None,
@@ -160,13 +177,17 @@ def create_leon_tools(
             character_context=character_context,
             random_workflow=random_workflow,
         )
-        _check_cancelled(None)
         submission.setdefault("source_text", source_text)
         submission.setdefault("workflow_ids", list(modes))
         if on_generation_submitted is not None:
             on_generation_submitted(submission)
+        _check_cancelled(None)
         if not wait_for_image_completion:
-            return submission
+            return {
+                **submission,
+                "waited_for_completion": False,
+                "images": submission.get("images", []),
+            }
         return _wait_for_image_results(
             client,
             chat_id=chat_id,
@@ -177,9 +198,13 @@ def create_leon_tools(
         [
             AgentTool(
                 name="list_image_modes",
-                description="List image modes available in the installed Leon image plugin.",
+                description=(
+                    "List installed Leon image modes with their Chinese names, aliases, and exact "
+                    "workflow ids. Use this catalog when the user names a mode instead of giving "
+                    "an exact id."
+                ),
                 parameters={"type": "object", "properties": {}, "additionalProperties": False},
-                handler=client.list_modes,
+                handler=list_image_modes,
             ),
             AgentTool(
                 name="check_image_environment",
@@ -197,6 +222,7 @@ def create_leon_tools(
                     "pipeline. Put the user's current request in source_text verbatim: do not "
                     "translate, rewrite, expand, beautify, or add prompt details. Only pass count, "
                     "exact mode ids, or random mode when the user explicitly supplied them. "
+                    "Resolve a human-readable mode name through list_image_modes first. "
                     "batch_count is per selected mode."
                 ),
                 parameters={

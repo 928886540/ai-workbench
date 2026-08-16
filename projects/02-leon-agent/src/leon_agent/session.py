@@ -42,6 +42,13 @@ class SessionStore:
                     created_at INTEGER NOT NULL,
                     FOREIGN KEY (session_id) REFERENCES sessions(id)
                 );
+                CREATE TABLE IF NOT EXISTS message_revisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (message_id) REFERENCES messages(id)
+                );
                 CREATE TABLE IF NOT EXISTS tool_calls (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -190,6 +197,73 @@ class SessionStore:
                 (now, session_id),
             )
 
+    def replace_latest_assistant(self, session_id: str, content: str) -> None:
+        """Replace the latest assistant answer while preserving its turn position."""
+        now = int(time.time() * 1000)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id FROM messages
+                WHERE session_id = ? AND role = 'assistant'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO messages (session_id, role, content, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (session_id, "assistant", content, now),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO message_revisions (message_id, content, created_at)
+                    SELECT id, content, created_at FROM messages WHERE id = ?
+                    """,
+                    (int(row["id"]),),
+                )
+                connection.execute(
+                    "UPDATE messages SET content = ?, created_at = ? WHERE id = ?",
+                    (content, now, int(row["id"])),
+                )
+            connection.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+
+    def replace_latest_user(self, session_id: str, content: str) -> None:
+        """Update the latest user prompt when retrying an edited current turn."""
+        now = int(time.time() * 1000)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id FROM messages
+                WHERE session_id = ? AND role = 'user'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO messages (session_id, role, content, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (session_id, "user", content, now),
+                )
+            else:
+                connection.execute(
+                    "UPDATE messages SET content = ?, created_at = ? WHERE id = ?",
+                    (content, now, int(row["id"])),
+                )
+            connection.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+
     def load_messages(
         self,
         session_id: str,
@@ -212,6 +286,28 @@ class SessionStore:
                 """,
                 (session_id, limit),
             ).fetchall()
+            revisions_by_message: dict[int, list[dict[str, Any]]] = {}
+            if include_created_at and rows:
+                message_ids = [int(row["id"]) for row in rows]
+                placeholders = ", ".join("?" for _ in message_ids)
+                revision_rows = connection.execute(
+                    f"""
+                    SELECT message_id, content, created_at
+                    FROM message_revisions
+                    WHERE message_id IN ({placeholders})
+                    ORDER BY id
+                    """,  # noqa: S608 - placeholders are generated, values stay bound
+                    message_ids,
+                ).fetchall()
+                for revision in revision_rows:
+                    revisions_by_message.setdefault(
+                        int(revision["message_id"]), []
+                    ).append(
+                        {
+                            "content": str(revision["content"]),
+                            "created_at": int(revision["created_at"]),
+                        }
+                    )
 
         # Failed CLI turns used to be persisted as assistant messages. Exclude
         # those old pairs so a transport error/request id cannot be replayed as
@@ -236,7 +332,9 @@ class SessionStore:
                 continue
             message: dict[str, Any] = {"role": row["role"], "content": row["content"]}
             if include_created_at and row["created_at"] is not None:
+                message["id"] = int(row["id"])
                 message["created_at"] = int(row["created_at"])
+                message["revisions"] = revisions_by_message.get(int(row["id"]), [])
             messages.append(message)
             index += 1
         return messages

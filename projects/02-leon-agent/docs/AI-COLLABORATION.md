@@ -17,6 +17,13 @@ runtime boundary, canonical path, or known limitation changes.
 - CLI command: `leon` (editable uv tool install pointing at this repository)
 - LLM config source: current `~/.codex/config.toml` written by CC Switch
 
+Runtime restart rule:
+
+- Editing `projects/02-leon-agent/src/` does not update the running Gateway. Restart `leon-server`
+  and verify the served route/assets before claiming the backend change is live.
+- Editing the separate Leon / ComfyUI backend or its plugin requires restarting ComfyUI and checking
+  the live `/ios/*` behavior. If one task changes both repositories, restart and verify both services.
+
 Never commit `.env`, API tokens, SQLite databases, generated images, caches, or local IDE files.
 
 ## Canonical Files
@@ -173,8 +180,10 @@ expand it into global search/delete APIs. Normalize every `final_image_url` into
 - A TTS `502` is an observed intermittent Volink upstream failure, not evidence of a local text-length
   limit. Log the voice ID, raw/prepared character counts, and upstream error. Do not add retries unless
   retry semantics are explicitly designed.
-- The Web client uses one reusable audio element. A blocked iOS autoplay attempt keeps the pending
-  audio URL and callback until the user taps the visible unlock button; do not revoke it early.
+- Manual/automatic text TTS uses one reusable audio element. A blocked iOS autoplay attempt keeps
+  the pending audio URL and callback until the user taps the visible unlock button; do not revoke it
+  early. Agent-generated `voice.ready` clips instead play from the visible bubble audio element so
+  the control shown to the user is the control that owns playback.
 
 ## UX State
 
@@ -256,6 +265,50 @@ Fixed shell redesign (SW cache `leon-vue-v13`):
 - Model refresh sits in the model-card top-right corner; voice autoplay uses an explicit switch track
   and thumb; the voice tab label stays `收藏` without appending the favorite count.
 
+Conversation flow pass (SW cache `leon-vue-v14`):
+
+- The app shell is one continuous surface: header, content, composer, and bottom navigation use
+  separators instead of four independent rounded cards.
+- Model and voice catalogs are floating popovers, so opening either list does not move the cards,
+  logout button, or bottom navigation. Normal loading/saving states no longer add temporary rows.
+- `tool.started` / `tool.finished` render inside the active assistant bubble; the composer no longer
+  owns a global task-status line. Direct image submission keeps the one-provider-turn optimization.
+- Web image submission explicitly returns `waited_for_completion=false`, so the direct answer says
+  the task was submitted in the background instead of incorrectly claiming completion.
+- Completed image Markdown and its natural completion note persist as one assistant message. Live
+  events and legacy two-message history are merged into one image-result bubble without text-action
+  controls.
+
+Interaction correction pass (SW cache `leon-vue-v15`):
+
+- The current installed mode catalog (Chinese name, aliases, exact workflow id) is supplied to the
+  LLM. The prompt makes the current turn authoritative, so a named mode is not inherited from an
+  earlier turn; `generate_images` itself does not parse keywords or force-rewrite workflow ids.
+- The active send button becomes a stop control backed by a per-session cancellation endpoint;
+  cancellation publishes `assistant.cancelled` and never duplicates an `agent.error` bubble.
+- Retrying reuses the current assistant bubble. Previous attempts remain available through the
+  version button below the bubble; user bubbles also expose copy, retry, and edit actions.
+- Voice selection uses a wider, taller popover with fixed tabs/search and pagination. Only the
+  middle voice list scrolls, so the outer popover no longer gains a second scrollbar.
+- Image submission copy always says `已提交 N 张图片任务` and asks the user to wait for automatic
+  delivery; it no longer claims completion before an image URL is available.
+
+Refresh/voice reliability pass (SW cache `leon-vue-v16`):
+
+- Session history includes stable message ids plus persisted assistant revisions. Refreshing during
+  an active normal/retry turn reconstructs the pending bubble from `active_turn`; completion remains
+  in SQLite and retry version counts survive later reloads.
+- The cancel route accepts POST and DELETE. The Web client retries DELETE only when POST returns 405,
+  preserving compatibility while a previously launched Gateway process is still serving old routes.
+- Manual TTS uses a 10-entry browser LRU, while the Gateway keeps a process-wide minimum 10-entry
+  normalized text + voice cache shared by `/api/agent/tts` and `speak_text`.
+- `voice.ready` playback is owned by the visible bubble's custom play/pause/progress control. The
+  native audio element is hidden and no separate invisible player starts the same clip.
+- The voice catalog is a modal with backdrop, close button, Escape support, fixed header/footer and
+  an internally scrolling list. Sparse favorite/search results retain 48px rows instead of stretching.
+- Login wording no longer promises a return to an earlier conversation or inserts a loading row that
+  shifts the layout. Pending replies use the three animated thinking dots again.
+
 True streaming:
 
 - `LLMClient.chat_turn(on_delta=...)` streams with `stream=True` +
@@ -313,15 +366,14 @@ For Web changes also verify a mobile viewport with a real browser:
 
 Historical legacy browser coverage was retired when the single-file client was deleted. The
 canonical provider-free browser suite is `tests/manual_vue_web_check.py`; the Service Worker cache
-is `leon-vue-v9`.
+is `leon-vue-v16`.
 
 The LLM transport safety fix was validated separately with `101 passed`. Current Vue provider-free
 validation additionally includes `npm run typecheck`, `npm run build`, and `manual_vue_web_check.py`
-at `19/19` for both Vite preview and FastAPI Vue entry; these checks use fake API/SSE and do not prove
+at `60/60` for both Vite preview and FastAPI Vue entry; these checks use fake API/SSE and do not prove
 real provider or mobile behavior. Vue is the only Web entry.
-The integrated CLI/Web baseline was most recently validated with explicit fake LLM environment values
-at `166 passed`, repository-level Ruff clean, and `uv run leon --help` successful. The lower count
-reflects removal of legacy-only HTML and selector tests, not lost Vue behavior coverage.
+The integrated CLI/Web baseline was most recently validated at `174 passed`, repository-level Ruff
+clean, and `uv run leon --help` successful.
 
 ## Handoff Format
 
