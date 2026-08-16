@@ -344,3 +344,20 @@ projects/02-leon-agent/src/leon_agent/memory/
 3. 若开始实现，严格按 Phase 1 -> 2 -> 3 -> 4 小步推进，每完成一层先跑对应矩阵。
 4. 首先证明“普通聊天不写、显式写入可见、删除不留 raw 审计”，再考虑检索/摘要扩展。
 5. 任何生产代码改动后必须重启 owning process，并验证实际服务加载；文档设计本身不需要重启。
+
+## Phase 1 实现补充
+
+Phase 1 的纯 Store/Policy 实现已按以下细节收口，后续实现应以代码和本节为准：
+
+- `MemoryStore` 每个连接设置 `PRAGMA busy_timeout=5000`，写事务使用短 `BEGIN IMMEDIATE` 并做有限
+  locked/busy 重试；不启用 WAL，也不更新 `sessions.updated_at`。
+- 除 `idx_memories_owner_updated` 外增加 `idx_memories_owner_key`，用于固定 principal 的精确 key/前缀
+  读取；前缀中的 `_`、`%` 按字面处理，不能被 SQLite `LIKE` 当作通配符。
+- `delete_with_fallback()` 在同一个写事务内完成 user 删除和 global fallback 检查，避免单独查询期间的
+  可见性竞态；Phase 2 应复用该结果，不自行拆成两次写/读。
+- Store 层拒绝 C0/C1/DEL 控制字符、非法 JSON/深度/字段/4 KiB 超限；Policy 层另外拒绝敏感 memory
+  key、嵌套字段和常见 secret 格式。`MemoryService.get()` 对工具契约收紧为最多 20 条。
+- 所有外部字符串中的孤立 Unicode surrogate 都在 SQLite 边界前拒绝并返回 `invalid_unicode`；时间戳
+  必须位于 SQLite INTEGER 的 `0..2^63-1` 范围，损坏行中的非法时间戳统一返回 `storage_corrupt`。
+- F1 的 intent gate 仍是纯函数且默认拒绝；否定表达（例如“不要记住/不要保存”）优先于正向 marker，
+  不连接 AgentRuntime，也不接受模型自带的 source/confirmed 字段。
