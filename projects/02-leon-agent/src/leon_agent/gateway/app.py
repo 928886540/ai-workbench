@@ -62,32 +62,24 @@ _store: SessionStore | None = None
 _bus_registry: EventBusRegistry = EventBusRegistry()
 _llm_snapshots: dict[str, SessionLLMSnapshot] = {}
 
-# Web static files. The Vue build is opt-in until its page-by-page migration is complete.
-_LEGACY_WEB_DIR: Path = Path(__file__).parent.parent / "web"
+# Vue is the only Web client. Build output remains generated under web/dist.
 _VUE_WEB_DIST_DIR: Path = Path(__file__).resolve().parents[3] / "web" / "dist"
 
 
 def _resolve_web_dir(
-    mode: str = "legacy",
     *,
-    legacy_dir: Path = _LEGACY_WEB_DIR,
     vue_dist_dir: Path = _VUE_WEB_DIST_DIR,
 ) -> Path:
-    selected = mode.strip().casefold()
-    if selected == "legacy":
-        return legacy_dir
-    if selected == "vue":
-        entrypoint = vue_dist_dir / "index.html"
-        if not entrypoint.is_file():
-            raise RuntimeError(
-                "LEON_WEB_CLIENT=vue requires a built Vue client at "
-                f"{vue_dist_dir}; run `npm install` and `npm run build` first"
-            )
-        return vue_dist_dir
-    raise ValueError("LEON_WEB_CLIENT must be 'legacy' or 'vue'")
+    entrypoint = vue_dist_dir / "index.html"
+    if not entrypoint.is_file():
+        raise RuntimeError(
+            "Vue client build required at "
+            f"{vue_dist_dir}; run `npm install` and `npm run build` first"
+        )
+    return vue_dist_dir
 
 
-_WEB_DIR: Path = _resolve_web_dir(LeonSettings().web_client)
+_WEB_DIR: Path = _resolve_web_dir()
 
 
 @asynccontextmanager

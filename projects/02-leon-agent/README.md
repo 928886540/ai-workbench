@@ -61,6 +61,8 @@ uv run leon
 
 ```powershell
 uv sync
+npm --prefix projects/02-leon-agent/web ci
+npm --prefix projects/02-leon-agent/web run build
 uv run leon-server --host 127.0.0.1 --port 8233
 ```
 
@@ -128,7 +130,6 @@ uv tool install --editable .\projects\02-leon-agent `
 | `LEON_DEFAULT_IMAGE_MODES` | `k2_tifa_plus` | 未指定模式时的默认值，逗号分隔 |
 | `LEON_SESSION_DB` | `data/leon-agent.db` | 本地会话数据库 |
 | `LEON_API_TOKEN` | 空 | Web Gateway 鉴权 token；公网暴露时必须设置 |
-| `LEON_WEB_CLIENT` | `legacy` | Web 客户端实现；Vue 构建完成并验收后再切为 `vue` |
 | `LEON_SYSTEM_PROMPT_FILE` | 空 | 可选 UTF-8 TXT；内容原样追加到 Agent system prompt，相对路径从仓库根目录解析 |
 
 后端返回的图片可能是 `/view?filename=...` 这类相对路径。工具层会把它拼成
@@ -145,6 +146,7 @@ uv run leon --public-image-base-url https://comfyui.928886540.xyz
 ## 验证
 
 ```powershell
+npm --prefix projects/02-leon-agent/web run build
 uv run pytest projects/02-leon-agent/tests -q
 uv run ruff check projects/02-leon-agent
 uv run leon --help
@@ -155,7 +157,7 @@ uv run leon-server --help
 
 ## Mobile Web Client
 
-legacy Web 客户端的 5 个阶段均已完成：HTTP Gateway、SSE 事件流、手机 PWA 聊天、任务/图库视图，以及运行时间线。
+Vue Web 客户端的 5 个阶段均已完成：HTTP Gateway、SSE 事件流、手机 PWA 聊天、任务/图库视图，以及运行时间线。
 Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 job id，并在后台跟踪状态和完成图片；CLI 仍保留
 同步等待图片结果的体验。图片完成后 Gateway 会主动持久化并推送一条带图片的助手消息，Web
 聊天气泡直接显示图片，不需要再次询问 LLM。Web 设置页可为当前 session 选择模型，或恢复跟随 Codex 配置中的
@@ -173,17 +175,16 @@ Vue 客户端已迁移聊天、任务、图库和设置四个主要视图，并�
 
 架构与接口边界见 [Mobile Web 架构](docs/mobile-web-architecture.md)。
 
-legacy Web 客户端仍由单文件 `src/leon_agent/web/index.html` 提供（无构建步骤），`tests/test_gateway.py`
-直接对服务端返回的 HTML 做字符串断言；Vue 客户端的源码位于 `web/src/`，两者并行维护。每次 legacy
-前端改动需同步递增 `sw.js` 的缓存名与注册 `?v=` 版本号，否则手机会命中旧缓存。当前 Vue 迁移的边界与
-验收状态见 [Web 客户端演进评估](docs/web-client-evolution.md)。
+Vue 客户端是唯一 Web 实现，源码位于 `web/src/`，构建产物位于 `web/dist/` 并由 FastAPI 托管。
+每次前端改动需先运行 Vite build；影响缓存契约时同步递增 `web/public/sw.js` 的缓存名与
+`web/src/main.ts` 注册版本，否则手机可能命中旧缓存。迁移历史与验收状态见
+[Web 客户端演进评估](docs/web-client-evolution.md)。
 
 Vue 3 + Vite 迁移基座位于 `web/`，当前已覆盖聊天、任务、图库、设置视图和 Agent Timeline。provider-free
 Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **19/19**；
 它拦截所有 `/api/**`，不会触发真实 LLM、Volink 或图片 provider。本机与公网 Gateway/SSE 已完成只读验收；
-Cloudflare 控制台 Cache Bypass 规则和手机实机验收仍待做。
-默认 `LEON_WEB_CLIENT=legacy`，构建 Vue 产物不会改变现有线上页面；完成线上验收后，设置
-`LEON_WEB_CLIENT=vue` 并重启 `leon-server` 才会由 FastAPI 托管 `web/dist/`。
+Cloudflare 控制台 Cache Bypass 规则和手机实机验收仍待做。旧单文件 Web 客户端及其浏览器脚本已删除，
+Gateway 不再提供前端选择开关。
 
 ## 后续路线
 

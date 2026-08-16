@@ -50,22 +50,22 @@ def test_sse_invalid_token_stops_eventsource_retry(tmp_path, monkeypatch):
 
 
 def test_web_manifest_and_icon_are_served(client):
+    html = client.get("/").text
+    assert '<div id="app"></div>' in html
+    assert "/assets/index-" in html
     assert client.get("/manifest.json").status_code == 200
     assert client.get("/icon.svg").status_code == 200
 
 
 def test_vue_web_dir_requires_a_built_entrypoint(tmp_path):
-    legacy_dir = tmp_path / "legacy"
     vue_dir = tmp_path / "vue" / "dist"
-    legacy_dir.mkdir()
     vue_dir.mkdir(parents=True)
 
-    assert _resolve_web_dir("legacy", legacy_dir=legacy_dir, vue_dist_dir=vue_dir) == legacy_dir
-    with pytest.raises(RuntimeError, match="requires a built Vue client"):
-        _resolve_web_dir("vue", legacy_dir=legacy_dir, vue_dist_dir=vue_dir)
+    with pytest.raises(RuntimeError, match="Vue client build required"):
+        _resolve_web_dir(vue_dist_dir=vue_dir)
 
     (vue_dir / "index.html").write_text("<div id='app'></div>", encoding="utf-8")
-    assert _resolve_web_dir("vue", legacy_dir=legacy_dir, vue_dist_dir=vue_dir) == vue_dir
+    assert _resolve_web_dir(vue_dist_dir=vue_dir) == vue_dir
 
 
 def test_web_shell_disables_stale_pwa_cache(client):
@@ -153,130 +153,6 @@ def test_session_image_state_restores_tasks_and_gallery(client, monkeypatch):
     }
     assert ("tasks", f"leon-agent:{session_id}", 25) in calls
     assert ("gallery", f"leon-agent:{session_id}", 25) in calls
-
-
-def test_web_client_supports_markdown_images_and_touch_scrolling(client):
-    html = client.get("/").text
-
-    assert 'class="markdown-image-link"' in html
-    assert "function isImageHref" in html
-    assert "url.searchParams.get('filename')" in html
-    assert 'alt="生成图片"' in html
-    assert 'id="image-viewer"' in html
-    assert "openImageViewer" in html
-    assert "viewerPointers" in html
-    assert "image-viewer-zoom-in" not in html
-    assert "replaceSkeletonWithImage" in html
-    assert 'id="mode-suggestions"' in html
-    assert "/api/image-modes" in html
-    assert "touch-action:pan-y" in html
-    assert "autoFollowMessages" in html
-    assert "/image-state?limit=100" in html
-    assert "localStorage.removeItem(SESSION_KEY)" in html
-    assert "maximum-scale=1,user-scalable=no" in html
-    assert "interactive-widget=resizes-content" in html
-    assert "window.visualViewport" not in html
-    assert "window.open(href" not in html
-    assert "$input.addEventListener('focus'" not in html
-    assert "height:100dvh" in html
-    assert "font-size:16px" in html
-    assert "/sw.js?v=17" in html
-    assert "function renderHistory(history){" in html
-    assert "while(messages.length)removeMessage(messages[messages.length-1].id)" in html
-    assert "function stateEntries(state)" in html
-    assert "object-fit:cover" in html
-    assert "function statusLabel(" in html
-    assert "排队中" in html
-    assert "任务详情" in html
-    assert "暂无任务" in html
-    assert "暂无图片" in html
-    assert "#voice-search{flex:1;min-width:0;min-height:44px" in html
-
-
-def test_web_client_image_viewer_is_a_zoomable_album(client):
-    html = client.get("/").text
-
-    # Every control needs an explicit z-index: the <img> has will-change:transform,
-    # so it creates a stacking context that paints over z-index:auto siblings.
-    assert ".iv-chrome{position:absolute;z-index:3}" in html
-    assert 'id="image-viewer-close" class="iv-chrome"' in html
-    # Focal-point zoom replaced the old centre-only setViewerScale().
-    assert "function zoomAt(" in html
-    assert "setViewerScale" not in html
-    # Pan bounds clamp to the real image edges, no arbitrary slack.
-    assert "+48" not in html
-    # Album navigation with wrap-around.
-    assert 'id="image-viewer-prev"' in html
-    assert 'id="image-viewer-next"' in html
-    assert 'id="image-viewer-counter"' in html
-    assert "function collectAlbum(" in html
-    assert "ivIndex=(index%ivAlbum.length+ivAlbum.length)%ivAlbum.length" in html
-
-
-def test_web_client_appends_finished_image_as_new_bubble(client):
-    html = client.get("/").text
-
-    # The skeleton is dropped and the image is appended at the bottom, instead of
-    # being swapped in place halfway up the conversation.
-    assert "function replaceSkeletonWithImage(" in html
-    assert "imageJobMessages" not in html
-    assert "addImageSkeleton" not in html
-    assert "updateSkeletonBadge" not in html
-    assert "createMessage({kind:'image',status:'done',images:[href]});" in html
-    assert "placeholder.replaceWith" not in html
-
-
-def test_web_client_renders_every_bubble_from_the_message_store(client):
-    html = client.get("/").text
-
-    # W1: one message list is the only source of truth; renderers read from it and
-    # patch a single bubble instead of appending straight into the DOM.
-    assert "const messages=[],messageIndex=new Map();" in html
-    assert "function createMessage(" in html
-    assert "function renderMessage(" in html
-    assert "function renderBubbleBody(" in html
-    assert "function renderBubbleToolbar(" in html
-    assert "function patchMessage(" in html
-    assert "wrap.dataset.messageId=msg.id;" in html
-    assert "data-message-id=" in html
-    assert "class=\"bubble-toolbar\"" not in html
-    assert "bar.className='bubble-toolbar';" in html
-    # The old ad-hoc DOM registry is gone.
-    assert "imagePlaceholders" not in html
-
-
-def test_web_client_has_complete_bubble_actions_and_voice_states(client):
-    html = client.get("/").text
-
-    assert "ICON_COPY" in html
-    assert "ICON_RETRY" in html
-    assert "ICON_EDIT" in html
-    assert "function startEditingMessage(" in html
-    assert "function retryMessage(" in html
-    assert "function speakableText(" in html
-    assert "button.innerHTML=ICON_LOADING" in html
-    assert "button.innerHTML=ICON_WAVE" in html
-    assert "pendingVoice={url,onState}" in html
-    assert "playVoice(waiting.url,{onState:waiting.onState})" in html
-
-
-def test_web_client_model_picker_collapses_after_save(client):
-    html = client.get("/").text
-
-    assert "let modelListOpen=false;" in html
-    assert "if(!modelListOpen)return;" in html
-    assert "modelListOpen=false;renderModelList();" in html
-
-
-def test_web_client_model_picker_is_tappable(client):
-    html = client.get("/").text
-
-    # <datalist> has no usable dropdown on mobile browsers.
-    assert "<datalist" not in html
-    assert 'list="model-options"' not in html
-    assert 'id="model-list"' in html
-    assert "function renderModelList(" in html
-    assert "model-option" in html
 
 
 def test_session_model_can_be_selected_and_reset(client, monkeypatch):
@@ -413,12 +289,6 @@ def test_web_session_pins_complete_toml_provider_until_new_login(client, monkeyp
     assert pinned.json()["default_model"] == "provider-a-model"
     assert refreshed.json()["base_url"] == "https://provider-b.example/v1"
     assert refreshed.json()["default_model"] == "provider-b-model"
-
-
-def test_web_gallery_page_is_hidden_when_inactive(client):
-    html = client.get("/").text
-
-    assert "#page-gallery{padding:12px;display:flex" not in html
 
 
 def test_send_message_session_not_found(client):

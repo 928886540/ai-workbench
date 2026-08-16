@@ -4,7 +4,7 @@ The script deliberately uses Playwright request interception instead of a real
 LLM, image backend, or Volink.  By default it starts ``vite preview`` against
 the already-built ``web/dist`` directory.  Pass ``--base-url`` (or
 ``LEON_VUE_BASE_URL``) to reuse a running FastAPI instance configured with
-``LEON_WEB_CLIENT=vue``.  The only runtime dependency is Playwright itself:
+FastAPI's canonical Vue static entry.  The only runtime dependency is Playwright itself:
 
     uv run --with playwright python projects/02-leon-agent/tests/manual_vue_web_check.py
 
@@ -328,7 +328,6 @@ def _start_server(args: argparse.Namespace) -> ServerHandle:
     env = os.environ.copy()
     if args.server == "fastapi":
         temporary_dir = tempfile.TemporaryDirectory(prefix="leon-vue-e2e-")
-        env["LEON_WEB_CLIENT"] = "vue"
         env["LEON_SESSION_DB"] = str(Path(temporary_dir.name) / "leon.db")
         command = [
             _command("uv"),

@@ -6,7 +6,7 @@ createApp(App).mount("#app");
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    void navigator.serviceWorker.register("/sw.js?v=vue-8", {
+    void navigator.serviceWorker.register("/sw.js?v=vue-9", {
       scope: "/",
       updateViaCache: "none",
     });

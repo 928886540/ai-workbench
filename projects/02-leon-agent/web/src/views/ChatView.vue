@@ -805,7 +805,7 @@ async function sendMessage(): Promise<void> {
     }
   } catch (error) {
     // The Gateway publishes agent.error before returning HTTP 500. Mirror the
-    // legacy client and avoid rendering the same failure from both channels.
+    // prior client behavior and avoid rendering the same failure from both channels.
     if (Date.now() - lastAgentErrorAt > 1000) {
       finishAssistant(error instanceof Error ? error.message : "发送失败", "error");
     }
@@ -873,7 +873,7 @@ onBeforeUnmount(() => {
     <section v-if="!authenticated" class="login-card" aria-labelledby="login-title">
       <p class="eyebrow">LEON AGENT · VUE 3</p>
       <h1 id="login-title">登录聊天工作台</h1>
-      <p class="subtitle">Vue 迁移入口默认不替换 legacy 页面；登录后会恢复当前会话。</p>
+      <p class="subtitle">登录后会恢复当前会话，并继续接收任务与语音事件。</p>
       <form class="login-form" @submit.prevent="login">
         <label for="token">Gateway Token</label>
         <input id="token" v-model="tokenInput" type="password" autocomplete="current-password" placeholder="公网部署时填写 LEON_API_TOKEN" />

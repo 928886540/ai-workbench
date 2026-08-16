@@ -3,7 +3,7 @@
 > 状态：历史设计 + 实施状态（2026-08-16）
 > 关联提交：`3aab43a fix(leon-web): 图片查看器改为可缩放相册，完成后新气泡回图`；
 > `5aba213 feat(leon-web): 迁移 Agent Timeline`
-> legacy Web 源文件：`src/leon_agent/web/index.html`（约 90KB 单文件，无构建步骤）；Vue 源码位于 `web/src/`
+> 唯一 Web 源码位于 `web/src/`；旧单文件客户端已删除
 >
 > 当前实施（2026-08-16）：Vue 3 + Vite 已覆盖聊天、任务、图库、设置视图和 Agent Timeline；助手气泡支持复制 /
 > 真重试 / 编辑 / 朗读，Volink 提供 4 个模型和 561 个中文音色，SSE `voice.ready` 会追加可播放
@@ -11,7 +11,7 @@
 > Agent Timeline 可查看最近 100 条 SSE 决策事件。ASR、tokens 上屏、真实生图/TTS 和手机实机验收尚未完成；
 > SSE 已加入进程内 `id` / `Last-Event-ID` 补发和 stale-token 登录恢复；provider-free Playwright smoke
 > 已在 Vite/FastAPI 各 19/19 通过。
-> `LEON_WEB_CLIENT=legacy` 仍是默认入口，Vue 仅显式 opt-in。
+> Vue 已成为唯一入口，`LEON_WEB_CLIENT` 开关已删除。
 
 ---
 
@@ -19,7 +19,7 @@
 
 | 议题 | 结论 |
 | --- | --- |
-| 现在迁 Vue3？ | **迁移主体已完成**。Vue 3 + Vite 已覆盖聊天、任务、图库、设置和 Agent Timeline；provider-free smoke 已通过，真实验收前保持 legacy 默认。 |
+| 现在迁 Vue3？ | **迁移完成并成为唯一入口**。Vue 3 + Vite 已覆盖聊天、任务、图库、设置和 Agent Timeline；provider-free smoke 已通过。 |
 | 界面聊天化？ | **做**，优先级最高。纯前端改动，不动网关协议。 |
 | 气泡工具栏（复制 / 重试 / 耗时 / tokens / 朗读）？ | **部分完成**。复制、真重试、编辑、朗读和前端耗时已完成；tokens 待后端 usage。 |
 | 语音？ | **TTS 已完成，ASR 待做**。Volink 密钥仅在网关；前端支持目录、手动/自动朗读、`voice.ready`、单例播放器与 iOS 解锁。 |
@@ -28,8 +28,8 @@
 
 ## 2. 历史评估：为什么当时不迁 Vue3
 
-本节记录 2026-08-15 之前的取舍，不代表当前路线。用户已决定迁移 Vue 3 + Vite，现状与剩余门槛见第 6 节；
-legacy 仍保持默认，避免真实公网与手机验收完成前影响现有入口。
+本节记录 2026-08-15 之前的取舍，不代表当前路线。用户已决定迁移 Vue 3 + Vite，旧客户端已经删除，
+现状与剩余门槛见第 6 节。
 
 ### 2.1 会直接废掉现有测试策略
 
@@ -214,8 +214,7 @@ Gateway 推送的音频元数据，播放器由前端单例管理。
 当前验证包括静态契约、TypeScript 检查、Vite build，以及
 `tests/manual_vue_web_check.py` 的 provider-free Playwright smoke（Vite/FastAPI 各 19/19）。该脚本只拦截
 API，不证明真实 provider、Cloudflare 缓存规则或手机网络行为；本机/公网 SSE 已做只读首事件验收，
-因此仍不能据此宣称 Vue 已全面替换 legacy。
-只有显式设置 `LEON_WEB_CLIENT=vue` 且存在构建产物时才托管 Vue，默认仍为 `LEON_WEB_CLIENT=legacy`。
+Vue 已全面替换旧单文件客户端；Gateway 只托管 `web/dist/`，缺少构建产物时启动会明确失败。
 Gateway 当前不发送权威 `model`/`usage` 字段，Vue 只显示客户端观测耗时，不虚构 tokens 或实际响应模型。
 Gateway 当前也没有真正发送 `assistant.delta`；Vue 保留兼容分支，真实回复仍以 `assistant.started` /
 `assistant.completed` 事件为主。
@@ -247,9 +246,9 @@ SSE 回放窗口是进程内的最近 100 条，服务重启后不提供历史�
 | **W6** | Vue 迁移：聊天、任务、图库、设置、Agent Timeline（已完成） | W1-W5 |
 | **W7** | 模式补全与 `voice.ready` 事件（已完成） | W6 |
 | **W8** | provider-free 浏览器回归（Vite/FastAPI 19/19） | W6-W7 |
-| **W9** | 真实 Gateway/Cloudflare/手机验收，完成后再评估切换入口 | W8 |
+| **W9** | 真实 Gateway/Cloudflare/手机验收并收口上线验证 | W8 |
 
-每个阶段单独一个 commit，`test_gateway.py` 同步补断言，`sw.js` 缓存版本号递增。
+每个阶段单独一个 commit，Vue 契约/浏览器 smoke 同步补断言，`sw.js` 缓存版本号递增。
 
 ---
 
@@ -257,7 +256,6 @@ SSE 回放窗口是进程内的最近 100 条，服务重启后不提供历史�
 
 1. HTML 字符串断言很脆：改一行实现就可能红。W1 后将断言转向**函数名与 DOM id**，少碰具体语句。
 2. IDEA 的缓存可能比磁盘旧（本次已踩到）：改 `index.html` 前先用磁盘读确认。
-3. `manual_web_check.py` 是 legacy 页面手工 Playwright 脚本；Vue 使用 `manual_vue_web_check.py`，同样不进 CI，
-   两者都不能替代真实公网/手机验收。
+3. `manual_vue_web_check.py` 不进 CI，不能替代真实公网/手机验收。
 4. Service Worker 缓存：每次前端改动必须同时改 `sw.js` 版本和注册 `?v=`，否则手机拿旧缓存。
 5. Cloudflare 仍需确认 `/api/agent/*/events` 的 Cache Bypass Rule，避免公网 SSE 被缓存或缓冲。

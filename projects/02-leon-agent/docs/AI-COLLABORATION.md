@@ -23,9 +23,8 @@ Never commit `.env`, API tokens, SQLite databases, generated images, caches, or 
 
 - CLI: `src/leon_agent/cli.py`
 - Gateway: `src/leon_agent/gateway/app.py`
-- Legacy Web client (kept as the safe fallback): `src/leon_agent/web/index.html`
-- Vue migration source: `web/` (`src/api`, `src/stores`, `src/views`, `src/components`)
-- Service Worker: legacy `src/leon_agent/web/sw.js`; Vue `web/public/sw.js`
+- Canonical Web client: `web/` (`src/api`, `src/stores`, `src/views`, `src/components`)
+- Service Worker: `web/public/sw.js`
 - Leon runtime config: `src/leon_agent/config.py`
 - Agent system prompt composition: `src/leon_agent/agent.py`
 - Volink TTS client: `src/leon_agent/voice_client.py`
@@ -42,10 +41,9 @@ The read-only global latest-image backend lives in the separate ComfyUI reposito
 - HTTP API: `GET /ios/image_gallery/recent?limit=<count>`
 - Compatibility API: `GET /ios/image_gallery/latest`
 
-During the Vue migration there are exactly two intentional trees: the legacy fallback under
-`src/leon_agent/web/` and the new source under `web/`. Do not create a third Web client tree.
-FastAPI serves the legacy tree by default; `LEON_WEB_CLIENT=vue` selects `web/dist/` only after
-the Vue build exists and the service is restarted.
+There is exactly one Web client tree: Vue under `web/`. The removed `src/leon_agent/web/` tree and
+`LEON_WEB_CLIENT` switch must not be reintroduced. FastAPI always serves `web/dist/`; run the Vite
+build before starting or testing the Gateway.
 
 ## Additional System Prompt Contract
 
@@ -220,6 +218,7 @@ Deliberately excluded:
 Run in this order:
 
 ```powershell
+npm --prefix projects/02-leon-agent/web run build
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\ruff.exe check .
 uv run leon --help
@@ -247,18 +246,17 @@ For Web changes also verify a mobile viewport with a real browser:
 - bubble copy/retry/edit/TTS actions work after rerendering
 - TTS shows loading/playing/idle states and preserves blocked iOS audio until unlock
 
-Historical baseline on 2026-08-15: `97 passed`, Ruff clean, and
-`tests/manual_web_check.py` `56/56` with system Chrome at `390x844` touch viewport.
-The browser suite covers restoring persisted chat history, newest-first task/gallery
-ordering, and the edge-to-edge fullscreen image viewer. The Service Worker cache is
-`leon-v17` for legacy and `leon-vue-v8` for Vue.
+Historical legacy browser coverage was retired when the single-file client was deleted. The
+canonical provider-free browser suite is `tests/manual_vue_web_check.py`; the Service Worker cache
+is `leon-vue-v9`.
 
 The LLM transport safety fix was validated separately with `101 passed`. Current Vue provider-free
 validation additionally includes `npm run typecheck`, `npm run build`, and `manual_vue_web_check.py`
 at `19/19` for both Vite preview and FastAPI Vue entry; these checks use fake API/SSE and do not prove
-real provider or mobile behavior. The Vue source still requires an explicit `LEON_WEB_CLIENT=vue`.
+real provider or mobile behavior. Vue is the only Web entry.
 The integrated CLI/Web baseline was most recently validated with explicit fake LLM environment values
-at `176 passed`, repository-level Ruff clean, and `uv run leon --help` successful.
+at `166 passed`, repository-level Ruff clean, and `uv run leon --help` successful. The lower count
+reflects removal of legacy-only HTML and selector tests, not lost Vue behavior coverage.
 
 ## Handoff Format
 

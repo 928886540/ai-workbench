@@ -1,4 +1,4 @@
-"""Static contracts for the opt-in Vue Web client.
+"""Static contracts for the canonical Vue Web client.
 
 The repository does not currently install Playwright (or a browser test runner) in
 the uv environment.  These checks therefore exercise the source-level contract
@@ -17,25 +17,26 @@ def _read(relative_path: str) -> str:
     return (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def test_vue_entry_is_explicit_opt_in_and_keeps_legacy_default() -> None:
+def test_vue_entry_is_the_only_web_client() -> None:
     config = _read("src/leon_agent/config.py")
     gateway = _read("src/leon_agent/gateway/app.py")
+    env_example = (PROJECT_ROOT.parents[1] / ".env.example").read_text(encoding="utf-8")
     entry = _read("web/index.html")
     vite = _read("web/vite.config.ts")
     main = _read("web/src/main.ts")
     service_worker = _read("web/public/sw.js")
 
-    assert 'Literal["legacy", "vue"]' in config
-    assert 'web_client: Literal["legacy", "vue"] = Field(default="legacy"' in config
-    assert 'if selected == "legacy":' in gateway
-    assert 'if selected == "vue":' in gateway
-    assert "LEON_WEB_CLIENT=vue requires a built Vue client" in gateway
+    assert "LEON_WEB_CLIENT" not in config
+    assert "LEON_WEB_CLIENT" not in env_example
+    assert "_LEGACY_WEB_DIR" not in gateway
+    assert "Vue client build required at" in gateway
+    assert "_WEB_DIR: Path = _resolve_web_dir()" in gateway
     assert 'app.mount("/", StaticFiles(directory=_WEB_DIR, html=True)' in gateway
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-8"' in main
-    assert "leon-vue-v8" in service_worker
+    assert 'register("/sw.js?v=vue-9"' in main
+    assert "leon-vue-v9" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:

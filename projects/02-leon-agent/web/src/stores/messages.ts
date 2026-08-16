@@ -39,7 +39,7 @@ export interface ChatMessage {
 }
 
 // W2 keeps one reactive message source so the later component migration does not
-// have to recreate the legacy DOM state machine.
+// have to recreate the old DOM state machine.
 export const messages = ref<ChatMessage[]>([]);
 export const messageIndex = computed(
   () => new Map(messages.value.map((message) => [message.id, message])),
