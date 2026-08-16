@@ -100,6 +100,10 @@ def test_sensitive_paths_are_hidden_and_blocked(tmp_path: Path) -> None:
         result = service.read_file("root", path)
         assert result["error_code"] == "blocked_path"
 
+    search = service.search("secret", root_id="root")
+    assert search["ok"] is True
+    assert search["matches"] == []
+
 
 def test_binary_signatures_and_private_key_markers_are_blocked(tmp_path: Path) -> None:
     (tmp_path / "renamed-archive.txt").write_bytes(b"PK\x03\x04payload")

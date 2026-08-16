@@ -151,6 +151,29 @@ def test_apply_config_file_removes_ambient_managed_key_when_omitted(
     assert config_file.os.environ["TAVILY_API_KEY"] == "ambient-key"
 
 
+def test_apply_config_file_clears_values_omitted_by_a_reloaded_user_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = tmp_path / "first.toml"
+    second = tmp_path / "second.toml"
+    first.write_text(
+        CODEX_FIXTURE + '\n[leon.env]\nTAVILY_API_KEY = "first-key"\n',
+        encoding="utf-8",
+    )
+    second.write_text(CODEX_FIXTURE + "\n[leon.env]\n", encoding="utf-8")
+    monkeypatch.setenv("TAVILY_API_KEY", "ambient-key")
+
+    config_file.apply_config_file(first)
+    assert config_file.os.environ["TAVILY_API_KEY"] == "first-key"
+
+    config_file.apply_config_file(second)
+    assert "TAVILY_API_KEY" not in config_file.os.environ
+
+    _clear_applied_config(tmp_path)
+    assert config_file.os.environ["TAVILY_API_KEY"] == "ambient-key"
+
+
 def test_initialize_config_copies_provider_and_migrates_env_without_echoing_secrets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
