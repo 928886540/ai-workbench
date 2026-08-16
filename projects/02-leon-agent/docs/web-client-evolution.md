@@ -242,12 +242,12 @@ SSE 回放窗口是进程内的最近 100 条，服务重启后不提供历史�
 | --- | --- | --- |
 | **W1** | `messages[]` + `renderMessage` 重构，行为不变（已完成） | 无 |
 | **W2** | 气泡工具栏：复制 / 真重试 / 编辑 / 朗读 / 耗时（已完成） | W1 |
-| **W3** | 聊天化视觉 + CSS 变量主题 | W1 |
+| **W3** | 聊天化视觉 + CSS 变量主题（已完成；单行顶栏为用户后续指定，覆盖原双行设计） | W1 |
 | **W4** | 网关补 `model` / `elapsed_ms` / `usage`，tokens 上屏（已完成） | W2 |
 | **W5** | 语音：TTS 朗读（已完成）→ ASR 输入（已完成，需配置 `LEON_ASR_*`） | ASR API |
 | **W6** | Vue 迁移：聊天、任务、图库、设置、Agent Timeline（已完成） | W1-W5 |
 | **W7** | 模式补全与 `voice.ready` 事件（已完成） | W6 |
-| **W8** | provider-free 浏览器回归（Vite/FastAPI 19/19） | W6-W7 |
+| **W8** | provider-free 浏览器回归（Vite/FastAPI 各 26/26） | W6-W7 |
 | **W9** | 真实 Gateway/Cloudflare/手机验收并收口上线验证 | W8 |
 
 每个阶段单独一个 commit，Vue 契约/浏览器 smoke 同步补断言，`sw.js` 缓存版本号递增。
