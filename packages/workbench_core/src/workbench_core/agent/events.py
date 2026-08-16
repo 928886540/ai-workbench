@@ -29,3 +29,5 @@ class AgentResult:
     steps: list[ToolStep] = field(default_factory=list)
     turns: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
+    model: str | None = None
+    usage: dict[str, int] | None = None

@@ -61,6 +61,13 @@ class LeonSettings(BaseSettings):
     voice_clip_ttl_seconds: float = Field(default=3600.0, alias="LEON_VOICE_CLIP_TTL_SECONDS")
     voice_clip_max_count: int = Field(default=200, alias="LEON_VOICE_CLIP_MAX_COUNT")
 
+    # ASR (speech-to-text). OpenAI-compatible /audio/transcriptions endpoint;
+    # the token stays server-side exactly like the Volink key.
+    asr_base_url: str | None = Field(default=None, alias="LEON_ASR_BASE_URL")
+    asr_token: SecretStr | None = Field(default=None, alias="LEON_ASR_TOKEN")
+    asr_model: str = Field(default="whisper-1", alias="LEON_ASR_MODEL")
+    asr_max_bytes: int = Field(default=15 * 1024 * 1024, alias="LEON_ASR_MAX_BYTES")
+
     @field_validator("backend_url", "public_image_base_url")
     @classmethod
     def normalize_base_url(cls, value: str) -> str:
@@ -84,6 +91,15 @@ class LeonSettings(BaseSettings):
     def active_public_image_base_url(self) -> str:
         """Base URL used to build image links the user can actually open."""
         return self.public_image_base_url or self.backend_url
+
+    @property
+    def asr_enabled(self) -> bool:
+        return bool(
+            self.asr_base_url
+            and self.asr_base_url.strip()
+            and self.asr_token
+            and self.asr_token.get_secret_value().strip()
+        )
 
     def read_additional_system_prompt(self) -> str | None:
         """Read the optional UTF-8 text appended to Leon's system prompt."""

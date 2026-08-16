@@ -6,6 +6,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from workbench_core.agent import AgentResult, ToolStep
@@ -71,6 +72,8 @@ class SessionStore:
                 connection.execute("ALTER TABLE sessions ADD COLUMN llm_provider TEXT")
             if "llm_model" not in session_columns:
                 connection.execute("ALTER TABLE sessions ADD COLUMN llm_model TEXT")
+            if "llm_base_url" not in session_columns:
+                connection.execute("ALTER TABLE sessions ADD COLUMN llm_base_url TEXT")
 
     def create_session(self) -> str:
         session_id = uuid4().hex
@@ -89,6 +92,55 @@ class SessionStore:
                 (session_id,),
             ).fetchone()
         return row is not None
+
+    def get_provider_pin(self, session_id: str) -> tuple[str, str] | None:
+        """Return the persisted (provider scope, base URL) pin for a session."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT llm_provider, llm_base_url FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        scope = str(row["llm_provider"] or "").strip()
+        base_url = str(row["llm_base_url"] or "").strip()
+        if not scope or not base_url:
+            return None
+        return scope, base_url
+
+    def set_provider_pin(
+        self,
+        session_id: str,
+        *,
+        scope: str,
+        base_url: str,
+    ) -> None:
+        """Persist provider identity + endpoint metadata; the API key is never stored."""
+        normalized_scope = scope.strip()
+        normalized_base_url = base_url.strip()
+        if not normalized_scope or not normalized_base_url:
+            raise ValueError("provider pin requires a scope and a base URL")
+        now = int(time.time() * 1000)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT llm_provider FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Session not found: {session_id}")
+            existing = str(row["llm_provider"] or "").strip()
+            if existing and existing != normalized_scope:
+                raise ValueError(
+                    "Refusing to move a pinned session to a different provider"
+                )
+            connection.execute(
+                """
+                UPDATE sessions
+                SET llm_provider = ?, llm_base_url = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (normalized_scope, normalized_base_url, now, session_id),
+            )
 
     def get_model_selection(self, session_id: str) -> tuple[str, str] | None:
         with self._connect() as connection:
@@ -138,13 +190,19 @@ class SessionStore:
                 (now, session_id),
             )
 
-    def load_messages(self, session_id: str, *, limit: int = 30) -> list[dict[str, str]]:
+    def load_messages(
+        self,
+        session_id: str,
+        *,
+        limit: int = 30,
+        include_created_at: bool = False,
+    ) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, role, content
+                SELECT id, role, content, created_at
                 FROM (
-                    SELECT id, role, content
+                    SELECT id, role, content, created_at
                     FROM messages
                     WHERE session_id = ? AND role IN ('user', 'assistant')
                     ORDER BY id DESC
@@ -158,7 +216,7 @@ class SessionStore:
         # Failed CLI turns used to be persisted as assistant messages. Exclude
         # those old pairs so a transport error/request id cannot be replayed as
         # conversation context after the user switches models.
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         index = 0
         while index < len(rows):
             row = rows[index]
@@ -176,7 +234,10 @@ class SessionStore:
             if row["role"] == "user" and next_is_error:
                 index += 2
                 continue
-            messages.append({"role": row["role"], "content": row["content"]})
+            message: dict[str, Any] = {"role": row["role"], "content": row["content"]}
+            if include_created_at and row["created_at"] is not None:
+                message["created_at"] = int(row["created_at"])
+            messages.append(message)
             index += 1
         return messages
 

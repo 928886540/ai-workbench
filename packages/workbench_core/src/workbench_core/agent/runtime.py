@@ -195,6 +195,19 @@ class AgentRuntime:
         ]
         steps: list[ToolStep] = []
         current_turn = 1
+        usage_totals: dict[str, int] = {}
+        served_model: str | None = None
+
+        def accumulate_usage(response: ChatTurn) -> None:
+            nonlocal served_model
+            if response.usage:
+                for key, value in response.usage.items():
+                    usage_totals[key] = usage_totals.get(key, 0) + value
+            if response.model:
+                served_model = response.model
+
+        def usage_snapshot() -> dict[str, int] | None:
+            return dict(usage_totals) if usage_totals else None
 
         try:
             self._check_cancelled(cancel_event)
@@ -208,6 +221,7 @@ class AgentRuntime:
                     temperature=self.temperature,
                     cancel_event=cancel_event,
                 )
+                accumulate_usage(response)
 
                 if response.has_tool_calls:
                     messages.append(response.raw_message)
@@ -272,6 +286,8 @@ class AgentRuntime:
                             steps=steps,
                             turns=turn,
                             messages=messages,
+                            model=served_model,
+                            usage=usage_snapshot(),
                         )
                     self._check_cancelled(cancel_event)
                     continue
@@ -283,7 +299,14 @@ class AgentRuntime:
                 self._check_cancelled(cancel_event)
                 self._emit(AgentEvent(kind="completed", turn=turn, content=answer))
                 self._check_cancelled(cancel_event)
-                return AgentResult(answer=answer, steps=steps, turns=turn, messages=messages)
+                return AgentResult(
+                    answer=answer,
+                    steps=steps,
+                    turns=turn,
+                    messages=messages,
+                    model=served_model,
+                    usage=usage_snapshot(),
+                )
 
             self._check_cancelled(cancel_event)
             messages.append({"role": "user", "content": self.closing_prompt})
@@ -302,6 +325,8 @@ class AgentRuntime:
                 steps=steps,
                 turns=self.max_turns,
                 messages=messages,
+                model=served_model,
+                usage=usage_snapshot(),
             )
         except AgentCancelled:
             self._emit(AgentEvent(kind="cancelled", turn=current_turn))

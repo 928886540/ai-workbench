@@ -41,9 +41,14 @@ JOK_VOICE_ID = "jok-voice-unused"
 
 FAKE_BROWSER_SCRIPT = r"""
 (() => {
-  localStorage.removeItem("leon_token");
-  localStorage.removeItem("leon_session");
-  localStorage.removeItem("leon_voice_prefs");
+  // Only scrub storage on first boot; reloads keep token/session so the
+  // restore path (GET /sessions/:id with created_at) can be exercised.
+  if (!sessionStorage.getItem("leon-smoke-booted")) {
+    sessionStorage.setItem("leon-smoke-booted", "1");
+    localStorage.removeItem("leon_token");
+    localStorage.removeItem("leon_session");
+    localStorage.removeItem("leon_voice_prefs");
+  }
 
   // EventSource is intentionally deterministic. Tests inject protocol events
   // and connection failures without opening a real provider connection.
@@ -110,7 +115,9 @@ FAKE_BROWSER_SCRIPT = r"""
 
 
 def _json_body(request: Any) -> dict[str, Any]:
-    raw = request.post_data or "{}"
+    # Multipart audio uploads are binary; post_data would raise on decode.
+    buffer = request.post_data_buffer
+    raw = buffer.decode("utf-8", errors="ignore") if buffer else "{}"
     try:
         payload = json.loads(raw)
     except (TypeError, ValueError):
@@ -158,7 +165,26 @@ class FakeGateway:
 
         session_prefix = f"/api/agent/sessions/{FAKE_SESSION_ID}"
         if path == session_prefix and method == "GET":
-            _json_response(route, {"session_id": FAKE_SESSION_ID, "messages": []})
+            _json_response(
+                route,
+                {
+                    "session_id": FAKE_SESSION_ID,
+                    "messages": [
+                        {"role": "user", "content": "历史消息一", "created_at": 1_000},
+                        {
+                            "role": "assistant",
+                            "content": "历史回复一",
+                            "created_at": 1_000_000,
+                        },
+                    ],
+                },
+            )
+            return
+        if path == "/api/agent/asr/status" and method == "GET":
+            _json_response(route, {"enabled": True})
+            return
+        if path == "/api/agent/asr" and method == "POST":
+            _json_response(route, {"text": "这是语音识别出来的文字"})
             return
         if path == f"{session_prefix}/image-state" and method == "GET":
             _json_response(
@@ -452,7 +478,13 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
         chrome_path = next((str(path) for path in candidates if path.is_file()), "")
 
     with sync_playwright() as playwright:
-        launch_options: dict[str, Any] = {"headless": not args.headed}
+        launch_options: dict[str, Any] = {
+            "headless": not args.headed,
+            "args": [
+                "--use-fake-ui-for-media-stream",
+                "--use-fake-device-for-media-stream",
+            ],
+        }
         if chrome_path:
             launch_options["executable_path"] = chrome_path
         try:
@@ -472,6 +504,7 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             has_touch=True,
             is_mobile=True,
             service_workers="block",
+            permissions=["microphone"],
         )
         page = context.new_page()
         page.set_default_timeout(args.timeout)
@@ -529,6 +562,59 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             )
             timeline_panel.get_by_role("button", name="关闭时间线").click()
 
+            # Reload with token+session intact to exercise the restore path:
+            # GET /sessions/:id returns history with created_at, and gaps over
+            # 10 minutes must render centered time dividers.
+            page.reload(wait_until="domcontentloaded")
+            page.get_by_text("已连接").wait_for(state="visible")
+            page.locator(".message-row", has_text="历史消息一").wait_for(state="visible")
+            time_dividers = page.locator(".time-divider")
+            check(
+                "超过 10 分钟间隔的历史消息插入时间分割线",
+                time_dividers.count() >= 2,
+                f"dividers={time_dividers.count()}",
+            )
+
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                [
+                    "assistant.completed",
+                    {
+                        "content": "带用量的回复",
+                        "elapsed_ms": 4210,
+                        "model": "fake-model-x",
+                        "usage": {"input_tokens": 1234, "output_tokens": 567},
+                    },
+                ],
+            )
+            meta_row = page.locator(".message-row", has_text="带用量的回复").locator(
+                ".message-toolbar"
+            )
+            meta_text = meta_row.inner_text()
+            check(
+                "assistant.completed 的 tokens 与模型名上屏",
+                "↑1.2k" in meta_text and "↓567" in meta_text and "fake-model-x" in meta_text,
+                meta_text.replace("\n", " "),
+            )
+
+            mic_button = page.get_by_role("button", name="语音输入")
+            mic_button.wait_for(state="visible")
+            mic_button.click()
+            page.get_by_role("button", name="停止录音并识别").wait_for(state="visible")
+            page.wait_for_timeout(400)
+            page.get_by_role("button", name="停止录音并识别").click()
+            composer = page.locator("textarea[placeholder='有什么想聊的？']")
+            page.wait_for_function(
+                "() => document.querySelector(\"textarea[placeholder='有什么想聊的？']\").value"
+                ".includes('这是语音识别出来的文字')"
+            )
+            check(
+                "ASR 录音上传后回填输入框且不自动发送",
+                "这是语音识别出来的文字" in composer.input_value(),
+                composer.input_value(),
+            )
+            composer.fill("")
+
             composer = page.locator("textarea[placeholder='有什么想聊的？']")
             composer.fill("/nsfw --model ")
             suggestions = page.locator(".mode-suggestions .mode-suggestion")
@@ -562,11 +648,25 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 f"展开={expanded_height}px，清空={collapsed_height}px",
             )
 
+            agent_rows = page.locator(".message-row[data-role='agent']")
+            agent_count_before = agent_rows.count()
             composer.fill("普通 provider-free 消息")
             composer.press("Enter")
+            page.wait_for_function(
+                "([expected, before]) => document.querySelectorAll("
+                "\".message-row[data-role='agent']\").length > before && Array.from("
+                "document.querySelectorAll("
+                "\".message-row[data-role='agent'] .message-content\""
+                ")).some((node) => node.textContent.includes(expected))",
+                arg=["本地回复", agent_count_before],
+            )
             agent_bubble = page.locator(".message-row[data-role='agent'] .message-content").last
             agent_bubble.wait_for(state="visible")
-            check("普通消息发送并显示助手回复", "本地回复" in agent_bubble.inner_text())
+            check(
+                "普通消息发送并显示助手回复",
+                "本地回复" in agent_bubble.inner_text(),
+                agent_bubble.inner_text()[:80],
+            )
             message_calls = [
                 call
                 for call in gateway.calls

@@ -72,11 +72,13 @@ editing TOML does not affect that session while the same Gateway process remains
 clears the browser session id; the next login creates a new Leon session and captures the then-current
 provider. Model-catalog refresh only retries `/models` against the in-memory pinned provider.
 
-This pin is not restart-safe yet. SQLite currently persists only provider scope and model; after a
-Gateway restart an old Web session can recapture the currently active provider. The next backend task
-must persist provider identity and the required base URL metadata without storing an API key, resolve
-the secret from the current secure configuration by identity, and fail explicitly when the pinned
-provider no longer matches or exists. Never silently move an old session to a different provider.
+The pin is restart-safe since the `llm_base_url` column landed: session creation persists the provider
+scope plus base URL (never the API key) in SQLite. On a Gateway restart the first request for an old
+session re-resolves the secret by identity — a matching current provider is used directly, a `ccs:*`
+pin is re-resolved by provider name from the CC Switch DB (and fails with HTTP 409 when the provider
+is gone or its base URL changed), and `toml:`/`env` pins that no longer match fail explicitly with the
+same 409 instead of silently recapturing the active provider. Old sessions created before the pin
+column existed still capture the current provider on first touch (no persisted identity to honor).
 
 ## Web Event Contract
 
@@ -216,6 +218,21 @@ Mobile-compact pass (`feat/leon-web-mobile-compact`, SW cache `leon-vue-v10`):
 - Full-screen viewer spans the viewport (`100vw`/`100dvh`, cover) with a circular close button
   seated inside the top safe area, shared by chat and gallery
 - Icon system unified on `@lucide/vue` (no hand-drawn SVG buttons)
+
+W4/W5 completion pass (SW cache `leon-vue-v11`):
+
+- `assistant.completed` now carries authoritative `model`, `elapsed_ms`, and
+  `usage: {input_tokens, output_tokens}` captured from the OpenAI-compatible provider response and
+  accumulated across tool turns; the agent bubble toolbar renders elapsed, `↑in/↓out` tokens, and the
+  served model name, each omitted when the value is missing (no fake `0 tokens`)
+- ASR input: `POST /api/agent/asr` (multipart audio, OpenAI-compatible `/audio/transcriptions`
+  upstream) plus `GET /api/agent/asr/status`; the composer mic records via `MediaRecorder`, uploads,
+  and fills the textarea without auto-sending. Requires `LEON_ASR_BASE_URL`/`LEON_ASR_TOKEN`; the mic
+  stays hidden when unconfigured
+- Message history restore (`GET /sessions/:id`) includes `created_at`; gaps over 10 minutes render a
+  centered time divider (`load_messages(include_created_at=True)` keeps LLM history payload clean)
+- Theme base: core palette extracted to CSS variables in `:root` (`--bg/--surface/--text/--primary/
+  --line/--danger` …) to prepare for dark mode or custom wallpapers
 
 Deliberately excluded:
 

@@ -27,11 +27,12 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from workbench_core.agent import AgentResult, ToolStep
+from workbench_core.ccs import resolve_provider
 from workbench_core.config import Settings, get_settings, reset_settings_cache
 from workbench_core.llm import LLMClient
 
@@ -184,6 +185,9 @@ class ModelSelectionRequest(BaseModel):
 @dataclass
 class SessionLLMSnapshot:
     settings: Settings
+    scope: str
+    profile: str
+    base_url: str
     models: list[str] | None = None
     catalog_error: str | None = None
 
@@ -194,14 +198,79 @@ def _capture_llm_snapshot() -> SessionLLMSnapshot:
     settings = get_settings()
     # Accessing profile loads and caches the complete TOML provider, including
     # its base URL, API key, and default model, inside this Settings instance.
-    _ = (settings.profile, settings.active_base_url, settings.active_model)
-    return SessionLLMSnapshot(settings=settings)
+    profile = settings.profile
+    base_url = settings.active_base_url
+    _ = (profile, base_url, settings.active_model)
+    return SessionLLMSnapshot(
+        settings=settings,
+        scope=model_provider_scope(profile=profile, base_url=base_url),
+        profile=profile,
+        base_url=base_url,
+    )
+
+
+class ProviderPinLost(HTTPException):
+    """The session's pinned provider cannot be resolved; never recapture silently."""
+
+    def __init__(self, scope: str, reason: str) -> None:
+        super().__init__(
+            status_code=409,
+            detail=(
+                f"会话钉选的 provider（{scope}）已不可用：{reason}。"
+                "请退出登录后重新进入，新会话会捕获当前 provider。"
+            ),
+        )
+
+
+def _resolve_pinned_snapshot(pin: tuple[str, str]) -> SessionLLMSnapshot:
+    """Rebuild a snapshot from the persisted pin, resolving the secret by identity."""
+    pinned_scope, pinned_base_url = pin
+    current = _capture_llm_snapshot()
+    if current.scope == pinned_scope:
+        return current
+
+    profile = pinned_scope.split("|", 1)[0]
+    if profile.startswith("ccs:"):
+        name = profile[len("ccs:") :]
+        try:
+            provider = resolve_provider(
+                name,
+                app_type=current.settings.ccs_app,
+                db_path=current.settings.ccs_db_path,
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the client as 409
+            raise ProviderPinLost(
+                pinned_scope, f"CC Switch 中已找不到该 provider（{exc}）"
+            ) from exc
+        if provider.base_url.strip().rstrip("/") != pinned_base_url.strip().rstrip("/"):
+            raise ProviderPinLost(
+                pinned_scope,
+                f"该 provider 的 base URL 已从钉选值变更为 {provider.base_url}",
+            )
+        settings = Settings(
+            LLM_SOURCE="env",
+            LLM_BASE_URL=provider.base_url,
+            LLM_API_KEY=SecretStr(provider.api_key),
+            LLM_MODEL=provider.model,
+        )
+        return SessionLLMSnapshot(
+            settings=settings,
+            scope=pinned_scope,
+            profile=profile,
+            base_url=pinned_base_url,
+        )
+    raise ProviderPinLost(
+        pinned_scope,
+        "当前来源（toml/env）无法按名称解析非活跃 provider",
+    )
 
 
 def _get_llm_snapshot(session_id: str) -> SessionLLMSnapshot:
     snapshot = _llm_snapshots.get(session_id)
     if snapshot is None:
-        snapshot = _capture_llm_snapshot()
+        store = get_store()
+        pin = store.get_provider_pin(session_id)
+        snapshot = _resolve_pinned_snapshot(pin) if pin else _capture_llm_snapshot()
         _llm_snapshots[session_id] = snapshot
     return snapshot
 
@@ -225,7 +294,7 @@ async def _model_selection_response(
     snapshot = _get_llm_snapshot(session_id)
     settings = snapshot.settings
     selection = store.get_model_selection(session_id)
-    scope = model_provider_scope(profile=settings.profile, base_url=settings.active_base_url)
+    scope = snapshot.scope
     if selection and selection[0] != scope:
         store.set_model_selection(session_id, provider=None, model=None)
         selection = None
@@ -242,9 +311,9 @@ async def _model_selection_response(
         if model_id and model_id not in models:
             models.append(model_id)
     return {
-        "provider": settings.profile,
+        "provider": snapshot.profile,
         "provider_scope": scope,
-        "base_url": settings.active_base_url,
+        "base_url": snapshot.base_url,
         "default_model": settings.active_model,
         "selected_model": selected_model,
         "active_model": selected_model or settings.active_model,
@@ -299,13 +368,8 @@ def _session_image_completion_factory(
         snapshot = _get_llm_snapshot(session_id)
         selection = store.get_model_selection(session_id)
         model_override = None
-        if selection:
-            scope = model_provider_scope(
-                profile=snapshot.settings.profile,
-                base_url=snapshot.settings.active_base_url,
-            )
-            if selection[0] == scope:
-                model_override = selection[1]
+        if selection and selection[0] == snapshot.scope:
+            model_override = selection[1]
         return _llm_image_completion_message(
             LLMClient(snapshot.settings, model_override=model_override), count
         )
@@ -499,7 +563,13 @@ async def get_image_modes(config: LeonSettings = Depends(get_config)):
 )
 async def create_session(store: SessionStore = Depends(get_store)):
     session_id = store.create_session()
-    _llm_snapshots[session_id] = _capture_llm_snapshot()
+    snapshot = _capture_llm_snapshot()
+    _llm_snapshots[session_id] = snapshot
+    # Restart-safe pin: identity + endpoint only; the secret is re-resolved
+    # from the live configuration on recovery, never stored here.
+    store.set_provider_pin(
+        session_id, scope=snapshot.scope, base_url=snapshot.base_url
+    )
     return CreateSessionResponse(session_id=session_id, created_at=int(time.time() * 1000))
 
 
@@ -516,7 +586,10 @@ async def list_sessions(store: SessionStore = Depends(get_store)):
 async def get_session(session_id: str, store: SessionStore = Depends(get_store)):
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    return {"session_id": session_id, "messages": store.load_messages(session_id, limit=100)}
+    return {
+        "session_id": session_id,
+        "messages": store.load_messages(session_id, limit=100, include_created_at=True),
+    }
 
 
 @app.get(
@@ -527,7 +600,7 @@ async def get_session(session_id: str, store: SessionStore = Depends(get_store))
 async def get_messages(session_id: str, store: SessionStore = Depends(get_store)):
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    return {"messages": store.load_messages(session_id, limit=100)}
+    return {"messages": store.load_messages(session_id, limit=100, include_created_at=True)}
 
 
 @app.get(
@@ -636,11 +709,10 @@ async def set_session_model(
         raise HTTPException(status_code=404, detail="Session not found")
 
     model = (body.model or "").strip()
-    settings = _get_llm_snapshot(session_id).settings
-    scope = model_provider_scope(profile=settings.profile, base_url=settings.active_base_url)
+    snapshot = _get_llm_snapshot(session_id)
     store.set_model_selection(
         session_id,
-        provider=scope if model else None,
+        provider=snapshot.scope if model else None,
         model=model or None,
     )
     return await _model_selection_response(store, session_id)
@@ -844,12 +916,10 @@ async def send_message(
             )
             return MessageResponse(session_id=session_id, answer=answer, ok=ok)
 
-        llm_settings = _get_llm_snapshot(session_id).settings
+        snapshot = _get_llm_snapshot(session_id)
+        llm_settings = snapshot.settings
         model_selection = store.get_model_selection(session_id)
-        scope = model_provider_scope(
-            profile=llm_settings.profile,
-            base_url=llm_settings.active_base_url,
-        )
+        scope = snapshot.scope
         if model_selection and model_selection[0] != scope:
             store.set_model_selection(session_id, provider=None, model=None)
             model_selection = None
@@ -868,16 +938,24 @@ async def send_message(
             additional_system_prompt=config.read_additional_system_prompt(),
         )
 
+        started = time.monotonic()
         result = await asyncio.to_thread(agent.run, body.content, history=history)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
 
         store.record_result(session_id, result)
         store.add_message(session_id, "assistant", result.answer)
 
+        completed_data: dict[str, Any] = {
+            "content": result.answer,
+            "elapsed_ms": elapsed_ms,
+            "model": result.model,
+            "usage": result.usage,
+        }
         bus.publish(
             LeonEvent(
                 event="assistant.completed",
                 session_id=session_id,
-                data={"content": result.answer},
+                data=completed_data,
             )
         )
         return MessageResponse(session_id=session_id, answer=result.answer, ok=True)
@@ -1050,6 +1128,54 @@ async def synthesize_speech(
         media_type="audio/mpeg",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.get("/api/agent/asr/status", tags=["voice"], dependencies=[Depends(verify_token)])
+async def get_asr_status(config: LeonSettings = Depends(get_config)):
+    return {"enabled": config.asr_enabled}
+
+
+@app.post("/api/agent/asr", tags=["voice"], dependencies=[Depends(verify_token)])
+async def transcribe_audio(
+    audio: UploadFile = File(...),
+    config: LeonSettings = Depends(get_config),
+):
+    if not config.asr_enabled:
+        raise HTTPException(
+            status_code=503, detail="ASR 未配置（LEON_ASR_BASE_URL / LEON_ASR_TOKEN）"
+        )
+    payload = await audio.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="音频内容为空")
+    if len(payload) > config.asr_max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"音频过大：{len(payload)} 字节（上限 {config.asr_max_bytes}）",
+        )
+    token = config.asr_token.get_secret_value().strip() if config.asr_token else ""
+    filename = audio.filename or "audio.webm"
+    try:
+        async with httpx.AsyncClient(timeout=config.http_timeout_seconds) as client:
+            upstream = await client.post(
+                f"{config.asr_base_url.strip().rstrip('/')}/audio/transcriptions",
+                headers={"Authorization": f"Bearer {token}"},
+                files={"file": (filename, payload, audio.content_type or "audio/webm")},
+                data={"model": config.asr_model},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"ASR 服务请求失败：{exc}") from exc
+    if upstream.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"ASR 服务返回 {upstream.status_code}：{upstream.text[:300]}",
+        )
+    try:
+        text = str(upstream.json().get("text") or "").strip()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="ASR 服务返回了非 JSON 响应") from exc
+    if not text:
+        raise HTTPException(status_code=502, detail="ASR 未识别出任何文字")
+    return {"text": text}
 
 
 @app.get("/api/voice/clips/{clip_id}", tags=["voice"])

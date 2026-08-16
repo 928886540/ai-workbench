@@ -8,9 +8,10 @@
 > 当前实施（2026-08-16）：Vue 3 + Vite 已覆盖聊天、任务、图库、设置视图和 Agent Timeline；助手气泡支持复制 /
 > 真重试 / 编辑 / 朗读，Volink 提供 4 个模型和 561 个中文音色，SSE `voice.ready` 会追加可播放
 > 语音气泡；聊天输入已支持 `/nsfw --model` 模式补全、自动增高、上滚保留和错误详情折叠，
-> Agent Timeline 可查看最近 100 条 SSE 决策事件。ASR、tokens 上屏、真实生图/TTS 和手机实机验收尚未完成；
+> Agent Timeline 可查看最近 100 条 SSE 决策事件。ASR 输入、tokens/model 上屏、provider 钉选重启持久化、
+> 时间分割线和 CSS 变量主题底座已实现（ASR 需配置 `LEON_ASR_*` 后方可用）；真实生图/TTS 与手机实机验收仍待进行；
 > SSE 已加入进程内 `id` / `Last-Event-ID` 补发和 stale-token 登录恢复；provider-free Playwright smoke
-> 已在 Vite/FastAPI 各 19/19 通过。
+> 已在 Vite/FastAPI 各 26/26 通过。
 > Vue 已成为唯一入口，`LEON_WEB_CLIENT` 开关已删除。
 
 ---
@@ -154,9 +155,9 @@ assert "/sw.js?v=12" in html
 
 ---
 
-## 5. 语音接入（TTS 已完成，ASR 预留）
+## 5. 语音接入（TTS 已完成，ASR 已实现）
 
-TTS 已按网关代理方案落地；ASR 仍按下述边界预留。
+TTS 已按网关代理方案落地；ASR 已实现网关代理端点，未配置环境变量时对前端隐藏。
 
 ### 5.1 输出（TTS，朗读）
 
@@ -215,7 +216,8 @@ Gateway 推送的音频元数据，播放器由前端单例管理。
 `tests/manual_vue_web_check.py` 的 provider-free Playwright smoke（Vite/FastAPI 各 19/19）。该脚本只拦截
 API，不证明真实 provider、Cloudflare 缓存规则或手机网络行为；本机/公网 SSE 已做只读首事件验收，
 Vue 已全面替换旧单文件客户端；Gateway 只托管 `web/dist/`，缺少构建产物时启动会明确失败。
-Gateway 当前不发送权威 `model`/`usage` 字段，Vue 只显示客户端观测耗时，不虚构 tokens 或实际响应模型。
+Gateway 自 W4 起在 `assistant.completed` 发送权威 `model` / `elapsed_ms` / `usage` 字段；取不到时为
+`null`，Vue 按「无值不渲染」规则降级为客户端观测耗时。
 Gateway 当前也没有真正发送 `assistant.delta`；Vue 保留兼容分支，真实回复仍以 `assistant.started` /
 `assistant.completed` 事件为主。
 SSE 回放窗口是进程内的最近 100 条，服务重启后不提供历史事件持久回放；页面刷新仍依赖 session/image-state
@@ -241,8 +243,8 @@ SSE 回放窗口是进程内的最近 100 条，服务重启后不提供历史�
 | **W1** | `messages[]` + `renderMessage` 重构，行为不变（已完成） | 无 |
 | **W2** | 气泡工具栏：复制 / 真重试 / 编辑 / 朗读 / 耗时（已完成） | W1 |
 | **W3** | 聊天化视觉 + CSS 变量主题 | W1 |
-| **W4** | 网关补 `model` / `elapsed_ms` / `usage`，tokens 上屏 | W2 |
-| **W5** | 语音：TTS 朗读（已完成）→ ASR 输入（待做） | ASR API |
+| **W4** | 网关补 `model` / `elapsed_ms` / `usage`，tokens 上屏（已完成） | W2 |
+| **W5** | 语音：TTS 朗读（已完成）→ ASR 输入（已完成，需配置 `LEON_ASR_*`） | ASR API |
 | **W6** | Vue 迁移：聊天、任务、图库、设置、Agent Timeline（已完成） | W1-W5 |
 | **W7** | 模式补全与 `voice.ready` 事件（已完成） | W6 |
 | **W8** | provider-free 浏览器回归（Vite/FastAPI 19/19） | W6-W7 |

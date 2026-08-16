@@ -31,6 +31,8 @@ class ChatTurn:
     content: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw_message: dict[str, Any] = field(default_factory=dict)
+    usage: dict[str, int] | None = None
+    model: str | None = None
 
     @property
     def has_tool_calls(self) -> bool:
@@ -152,10 +154,20 @@ class LLMClient:
         if raw_tool_calls:
             raw_message["tool_calls"] = raw_tool_calls
 
+        usage_obj = getattr(response, "usage", None)
+        usage: dict[str, int] | None = None
+        prompt_tokens = getattr(usage_obj, "prompt_tokens", None)
+        completion_tokens = getattr(usage_obj, "completion_tokens", None)
+        if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
+            usage = {"input_tokens": prompt_tokens, "output_tokens": completion_tokens}
+        served_model = str(getattr(response, "model", "") or "").strip() or None
+
         result = ChatTurn(
             content=message.content,
             tool_calls=tool_calls,
             raw_message=raw_message,
+            usage=usage,
+            model=served_model,
         )
         if cancel_event is not None and cancel_event.is_set():
             raise CancelledError("LLM request cancelled")

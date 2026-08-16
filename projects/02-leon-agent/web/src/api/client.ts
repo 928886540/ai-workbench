@@ -219,6 +219,41 @@ export class LeonApi {
     return source;
   }
 
+  async getAsrStatus(signal?: AbortSignal): Promise<{ enabled: boolean }> {
+    return this.request<{ enabled: boolean }>("/api/agent/asr/status", { signal });
+  }
+
+  async transcribeAudio(blob: Blob, signal?: AbortSignal): Promise<string> {
+    const headers = new Headers();
+    if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
+    const form = new FormData();
+    const type = blob.type || "audio/webm";
+    const extension = type.includes("mp4") ? "mp4" : "webm";
+    form.append("audio", blob, `speech.${extension}`);
+    const response = await fetch("/api/agent/asr", {
+      method: "POST",
+      headers,
+      body: form,
+      signal,
+    });
+    if (response.status === 401) {
+      this.logout();
+      throw new ApiError(401, "Token 已失效，请重新登录");
+    }
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const payload = (await response.json()) as { detail?: string };
+        detail = payload.detail || "";
+      } catch {
+        detail = await response.text();
+      }
+      throw new ApiError(response.status, detail);
+    }
+    const payload = (await response.json()) as { text?: string };
+    return (payload.text || "").trim();
+  }
+
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Content-Type", "application/json");

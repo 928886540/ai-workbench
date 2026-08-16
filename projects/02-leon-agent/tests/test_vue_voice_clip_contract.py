@@ -49,7 +49,8 @@ def test_chat_handles_voice_ready_and_delta_without_provider_calls() -> None:
         'const delta = asString(data.delta);',
         'message.status = "streaming";',
         "message.text += delta;",
-        'finishAssistant(asString(data.content) || pendingAssistant()?.text || "");',
+        'finishAssistant(\n        asString(data.content) || pendingAssistant()?.text || "",\n'
+        '        "done",\n        parseCompletedMeta(data),\n      );',
     ):
         assert fragment in chat, fragment
 

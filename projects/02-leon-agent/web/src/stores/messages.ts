@@ -28,6 +28,8 @@ export interface ChatMessage {
   audio?: VoiceClip;
   /** Alias retained for callers that refer to the payload as a voice clip. */
   voice?: VoiceClip;
+  /** Epoch ms when the message was sent/persisted; null when unknown. */
+  createdAt: number | null;
   meta: {
     model: string | null;
     startedAt: number | null;
@@ -57,6 +59,7 @@ export function makeMessage(
     text,
     status,
     images: [],
+    createdAt: now,
     meta: {
       model: null,
       startedAt: status === "pending" || status === "streaming" ? now : null,

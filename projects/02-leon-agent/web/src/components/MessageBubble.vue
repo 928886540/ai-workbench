@@ -67,6 +67,19 @@ function elapsedLabel(): string {
   return elapsed < 1000 ? `${elapsed}ms` : `${(elapsed / 1000).toFixed(1)}s`;
 }
 
+function formatTokenCount(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : `${value}`;
+}
+
+function tokensLabel(): string {
+  const { tokensIn, tokensOut } = props.message.meta;
+  if (tokensIn === null && tokensOut === null) return "";
+  const parts: string[] = [];
+  if (tokensIn !== null) parts.push(`↑${formatTokenCount(tokensIn)}`);
+  if (tokensOut !== null) parts.push(`↓${formatTokenCount(tokensOut)}`);
+  return parts.join(" ");
+}
+
 function voiceSizeLabel(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
   if (bytes < 1024) return `${Math.round(bytes)} B`;
@@ -248,6 +261,10 @@ onBeforeUnmount(() => {
           <Pencil class="toolbar-icon" :size="16" :stroke-width="2" aria-hidden="true" />
         </button>
         <span v-if="elapsedLabel()" class="message-elapsed">{{ elapsedLabel() }}</span>
+        <span v-if="tokensLabel()" class="message-elapsed">{{ tokensLabel() }}</span>
+        <span v-if="message.meta.model" class="message-elapsed message-model">{{
+          message.meta.model
+        }}</span>
       </div>
     </div>
   </article>

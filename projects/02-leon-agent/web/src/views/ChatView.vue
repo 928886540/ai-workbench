@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, History, LogOut, Send, X } from "@lucide/vue";
+import { ArrowDown, History, LoaderCircle, LogOut, Mic, Send, Square, X } from "@lucide/vue";
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
@@ -273,6 +273,91 @@ function selectModeSuggestion(item: ImageMode): void {
   });
 }
 
+const asrAvailable = ref(false);
+const asrState = ref<"idle" | "recording" | "uploading">("idle");
+const asrNotice = ref("");
+let asrRecorder: MediaRecorder | null = null;
+let asrChunks: BlobPart[] = [];
+let asrNoticeTimer: number | null = null;
+
+function showAsrNotice(message: string): void {
+  asrNotice.value = message;
+  if (asrNoticeTimer !== null) window.clearTimeout(asrNoticeTimer);
+  asrNoticeTimer = window.setTimeout(() => {
+    asrNotice.value = "";
+    asrNoticeTimer = null;
+  }, 4000);
+}
+
+async function probeAsrAvailability(): Promise<void> {
+  try {
+    asrAvailable.value = (await api.getAsrStatus()).enabled;
+  } catch {
+    asrAvailable.value = false;
+  }
+}
+
+function stopAsrRecording(): void {
+  if (asrRecorder && asrRecorder.state !== "inactive") asrRecorder.stop();
+  else asrState.value = "idle";
+}
+
+async function toggleVoiceInput(): Promise<void> {
+  if (asrState.value === "recording") {
+    stopAsrRecording();
+    return;
+  }
+  if (asrState.value !== "idle") return;
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    showAsrNotice("当前浏览器不支持语音录入");
+    return;
+  }
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (error) {
+    showAsrNotice(`麦克风不可用：${(error as Error).message || error}`);
+    return;
+  }
+  const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  asrChunks = [];
+  asrRecorder = recorder;
+  recorder.ondataavailable = (event) => {
+    if (event.data.size > 0) asrChunks.push(event.data);
+  };
+  recorder.onstop = () => {
+    stream.getTracks().forEach((track) => track.stop());
+    void submitAsrRecording(recorder);
+  };
+  asrState.value = "recording";
+  recorder.start();
+}
+
+async function submitAsrRecording(recorder: MediaRecorder): Promise<void> {
+  const blob = new Blob(asrChunks, { type: recorder.mimeType || "audio/webm" });
+  asrChunks = [];
+  if (asrRecorder === recorder) asrRecorder = null;
+  if (!blob.size) {
+    asrState.value = "idle";
+    return;
+  }
+  asrState.value = "uploading";
+  try {
+    const text = await api.transcribeAudio(blob);
+    if (text) {
+      draft.value = draft.value ? `${draft.value.trimEnd()} ${text}` : text;
+      await nextTick();
+      resizeComposer();
+      composerInput.value?.focus();
+    }
+  } catch (error) {
+    showAsrNotice(`语音识别失败：${(error as Error).message || error}`);
+  } finally {
+    asrState.value = "idle";
+  }
+}
+
 function resizeComposer(): void {
   const textarea = composerInput.value;
   if (!textarea) return;
@@ -504,13 +589,41 @@ function handleOnline(): void {
   if (!eventSource || eventSource.readyState === EventSource.CLOSED) connectEvents();
 }
 
-function appendHistory(history: Array<{ role: string; content: string }>): void {
+function appendHistory(
+  history: Array<{ role: string; content: string; created_at?: number }>,
+): void {
   clearMessages();
   for (const item of history) {
     if (item.role !== "user" && item.role !== "assistant") continue;
-    appendMessage(makeMessage(item.role === "assistant" ? "agent" : "user", item.content));
+    const message = appendMessage(
+      makeMessage(item.role === "assistant" ? "agent" : "user", item.content),
+    );
+    message.createdAt =
+      typeof item.created_at === "number" && item.created_at > 0 ? item.created_at : null;
   }
   scrollToLatest(true);
+}
+
+const TIME_DIVIDER_GAP_MS = 10 * 60 * 1000;
+
+function messageTimeLabel(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return sameDay ? clock : `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`;
+}
+
+function showTimeDivider(index: number): boolean {
+  const current = messages.value[index];
+  if (!current.createdAt) return false;
+  if (index === 0) return true;
+  const previous = messages.value[index - 1];
+  if (!previous.createdAt) return false;
+  return current.createdAt - previous.createdAt > TIME_DIVIDER_GAP_MS;
 }
 
 function pendingAssistant(): ChatMessage | null {
@@ -541,22 +654,61 @@ function maybeAutoplay(message: ChatMessage): void {
   });
 }
 
-function finishAssistant(content: string, status: "done" | "error" = "done"): void {
+interface CompletedMeta {
+  model?: string | null;
+  elapsedMs?: number | null;
+  tokensIn?: number | null;
+  tokensOut?: number | null;
+}
+
+function finishAssistant(
+  content: string,
+  status: "done" | "error" = "done",
+  serverMeta: CompletedMeta = {},
+): void {
   let completed = pendingAssistant();
   if (completed) {
     completed.text = content;
     completed.status = status;
     completed.meta.finishedAt = Date.now();
-    completed.meta.elapsedMs = completed.meta.startedAt
+    const clientElapsed = completed.meta.startedAt
       ? completed.meta.finishedAt - completed.meta.startedAt
       : null;
+    completed.meta.elapsedMs =
+      typeof serverMeta.elapsedMs === "number" && serverMeta.elapsedMs >= 0
+        ? serverMeta.elapsedMs
+        : clientElapsed;
   } else if (content) {
     completed = appendMessage(makeMessage("agent", content, status));
+    if (typeof serverMeta.elapsedMs === "number" && serverMeta.elapsedMs >= 0) {
+      completed.meta.elapsedMs = serverMeta.elapsedMs;
+    }
+  }
+  if (completed) {
+    if (serverMeta.model) completed.meta.model = serverMeta.model;
+    if (typeof serverMeta.tokensIn === "number") completed.meta.tokensIn = serverMeta.tokensIn;
+    if (typeof serverMeta.tokensOut === "number") completed.meta.tokensOut = serverMeta.tokensOut;
   }
   pendingAssistantId.value = null;
   taskStatus.value = "";
   if (completed) maybeAutoplay(completed);
   scrollToLatest();
+}
+
+function parseCompletedMeta(data: Record<string, unknown>): CompletedMeta {
+  const usage = (data.usage && typeof data.usage === "object" ? data.usage : {}) as Record<
+    string,
+    unknown
+  >;
+  const tokensIn = Number(usage.input_tokens);
+  const tokensOut = Number(usage.output_tokens);
+  const elapsedMs = Number(data.elapsed_ms);
+  return {
+    model: asString(data.model).trim() || null,
+    elapsedMs: Number.isFinite(elapsedMs) && elapsedMs >= 0 ? elapsedMs : null,
+    tokensIn: Number.isFinite(tokensIn) && tokensIn > 0 ? tokensIn : null,
+    tokensOut: Number.isFinite(tokensOut) && tokensOut > 0 ? tokensOut : null,
+  };
 }
 
 function parseVoiceClip(data: Record<string, unknown>): VoiceClip | null {
@@ -633,7 +785,11 @@ function handleEvent(event: LeonEvent): void {
       break;
     }
     case "assistant.completed":
-      finishAssistant(asString(data.content) || pendingAssistant()?.text || "");
+      finishAssistant(
+        asString(data.content) || pendingAssistant()?.text || "",
+        "done",
+        parseCompletedMeta(data),
+      );
       break;
     case "assistant.notice":
       if (data.content) appendMessage(makeMessage("agent", asString(data.content)));
@@ -714,6 +870,7 @@ async function openSession(): Promise<void> {
   connectEvents();
   void loadImageState();
   void ensureVoiceCatalog();
+  void probeAsrAvailability();
 }
 
 async function bootstrap(): Promise<void> {
@@ -857,6 +1014,11 @@ onBeforeUnmount(() => {
   closeEvents();
   window.removeEventListener("online", handleOnline);
   clearTimeline(true);
+  stopAsrRecording();
+  if (asrNoticeTimer !== null) {
+    window.clearTimeout(asrNoticeTimer);
+    asrNoticeTimer = null;
+  }
   if (modeBlurTimer !== null) {
     window.clearTimeout(modeBlurTimer);
     modeBlurTimer = null;
@@ -959,15 +1121,18 @@ onBeforeUnmount(() => {
               <strong>开始一段对话</strong>
               <span>聊天、生图，都可以。</span>
             </div>
-            <MessageBubble
-              v-for="message in messages"
-              :key="message.id"
-              :message="message"
-              @retry="retryMessage"
-              @edit="editMessage"
-              @preview="openPreview"
-              @media-loaded="scrollToLatest"
-            />
+            <template v-for="(message, index) in messages" :key="message.id">
+              <p v-if="showTimeDivider(index)" class="time-divider" role="time">
+                {{ messageTimeLabel(message.createdAt!) }}
+              </p>
+              <MessageBubble
+                :message="message"
+                @retry="retryMessage"
+                @edit="editMessage"
+                @preview="openPreview"
+                @media-loaded="scrollToLatest"
+              />
+            </template>
           </div>
           <button
             v-if="showScrollToLatest"
@@ -982,6 +1147,7 @@ onBeforeUnmount(() => {
         </div>
 
         <p v-if="taskStatus" class="task-status">{{ taskStatus }}</p>
+        <p v-if="asrNotice" class="task-status asr-notice" role="status">{{ asrNotice }}</p>
         <form class="composer" @submit.prevent="sendMessage">
           <div class="composer-wrap">
             <div
@@ -1020,6 +1186,30 @@ onBeforeUnmount(() => {
               @blur="scheduleHideModeSuggestions"
             ></textarea>
           </div>
+          <button
+            v-if="asrAvailable"
+            class="composer__mic"
+            :class="{ recording: asrState === 'recording' }"
+            type="button"
+            :disabled="asrState === 'uploading'"
+            :aria-label="
+              asrState === 'recording' ? '停止录音并识别' : asrState === 'uploading' ? '正在识别' : '语音输入'
+            "
+            :title="
+              asrState === 'recording' ? '停止录音并识别' : asrState === 'uploading' ? '正在识别' : '语音输入'
+            "
+            @click="toggleVoiceInput"
+          >
+            <LoaderCircle
+              v-if="asrState === 'uploading'"
+              class="spinning"
+              :size="18"
+              :stroke-width="2"
+              aria-hidden="true"
+            />
+            <Square v-else-if="asrState === 'recording'" :size="16" fill="currentColor" aria-hidden="true" />
+            <Mic v-else :size="18" :stroke-width="2" aria-hidden="true" />
+          </button>
           <button
             class="composer__send"
             type="submit"
