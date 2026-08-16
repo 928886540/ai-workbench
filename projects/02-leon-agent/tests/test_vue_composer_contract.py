@@ -44,7 +44,8 @@ def test_composer_resets_after_send_and_cleans_inline_state_on_unmount() -> None
     assert "onBeforeUnmount(() => {" in chat
     assert 'composerInput.value.style.height = "";' in chat
     assert 'composerInput.value.style.overflowY = "";' in chat
-    # The implementation uses Vue template bindings rather than registering a
-    # document/window listener that could outlive the component.
+    # Composer input uses Vue template bindings. The only window listener is
+    # the explicitly cleaned-up online reconnect hook.
     assert "composerInput.addEventListener" not in chat
-    assert "window.addEventListener" not in chat
+    assert 'window.addEventListener("online", handleOnline)' in chat
+    assert 'window.removeEventListener("online", handleOnline)' in chat

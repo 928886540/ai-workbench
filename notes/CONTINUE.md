@@ -29,7 +29,7 @@
   决策依据：JS 已 807 行 / 48 个顶层可变变量 / 65 处 DOM 查询，近期修的 4 个 bug 全是「状态与 DOM 手动同步」这一类结构性问题；
   且组件一文件一职责后，外部 agent 改动边界清晰，不必再动 1250 行单文件。
 - 前端 W1 已完成：`messages[]` + `messageIndex` 单一数据源，`createMessage/renderMessage/patchMessage/removeMessage`；
-  复制 / 真重试 / 编辑 / 朗读工具栏、底部图片气泡、模型候选收起均已落地，SW 缓存已升到 v17
+  复制 / 真重试 / 编辑 / 朗读工具栏、底部图片气泡、模型候选收起均已落地，legacy SW 缓存已升到 v17
 - Volink TTS 已接入：4 个模型 / 561 个中文音色；目录使用 `lang=zh-CN`，可搜「风韵少妇」，支持试听、收藏、
   手动朗读、自动朗读、loading / 波形状态，以及 iOS Chrome 的用户手势解锁与待播音频恢复；前后端会清理
   Markdown 列表横杠、emoji、链接、模式 ID、任务 ID 和计划 ID，避免 TTS 把 `-` 读成“减/简”
@@ -40,7 +40,7 @@
 - 可通过 `LEON_SYSTEM_PROMPT_FILE` 读取 UTF-8 TXT 并追加到 Agent system prompt；本机文件位于被 Git 忽略的
   `data/system-prompts/双人成行预设.txt`，CLI 与 Web Gateway 都已接入
 - Web 修复（2026-08-15）：旧 session 聊天记录恢复渲染、任务/图库按 `created_at` 最新优先、
-  全屏图片 edge-to-edge `cover` 显示；SW 缓存升到 v17
+  全屏图片 edge-to-edge `cover` 显示；legacy SW 缓存升到 v17，Vue SW 当前为 v8
 - CLI 已完成第一版全屏 TUI：交互终端使用上方滚动区 + 底部 Enter 输入框，启动面板展示
   model/provider/base URL/config source；非 TTY 继续使用 Rich fallback。`generate_images` 工具
   采用 `return_direct`，图片任务完成后直接输出结果，避免再发一轮 provider 请求（低 RPM provider 必须如此）。
@@ -54,8 +54,11 @@
   并用输入快照/请求序号隔离迟到响应；输入框自动增高、用户上滚保留位置、回到最新按钮和错误详情折叠也已接通；
   Agent Timeline 会收集除 `assistant.delta` 外的最近 100 条 SSE 决策事件，并支持清空、关闭和会话切换重置；
   这些路径不调用 LLM、Volink 或真实 provider。
+- SSE 事件现在带进程内递增 `id`，Gateway 保留最近 100 条并按 `Last-Event-ID` 补发断线期间事件；
+  `session.connected` 是不推进游标的连接标记。Vue 让浏览器原生 EventSource 处理瞬时断线，
+  stale token 会回到登录页，系统恢复在线时会重新连接 CLOSED 的流。
 - 当前验证（2026-08-16）：Python 单测、Ruff、Vue `npm run typecheck`、`npm run build`、静态 Vue 契约测试，
-  以及 `tests/manual_vue_web_check.py` 的 provider-free Playwright smoke 均已通过；Vite/FastAPI 两种入口各 **18/18**。
+  以及 `tests/manual_vue_web_check.py` 的 provider-free Playwright smoke 均已通过；Vite/FastAPI 两种入口各 **19/19**。
   该脚本拦截所有 `/api/**`，不代表真实公网/手机验收；legacy 的 `tests/manual_web_check.py` 仍是另一套脚本。
 - 元数据边界：Gateway 当前没有权威 `model`/`usage` 字段；Vue 的 elapsed 是客户端观测值，tokens/实际响应模型暂不显示。
 - 流式边界：Gateway 当前没有真正发送 `assistant.delta`；Vue 已兼容该事件，但当前真实回复仍以
@@ -68,7 +71,8 @@
   仍未暴露、可按需接入：`async_cancel_matching`（批量取消）、`image_gallery/delete`（删图，破坏性）、
   `image_tasks/hide` / `hide_history`（清理列表）、`metrics/tasks/{job_id}`（任务指标）、
   `async_autogen/recover`（恢复）、`comic_compose` / `async_comic`（漫画模式）
-- 下一步最小动作：为 `/api/agent/*/events` 添加 Cloudflare Cache Bypass Rule，再做真实 Gateway/手机端 SSE、生图和 TTS 闭环验收
+- 真实只读探测（2026-08-16）：本机与公网 health 均 `200`，SSE 均立即收到 `session.connected`，stale token 均返回
+  `204 no-store`；仍需在 Cloudflare 控制台确认 Cache Bypass Rule，再做手机实机 SSE、生图和 TTS 闭环验收
 - Vue 页面迁移主体已完成，先保持 `LEON_WEB_CLIENT=legacy` 默认；真实公网/移动端验收通过后再考虑切换入口。
   W1 的 `messages[]` 直接对应 `stores/messages.ts`，不用重写
 - ASR 尚未接入；TTS 已完成，网关使用 `POST /api/agent/tts` 和 `/api/voice/*`

@@ -920,10 +920,23 @@ async def session_events(
 
     loop = asyncio.get_running_loop()
     bus = _bus_registry.get_or_create(session_id, loop)
-    queue = bus.subscribe()
+    # Native EventSource sends Last-Event-ID on reconnect.  The query aliases
+    # keep parity with clients that cannot set headers (and with older clients).
+    last_event_id = request.headers.get("Last-Event-ID")
+    if last_event_id is None:
+        last_event_id = (
+            request.query_params.get("last_event_id")
+            or request.query_params.get("lastEventId")
+            or request.query_params.get("last-event-id")
+        )
+    queue = bus.subscribe(last_event_id)
 
     async def event_generator():
-        yield LeonEvent(event="session.connected", session_id=session_id, data={}).to_sse()
+        # This is a connection marker, not a replayable session event.  Keep it
+        # data-only so it does not advance Last-Event-ID ahead of replayed data.
+        yield LeonEvent(
+            event="session.connected", session_id=session_id, data={}, id=None
+        ).to_sse()
         try:
             while True:
                 if await request.is_disconnected():

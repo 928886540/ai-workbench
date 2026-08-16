@@ -34,8 +34,8 @@ def test_vue_entry_is_explicit_opt_in_and_keeps_legacy_default() -> None:
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-7"' in main
-    assert "leon-vue-v7" in service_worker
+    assert 'register("/sw.js?v=vue-8"' in main
+    assert "leon-vue-v8" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:
@@ -55,7 +55,7 @@ def test_vue_api_contract_is_fake_gateway_friendly() -> None:
         'async getVoiceCatalog(refresh = false)',
         'private async request<T>(',
         'if (response.status === 401)',
-        'source.onerror = onError',
+        'source.onerror = () => onError(source)',
     ):
         assert fragment in client, fragment
 
@@ -89,11 +89,19 @@ def test_vue_chat_login_session_restore_and_error_dedup_contract() -> None:
     ):
         assert fragment in chat, fragment
 
-    # Reconnect must close the previous EventSource first; otherwise a late
-    # event can render duplicate errors/messages in a mobile network race.
+    # Opening a new session must close the previous EventSource first;
+    # transient failures stay on the browser's native reconnect path.
     assert "closeEvents();\n  setConnection(\"正在连接…\", \"neutral\");" in chat
     assert "eventSource = api.connectEvents(" in chat
     assert "eventSource?.close();" in chat
+    assert "function handleEventError(source: EventSource): void" in chat
+    assert "source.readyState === EventSource.CONNECTING" in chat
+    assert "source.readyState === EventSource.CLOSED" in chat
+    assert ".checkHealth()" in chat
+    assert "expireLogin();" in chat
+    assert "function handleOnline(): void" in chat
+    assert 'window.addEventListener("online", handleOnline)' in chat
+    assert 'window.removeEventListener("online", handleOnline)' in chat
 
 
 def test_vue_message_bubble_copy_edit_retry_contract() -> None:

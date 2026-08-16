@@ -23,7 +23,7 @@ Never commit `.env`, API tokens, SQLite databases, generated images, caches, or 
 - Gateway: `src/leon_agent/gateway/app.py`
 - Legacy Web client (kept as the safe fallback): `src/leon_agent/web/index.html`
 - Vue migration source: `web/` (`src/api`, `src/stores`, `src/views`, `src/components`)
-- Service Worker: `src/leon_agent/web/sw.js`
+- Service Worker: legacy `src/leon_agent/web/sw.js`; Vue `web/public/sw.js`
 - Leon runtime config: `src/leon_agent/config.py`
 - Agent system prompt composition: `src/leon_agent/agent.py`
 - Volink TTS client: `src/leon_agent/voice_client.py`
@@ -92,6 +92,13 @@ The Gateway publishes these SSE events:
 SSE currently transports lifecycle events and final answers. It does not yet provide true LLM token
 streaming. The Web client progressively renders a completed answer for smoother presentation; do not
 describe that as backend token streaming.
+
+Each replayable SSE event carries a process-local monotonically increasing `id:` field. The Gateway
+retains the latest 100 events per session in memory and honors the browser's `Last-Event-ID` (plus
+legacy query aliases) on reconnect. `session.connected` is a data-only connection marker and does not
+advance the replay cursor. This is best-effort replay: a process restart drops the in-memory window.
+The Vue client leaves transient reconnects to native `EventSource`, probes `/api/health` for stale
+credentials, returns to login on 401, and wakes a CLOSED stream on the browser `online` event.
 
 `/nsfw` is a direct image command in both CLI and Web; it is not the name of a fixed workflow. It
 bypasses the LLM completely. Syntax is `/nsfw [--model <name-or-id>] <source text>`. The default is
@@ -212,14 +219,16 @@ For Web changes also verify a mobile viewport with a real browser:
 - bubble copy/retry/edit/TTS actions work after rerendering
 - TTS shows loading/playing/idle states and preserves blocked iOS audio until unlock
 
-Current baseline on 2026-08-15: `97 passed`, Ruff clean, and
+Historical baseline on 2026-08-15: `97 passed`, Ruff clean, and
 `tests/manual_web_check.py` `56/56` with system Chrome at `390x844` touch viewport.
 The browser suite covers restoring persisted chat history, newest-first task/gallery
 ordering, and the edge-to-edge fullscreen image viewer. The Service Worker cache is
-`leon-v17`.
+`leon-v17` for legacy and `leon-vue-v8` for Vue.
 
-The LLM transport safety fix was validated separately with `101 passed`; the Vue migration base
-must additionally pass `npm run typecheck` and `npm run build` before enabling `LEON_WEB_CLIENT=vue`.
+The LLM transport safety fix was validated separately with `101 passed`. Current Vue provider-free
+validation additionally includes `npm run typecheck`, `npm run build`, and `manual_vue_web_check.py`
+at `19/19` for both Vite preview and FastAPI Vue entry; these checks use fake API/SSE and do not prove
+real provider or mobile behavior. The Vue source still requires an explicit `LEON_WEB_CLIENT=vue`.
 
 ## Handoff Format
 

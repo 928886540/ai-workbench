@@ -8,8 +8,9 @@
 > 当前实施（2026-08-16）：Vue 3 + Vite 已覆盖聊天、任务、图库、设置视图和 Agent Timeline；助手气泡支持复制 /
 > 真重试 / 编辑 / 朗读，Volink 提供 4 个模型和 561 个中文音色，SSE `voice.ready` 会追加可播放
 > 语音气泡；聊天输入已支持 `/nsfw --model` 模式补全、自动增高、上滚保留和错误详情折叠，
-> Agent Timeline 可查看最近 100 条 SSE 决策事件。ASR、tokens 上屏和真实 Gateway/手机验收尚未完成；
-> provider-free Playwright smoke 已在 Vite/FastAPI 各 18/18 通过。
+> Agent Timeline 可查看最近 100 条 SSE 决策事件。ASR、tokens 上屏、真实生图/TTS 和手机实机验收尚未完成；
+> SSE 已加入进程内 `id` / `Last-Event-ID` 补发和 stale-token 登录恢复；provider-free Playwright smoke
+> 已在 Vite/FastAPI 各 19/19 通过。
 > `LEON_WEB_CLIENT=legacy` 仍是默认入口，Vue 仅显式 opt-in。
 
 ---
@@ -204,17 +205,22 @@ Vue 源码位于 `web/src/`，按职责拆成 `api`、`stores`、`views`、`comp
   错误气泡保留重试入口，原始错误文本放在默认折叠的原生 `details` 中。
 - Agent Timeline：记录除高频 `assistant.delta` 外的最近 100 条 SSE 决策事件，提供事件分类、详情、清空、
   Esc/按钮关闭，并在新会话、退出和组件卸载时重置。
+- SSE 恢复：Gateway 保留最近 100 条事件并按 `Last-Event-ID` 回放；Vue 对瞬时断线使用原生 EventSource
+  重连，检测到 stale token 后清理会话并回到登录页，`online` 事件会唤醒 CLOSED 的连接。
 
 该补全只读取 Gateway 的模式目录，不调用 LLM、Volink 或真实 provider。`voice.ready` 事件同样只消费
 Gateway 推送的音频元数据，播放器由前端单例管理。
 
 当前验证包括静态契约、TypeScript 检查、Vite build，以及
-`tests/manual_vue_web_check.py` 的 provider-free Playwright smoke（Vite/FastAPI 各 18/18）。该脚本只拦截
-API，不证明真实 provider、Cloudflare 缓存或手机网络行为；因此不能据此宣称 Vue 已全面替换 legacy。
+`tests/manual_vue_web_check.py` 的 provider-free Playwright smoke（Vite/FastAPI 各 19/19）。该脚本只拦截
+API，不证明真实 provider、Cloudflare 缓存规则或手机网络行为；本机/公网 SSE 已做只读首事件验收，
+因此仍不能据此宣称 Vue 已全面替换 legacy。
 只有显式设置 `LEON_WEB_CLIENT=vue` 且存在构建产物时才托管 Vue，默认仍为 `LEON_WEB_CLIENT=legacy`。
 Gateway 当前不发送权威 `model`/`usage` 字段，Vue 只显示客户端观测耗时，不虚构 tokens 或实际响应模型。
 Gateway 当前也没有真正发送 `assistant.delta`；Vue 保留兼容分支，真实回复仍以 `assistant.started` /
 `assistant.completed` 事件为主。
+SSE 回放窗口是进程内的最近 100 条，服务重启后不提供历史事件持久回放；页面刷新仍依赖 session/image-state
+接口恢复可见状态。
 
 ---
 
@@ -240,7 +246,7 @@ Gateway 当前也没有真正发送 `assistant.delta`；Vue 保留兼容分支�
 | **W5** | 语音：TTS 朗读（已完成）→ ASR 输入（待做） | ASR API |
 | **W6** | Vue 迁移：聊天、任务、图库、设置、Agent Timeline（已完成） | W1-W5 |
 | **W7** | 模式补全与 `voice.ready` 事件（已完成） | W6 |
-| **W8** | provider-free 浏览器回归（Vite/FastAPI 18/18） | W6-W7 |
+| **W8** | provider-free 浏览器回归（Vite/FastAPI 19/19） | W6-W7 |
 | **W9** | 真实 Gateway/Cloudflare/手机验收，完成后再评估切换入口 | W8 |
 
 每个阶段单独一个 commit，`test_gateway.py` 同步补断言，`sw.js` 缓存版本号递增。

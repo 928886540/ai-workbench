@@ -204,7 +204,7 @@ export class LeonApi {
   connectEvents(
     sessionId: string,
     onEvent: (event: LeonEvent) => void,
-    onError: () => void,
+    onError: (source: EventSource) => void,
   ): EventSource {
     const query = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
     const source = new EventSource(`/api/agent/sessions/${sessionId}/events${query}`);
@@ -215,7 +215,7 @@ export class LeonApi {
         // Ignore malformed heartbeats or an incomplete event payload.
       }
     };
-    source.onerror = onError;
+    source.onerror = () => onError(source);
     return source;
   }
 

@@ -193,12 +193,18 @@ Web Client → Leon Agent API → Leon Agent → Leon Image Adapter → ComfyUI
 
 ```json
 {
+  "id": 123,
   "event": "<event_type>",
   "session_id": "<uuid>",
   "timestamp": "<ISO-8601>",
   "data": {}
 }
 ```
+
+The wire format uses an SSE `id:` line for replayable events. `session.connected` is a data-only
+connection marker. The Gateway keeps the latest 100 events per session in memory and accepts the
+browser `Last-Event-ID` header (or a compatibility query alias) to replay events after a reconnect;
+the window is lost when the process restarts.
 
 ### 事件类型一览
 
@@ -279,8 +285,8 @@ Web Client → Leon Agent API → Leon Agent → Leon Image Adapter → ComfyUI
     → 完成后推送 assistant.completed
 
 客户端断线
-    → SSE 自动重连（Last-Event-ID）
-    → 服务端补发断线期间事件
+    → 浏览器 EventSource 自动重连（Last-Event-ID）
+    → 服务端补发内存窗口内的断线事件
     → 手机切后台 → 重连 → session 恢复
 ```
 
@@ -412,7 +418,7 @@ Authorization: Bearer <token>
 - **Add to Home Screen**：manifest.json，icon，standalone 模式
 - **Safari 限制**：SSE 在后台会被挂起，需要断线重连机制
 - **离线缓存**：Service Worker 缓存静态资源，API 请求不缓存
-- **手机网络恢复**：监听 `online` 事件，自动重连 SSE
+- **手机网络恢复**：Vue 监听 `online` 事件，唤醒 CLOSED 的 SSE 连接
 - **输入法适配**：输入框在键盘弹出时不被遮挡（`viewport-fit=cover`）
 - **图片预览**：原生 `<img>` + 点击放大，不依赖第三方库
 
@@ -503,7 +509,7 @@ Web Client 设计时保持 API 稳定性，未来 iOS App 只需：
 
 | 风险 | 缓解策略 |
 |------|----------|
-| SSE 在 Safari/iOS 后台被挂起 | 断线重连 + Last-Event-ID 补发 |
+| SSE 在 Safari/iOS 后台被挂起 | 原生断线重连 + Last-Event-ID 补发最近 100 条（进程重启后窗口丢失） |
 | 手机切后台 session 丢失 | session_id 存 localStorage，重连后恢复 |
 | ComfyUI 生图时间长，SSE 超时 | 心跳 ping 事件，保持连接 |
 | 公网暴露安全风险 | Bearer Token + HTTPS + Rate Limit |

@@ -44,20 +44,21 @@ FAKE_BROWSER_SCRIPT = r"""
   localStorage.removeItem("leon_session");
   localStorage.removeItem("leon_voice_prefs");
 
-  // EventSource is intentionally deterministic.  A fulfilled SSE response
-  // closes immediately and makes ChatView schedule its reconnect timer, which
-  // adds noise to a smoke test.  Tests can inject protocol events through
-  // window.__leonEmit(event, data).
+  // EventSource is intentionally deterministic. Tests inject protocol events
+  // and connection failures without opening a real provider connection.
   const instances = [];
   class FakeEventSource {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 2;
     constructor(url) {
       this.url = String(url);
-      this.readyState = 1;
+      this.readyState = FakeEventSource.OPEN;
       this.onmessage = null;
       this.onerror = null;
       instances.push(this);
       queueMicrotask(() => {
-        if (this.readyState !== 1) return;
+        if (this.readyState !== FakeEventSource.OPEN) return;
         if (typeof this.onmessage === "function") {
           this.onmessage({
             data: JSON.stringify({
@@ -70,7 +71,7 @@ FAKE_BROWSER_SCRIPT = r"""
       });
     }
     close() {
-      this.readyState = 2;
+      this.readyState = FakeEventSource.CLOSED;
     }
   }
   Object.defineProperty(window, "EventSource", {
@@ -88,6 +89,14 @@ FAKE_BROWSER_SCRIPT = r"""
     instances
       .filter((source) => source.readyState === 1)
       .forEach((source) => source.onmessage?.({ data: payload }));
+  };
+  window.__leonFailEvents = (permanent = false) => {
+    instances
+      .filter((source) => source.readyState !== FakeEventSource.CLOSED)
+      .forEach((source) => {
+        source.readyState = permanent ? FakeEventSource.CLOSED : FakeEventSource.CONNECTING;
+        source.onerror?.(new Event("error"));
+      });
   };
 
   // No actual media device is needed for this provider-free check.  Keeping
@@ -121,6 +130,7 @@ class FakeGateway:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.token_valid = True
 
     def handle(self, route: Any) -> None:
         request = route.request
@@ -131,7 +141,10 @@ class FakeGateway:
         self.calls.append({"method": method, "path": path, "body": body})
 
         if path == "/api/health" and method == "GET":
-            authorized = request.headers.get("authorization") == f"Bearer {FAKE_TOKEN}"
+            authorized = (
+                self.token_valid
+                and request.headers.get("authorization") == f"Bearer {FAKE_TOKEN}"
+            )
             if not authorized:
                 _json_response(route, {"detail": "Unauthorized"}, status=401)
             else:
@@ -615,6 +628,16 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             check(
                 "语音 clip 请求保持在同源 fake Gateway",
                 any(call["path"] == "/api/voice/clips/clip-vue-e2e" for call in gateway.calls),
+            )
+
+            gateway.token_valid = False
+            page.evaluate("() => window.__leonFailEvents(true)")
+            login_heading.wait_for(state="visible")
+            check(
+                "SSE token 失效后停止重连并返回登录页",
+                "登录已失效" in page.locator(".form-error").inner_text()
+                and page.evaluate("() => localStorage.getItem('leon_token')") is None
+                and page.evaluate("() => localStorage.getItem('leon_session')") is None,
             )
 
             external_errors = [

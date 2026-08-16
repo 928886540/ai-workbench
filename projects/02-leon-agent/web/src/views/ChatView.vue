@@ -69,6 +69,7 @@ const modeSuggestionIndex = ref(0);
 const modeSuggestionsOpen = ref(false);
 let eventSource: EventSource | null = null;
 let reconnectTimer: number | null = null;
+let eventHealthProbeSource: EventSource | null = null;
 let modeBlurTimer: number | null = null;
 let imageModeCatalog: ImageMode[] | null = null;
 let imageModeCatalogRequest: Promise<ImageMode[]> | null = null;
@@ -441,8 +442,64 @@ function closeEvents(): void {
     window.clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  eventHealthProbeSource = null;
   eventSource?.close();
   eventSource = null;
+}
+
+function scheduleClosedEventReconnect(source: EventSource): void {
+  if (reconnectTimer !== null || source !== eventSource || !authenticated.value) return;
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null;
+    if (source !== eventSource || !authenticated.value) return;
+    source.close();
+    eventSource = null;
+    connectEvents();
+  }, 3000);
+}
+
+function expireLogin(): void {
+  logout();
+  tokenInput.value = "";
+  loginError.value = "登录已失效，请重新登录";
+  setConnection("需要登录", "neutral");
+}
+
+function handleEventError(source: EventSource): void {
+  if (source !== eventSource) return;
+  setConnection(source.readyState === EventSource.CONNECTING ? "正在重连…" : "连接断开", "error");
+
+  // EventSource natively retries transient network failures. Probe auth once
+  // instead of closing it here; a 204 stale-token response leaves the source
+  // permanently CLOSED and must return the UI to the login screen.
+  if (eventHealthProbeSource === source) return;
+  eventHealthProbeSource = source;
+  const probeAbort = new AbortController();
+  const probeTimeout = window.setTimeout(() => probeAbort.abort(), 5000);
+  void api
+    .checkHealth(probeAbort.signal)
+    .then(() => {
+      if (source === eventSource && source.readyState === EventSource.CLOSED) {
+        scheduleClosedEventReconnect(source);
+      }
+    })
+    .catch((error: unknown) => {
+      if (source !== eventSource) return;
+      if (error instanceof ApiError && error.status === 401) {
+        expireLogin();
+      } else if (source.readyState === EventSource.CLOSED) {
+        scheduleClosedEventReconnect(source);
+      }
+    })
+    .finally(() => {
+      window.clearTimeout(probeTimeout);
+      if (eventHealthProbeSource === source) eventHealthProbeSource = null;
+    });
+}
+
+function handleOnline(): void {
+  if (!authenticated.value || !api.sessionId) return;
+  if (!eventSource || eventSource.readyState === EventSource.CLOSED) connectEvents();
 }
 
 function appendHistory(history: Array<{ role: string; content: string }>): void {
@@ -626,17 +683,7 @@ function connectEvents(): void {
   eventSource = api.connectEvents(
     api.sessionId,
     handleEvent,
-    () => {
-      eventSource?.close();
-      eventSource = null;
-      setConnection("连接断开", "error");
-      if (authenticated.value && reconnectTimer === null) {
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null;
-          connectEvents();
-        }, 3000);
-      }
-    },
+    handleEventError,
   );
 }
 
@@ -800,9 +847,13 @@ function handleComposerKeydown(event: KeyboardEvent): void {
   }
 }
 
-onMounted(() => void bootstrap());
+onMounted(() => {
+  window.addEventListener("online", handleOnline);
+  void bootstrap();
+});
 onBeforeUnmount(() => {
   closeEvents();
+  window.removeEventListener("online", handleOnline);
   clearTimeline(true);
   if (modeBlurTimer !== null) {
     window.clearTimeout(modeBlurTimer);
