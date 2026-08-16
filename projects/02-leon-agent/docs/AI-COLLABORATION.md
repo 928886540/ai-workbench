@@ -293,7 +293,7 @@ Interaction correction pass (SW cache `leon-vue-v15`):
 - Image submission copy always says `已提交 N 张图片任务` and asks the user to wait for automatic
   delivery; it no longer claims completion before an image URL is available.
 
-Refresh/voice reliability pass (SW cache `leon-vue-v16`):
+Refresh/voice/UI reliability pass (SW cache `leon-vue-v19`):
 
 - Session history includes stable message ids plus persisted assistant revisions. Refreshing during
   an active normal/retry turn reconstructs the pending bubble from `active_turn`; completion remains
@@ -308,6 +308,17 @@ Refresh/voice reliability pass (SW cache `leon-vue-v16`):
   an internally scrolling list. Sparse favorite/search results retain 48px rows instead of stretching.
 - Login wording no longer promises a return to an earlier conversation or inserts a loading row that
   shifts the layout. Pending replies use the three animated thinking dots again.
+- Message editing uses one viewport modal; saving replaces only the selected bubble text, so editing
+  never participates in or expands the conversation layout.
+- Completed task cards show a clickable thumbnail and omit internal task/plan details. Task, chat and
+  gallery previews use `object-fit: contain`; unused space uses the shared blue-gray viewer backdrop.
+- Viewer close/previous/next controls are fixed to the visual viewport and remain independent from
+  the image layer. Model settings are cached for the current app session and only refresh on demand.
+- Chat bubbles pass their complete rendered image set and selected index into the shared viewer;
+  chat and gallery both support previous/next buttons, keyboard navigation and horizontal swipes.
+- Structured image URLs from tools such as `get_latest_images` are promoted into the assistant
+  image bubble. Duplicate “view image” Markdown is hidden and image-only results never trigger TTS.
+- The stop-generation action uses the themed danger color, and logout now requires confirmation.
 
 True streaming:
 
@@ -366,13 +377,13 @@ For Web changes also verify a mobile viewport with a real browser:
 
 Historical legacy browser coverage was retired when the single-file client was deleted. The
 canonical provider-free browser suite is `tests/manual_vue_web_check.py`; the Service Worker cache
-is `leon-vue-v16`.
+is `leon-vue-v19`.
 
 The LLM transport safety fix was validated separately with `101 passed`. Current Vue provider-free
 validation additionally includes `npm run typecheck`, `npm run build`, and `manual_vue_web_check.py`
-at `60/60` for both Vite preview and FastAPI Vue entry; these checks use fake API/SSE and do not prove
+at `76/76` for both Vite preview and FastAPI Vue entry; these checks use fake API/SSE and do not prove
 real provider or mobile behavior. Vue is the only Web entry.
-The integrated CLI/Web baseline was most recently validated at `174 passed`, repository-level Ruff
+The integrated CLI/Web baseline was most recently validated at `175 passed`, repository-level Ruff
 clean, and `uv run leon --help` successful.
 
 ## Handoff Format

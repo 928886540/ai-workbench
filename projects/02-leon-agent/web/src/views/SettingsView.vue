@@ -2,6 +2,7 @@
 import { LogOut, RefreshCw } from "@lucide/vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { ApiError, api, type ModelSettingsResponse } from "../api/client";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import VoiceSettings from "../components/VoiceSettings.vue";
 
 const props = defineProps<{ sessionId: string }>();
@@ -19,6 +20,7 @@ const provider = ref("");
 const baseUrl = ref("");
 const catalogError = ref("");
 const listOpen = ref(false);
+const logoutConfirmOpen = ref(false);
 
 const filteredModels = computed(() => {
   const query = modelInput.value.trim().toLocaleLowerCase();
@@ -39,6 +41,15 @@ function applySettings(data: ModelSettingsResponse): void {
   baseUrl.value = data.base_url || "";
   catalogError.value = data.catalog_error || "";
   modelInput.value = data.selected_model || "";
+}
+
+function applyCachedSettings(): boolean {
+  if (!props.sessionId) return false;
+  const cached = api.getCachedModelSettings(props.sessionId);
+  if (!cached) return false;
+  applySettings(cached);
+  loading.value = false;
+  return true;
 }
 
 function setError(error: unknown, prefix: string): void {
@@ -104,21 +115,20 @@ watch(
   () => props.sessionId,
   () => {
     listOpen.value = false;
-    void loadSettings();
+    if (!applyCachedSettings()) void loadSettings();
   },
 );
 
-onMounted(() => void loadSettings());
+onMounted(() => {
+  if (!applyCachedSettings()) void loadSettings();
+});
 </script>
 
 <template>
   <section class="page-panel settings-panel" aria-label="设置">
     <article class="settings-card">
       <header class="settings-card__header">
-        <div>
-          <h3>模型</h3>
-          <p class="settings-subtitle">当前：{{ activeModel || "未知" }}</p>
-        </div>
+        <h3>模型</h3>
         <button
           class="icon-button icon-button--subtle"
           type="button"
@@ -138,7 +148,7 @@ onMounted(() => void loadSettings());
             type="text"
             autocomplete="off"
             spellcheck="false"
-            :placeholder="defaultModel || '默认模型'"
+            :placeholder="activeModel || defaultModel || '默认模型'"
             aria-label="模型 ID"
             :disabled="loading || saving"
             @focus="listOpen = true"
@@ -183,9 +193,18 @@ onMounted(() => void loadSettings());
 
     <VoiceSettings />
 
-    <button class="logout-big" type="button" @click="emit('logout')">
+    <button class="logout-big" type="button" @click="logoutConfirmOpen = true">
       <LogOut :size="18" :stroke-width="2" aria-hidden="true" />
       退出登录
     </button>
+
+    <ConfirmDialog
+      :open="logoutConfirmOpen"
+      title="确认退出登录？"
+      description="将清除当前设备上的登录状态，但不会删除历史会话。"
+      confirm-label="确认退出"
+      @cancel="logoutConfirmOpen = false"
+      @confirm="logoutConfirmOpen = false; emit('logout')"
+    />
   </section>
 </template>

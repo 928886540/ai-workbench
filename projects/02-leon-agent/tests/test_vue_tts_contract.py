@@ -47,6 +47,8 @@ def test_speech_text_cleanup_covers_urls_markdown_ids_and_emoji() -> None:
 
     for fragment in (
         "export function speakableText(raw: string): string",
+        'import { stripImageLinks } from "./markdown";',
+        'return stripImageLinks(String(raw || ""))',
         ".replace(/",
         "https?:",
         "任务|生成计划|客户端任务",
@@ -73,6 +75,9 @@ def test_message_and_chat_wire_manual_and_automatic_speech() -> None:
     for fragment in (
         "function maybeAutoplay(message: ChatMessage): void",
         "const autoplayRequests = new Set<string>();",
+        'message.kind === "image-result"',
+        "message.images.length > 0",
+        "hasImageContent(message.text)",
         "void speakMessage(message.id, message.text, activeVoiceId());",
         "void ensureVoiceCatalog();",
         'v-if="audioUnlockRequired"',

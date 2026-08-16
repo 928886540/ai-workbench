@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ArrowDown, History, LoaderCircle, Mic, RefreshCw, Send, Sparkles, Square, X } from "@lucide/vue";
+import { ArrowDown, History, LoaderCircle, Mic, RefreshCw, Send, Sparkles, Square } from "@lucide/vue";
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
+import ImageViewer, { type ViewerImage } from "../components/ImageViewer.vue";
+import MessageEditDialog from "../components/MessageEditDialog.vue";
 import MessageBubble from "../components/MessageBubble.vue";
 import {
   ApiError,
@@ -50,6 +52,7 @@ import {
   speakMessage,
   unlockAudio,
 } from "../utils/speech";
+import { extractImageHrefs, safeHref, stripImageLinks } from "../utils/markdown";
 
 const authenticated = ref(false);
 const booting = ref(true);
@@ -63,8 +66,10 @@ const activeView = ref<WorkbenchView>("chat");
 const imageStateLoading = ref(false);
 const imageStateLoaded = ref(false);
 const imageStateError = ref("");
-const previewUrl = ref("");
-const previewDialog = ref<HTMLElement | null>(null);
+const previewItems = ref<ViewerImage[]>([]);
+const previewIndex = ref(0);
+const editingMessageId = ref<string | null>(null);
+const editDraft = ref("");
 const messagesPanel = ref<HTMLElement | null>(null);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const modeSuggestionList = ref<HTMLElement | null>(null);
@@ -552,18 +557,34 @@ function cycleRevision(messageId: string): void {
   if (message) cycleMessageRevision(message);
 }
 
-function editMessage(messageId: string, text: string): void {
+function openMessageEditor(messageId: string): void {
   const message = findMessage(messageId);
-  if (message) message.text = text;
+  if (!message) return;
+  editingMessageId.value = messageId;
+  editDraft.value = message.text;
 }
 
-function openPreview(url: string): void {
-  previewUrl.value = url;
-  void nextTick(() => previewDialog.value?.focus());
+function closeMessageEditor(): void {
+  editingMessageId.value = null;
+  editDraft.value = "";
+}
+
+function saveMessageEditor(): void {
+  const message = findMessage(editingMessageId.value);
+  if (message) message.text = editDraft.value;
+  closeMessageEditor();
+}
+
+function openPreview(urls: string[] | string, index = 0): void {
+  const values = Array.isArray(urls) ? urls : [urls];
+  const unique = [...new Set(values.map((url) => url.trim()).filter(Boolean))];
+  previewItems.value = unique.map((url) => ({ url }));
+  previewIndex.value = Math.min(Math.max(index, 0), Math.max(unique.length - 1, 0));
 }
 
 function closePreview(): void {
-  previewUrl.value = "";
+  previewItems.value = [];
+  previewIndex.value = 0;
 }
 
 function closeEvents(): void {
@@ -631,17 +652,12 @@ function handleOnline(): void {
   if (!eventSource || eventSource.readyState === EventSource.CLOSED) connectEvents();
 }
 
-const IMAGE_MARKDOWN_PATTERN = /!\[[^\]]*\]\(https?:\/\/[^)\s]+\)/gi;
-const PLAIN_IMAGE_URL_PATTERN = /https?:\/\/[^\s<>()]+\.(?:avif|bmp|gif|jpe?g|png|webp)(?:\?[^\s<>()]*)?/i;
-
 function hasImageContent(content: string): boolean {
-  IMAGE_MARKDOWN_PATTERN.lastIndex = 0;
-  return IMAGE_MARKDOWN_PATTERN.test(content) || PLAIN_IMAGE_URL_PATTERN.test(content);
+  return extractImageHrefs(content).length > 0;
 }
 
 function isImageOnlyContent(content: string): boolean {
-  IMAGE_MARKDOWN_PATTERN.lastIndex = 0;
-  return !content.replace(IMAGE_MARKDOWN_PATTERN, "").trim();
+  return !stripImageLinks(content).trim();
 }
 
 function appendHistory(
@@ -667,13 +683,16 @@ function appendHistory(
       makeMessage(item.role === "assistant" ? "agent" : "user", content),
     );
     if (typeof item.id === "number") message.id = `db_${item.id}`;
-    if (item.role === "assistant" && hasImageContent(content)) message.kind = "image-result";
+    if (item.role === "assistant") {
+      message.images = extractImageHrefs(content);
+      if (message.images.length) message.kind = "image-result";
+    }
     if (item.role === "assistant" && Array.isArray(item.revisions)) {
       message.revisions = item.revisions.map((revision): MessageRevision => ({
         kind: hasImageContent(revision.content) ? "image-result" : "message",
         text: revision.content,
         status: "done",
-        images: [],
+        images: extractImageHrefs(revision.content),
         tools: [],
         meta: {
           model: null,
@@ -746,6 +765,25 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function toolOutputImageUrls(output: Record<string, unknown>): string[] {
+  const rows = [output];
+  for (const key of ["items", "images"]) {
+    const value = output[key];
+    if (Array.isArray(value)) {
+      rows.push(...value.map(asRecord));
+    }
+  }
+  const urls: string[] = [];
+  for (const row of rows) {
+    const raw = asString(
+      row.image_url ?? row.imageUrl ?? row.final_image_url ?? row.finalImageUrl,
+    );
+    const url = safeHref(raw);
+    if (url && !urls.includes(url)) urls.push(url);
+  }
+  return urls;
+}
+
 function startTool(data: Record<string, unknown>): void {
   const message = pendingAssistant() || appendMessage(makeMessage("agent", "", "pending"));
   message.status = message.text ? "streaming" : "pending";
@@ -780,6 +818,10 @@ function finishTool(data: Record<string, unknown>): void {
   }
   tool.status = data.ok === false || asString(data.ok) === "false" ? "error" : "done";
   tool.output = asRecord(data.output);
+  for (const url of toolOutputImageUrls(tool.output)) {
+    if (!message.images.includes(url)) message.images.push(url);
+  }
+  if (message.images.length) message.kind = "image-result";
   scrollToLatest();
 }
 
@@ -792,6 +834,9 @@ function maybeAutoplay(message: ChatMessage): void {
     message.role !== "agent" ||
     message.status !== "done" ||
     !message.text.trim() ||
+    message.kind === "image-result" ||
+    message.images.length > 0 ||
+    hasImageContent(message.text) ||
     !autoplayAll.value ||
     autoplayRequests.has(message.id)
   ) {
@@ -838,6 +883,10 @@ function finishAssistant(
     }
   }
   if (completed) {
+    for (const url of extractImageHrefs(content)) {
+      if (!completed.images.includes(url)) completed.images.push(url);
+    }
+    if (completed.images.length) completed.kind = "image-result";
     if (serverMeta.model) completed.meta.model = serverMeta.model;
     if (typeof serverMeta.tokensIn === "number") completed.meta.tokensIn = serverMeta.tokensIn;
     if (typeof serverMeta.tokensOut === "number") completed.meta.tokensOut = serverMeta.tokensOut;
@@ -1142,7 +1191,7 @@ function logout(): void {
   activeView.value = "chat";
   autoFollowMessages.value = true;
   showScrollToLatest.value = false;
-  previewUrl.value = "";
+  closePreview();
   pendingAssistantId.value = null;
   pendingImageResultId.value = null;
   activeSendController?.abort();
@@ -1174,6 +1223,9 @@ async function sendTurn(content: string, options: SendTurnOptions): Promise<void
     draft.value = "";
     void nextTick(resizeComposer);
   }
+  // Retry reuses an existing bubble. Keep that exact identity even if SSE
+  // completes first and clears pendingAssistantId before the POST resolves.
+  const turnAssistantId = pendingAssistantId.value;
   const controller = new AbortController();
   activeSendController = controller;
   sending.value = true;
@@ -1186,6 +1238,7 @@ async function sendTurn(content: string, options: SendTurnOptions): Promise<void
     // SSE normally supplies the completed bubble. This fallback keeps the turn
     // visible if a mobile network drops the event right as POST returns.
     let current = pendingAssistant();
+    if (!current && turnAssistantId) current = findMessage(turnAssistantId);
     const latest = latestMessage("agent");
     if (!current && latest && latest.id !== previousAgentId) current = latest;
     if (current) {
@@ -1427,7 +1480,7 @@ onBeforeUnmount(() => {
               <MessageBubble
                 :message="message"
                 @retry="retryMessage"
-                @edit="editMessage"
+                @edit="openMessageEditor"
                 @revision="cycleRevision"
                 @preview="openPreview"
                 @media-loaded="scrollToLatest"
@@ -1528,6 +1581,7 @@ onBeforeUnmount(() => {
         v-else-if="activeView === 'tasks'"
         :loading="imageStateLoading"
         :error="imageStateError"
+        @preview="openPreview"
       />
       <GalleryView
         v-else-if="activeView === 'gallery'"
@@ -1538,6 +1592,13 @@ onBeforeUnmount(() => {
 
       <BottomNav :active="activeView" @select="selectView" />
 
+      <MessageEditDialog
+        v-model="editDraft"
+        :open="Boolean(editingMessageId)"
+        @cancel="closeMessageEditor"
+        @save="saveMessageEditor"
+      />
+
       <button
         v-if="audioUnlockRequired"
         class="audio-unlock"
@@ -1547,24 +1608,12 @@ onBeforeUnmount(() => {
         🔈 点击开启语音播放
       </button>
 
-      <div
-        v-if="previewUrl"
-        ref="previewDialog"
-        class="image-viewer"
-        tabindex="0"
-        role="dialog"
-        aria-modal="true"
-        aria-label="图片预览"
-        @click.self="closePreview"
-        @keydown.escape="closePreview"
-      >
-        <button class="image-viewer__close" type="button" aria-label="关闭" @click="closePreview">
-          <X :size="22" :stroke-width="2" aria-hidden="true" />
-        </button>
-        <figure class="image-viewer__figure">
-          <img :src="previewUrl" alt="图片预览" />
-        </figure>
-      </div>
+      <ImageViewer
+        v-if="previewItems.length"
+        v-model:index="previewIndex"
+        :items="previewItems"
+        @close="closePreview"
+      />
     </section>
   </main>
 </template>

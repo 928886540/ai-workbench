@@ -105,6 +105,31 @@ FAKE_BROWSER_SCRIPT = r"""
       });
   };
 
+  const nativeFetch = window.fetch.bind(window);
+  window.__leonCompleteRetryBeforePost = false;
+  window.fetch = async (...args) => {
+    const response = await nativeFetch(...args);
+    const request = args[0];
+    const init = args[1] || {};
+    const url = typeof request === "string" ? request : request?.url || "";
+    if (
+      window.__leonCompleteRetryBeforePost &&
+      String(url).includes("/api/agent/sessions/") &&
+      String(url).endsWith("/messages") &&
+      String(init.method || "GET").toUpperCase() === "POST"
+    ) {
+      let body = {};
+      try { body = JSON.parse(String(init.body || "{}")); } catch {}
+      if (body.retry) {
+        window.__leonCompleteRetryBeforePost = false;
+        window.__leonEmit("assistant.completed", {
+          content: "这是重试后的本地回复。",
+        });
+      }
+    }
+    return response;
+  };
+
   // No actual media device is needed for this provider-free check.  Keeping
   // the promise resolved lets the voice.ready path exercise the singleton
   // player without invoking browser autoplay policy.
@@ -210,20 +235,44 @@ class FakeGateway:
             _json_response(
                 route,
                 {
-                    "tasks": [],
+                    "tasks": [
+                        {
+                            "job_id": "fake-image-job",
+                            "status": "completed",
+                            "progress": 100,
+                            "mode_name": "蒂法增强",
+                            "source_text": "测试图片",
+                            "image_url": "/api/fake-image",
+                            "created_at": 1,
+                        },
+                        {
+                            "job_id": "queued-job",
+                            "status": "queued",
+                            "progress": 0,
+                            "mode_name": "写实基础",
+                            "source_text": "再来一张",
+                            "created_at": 2,
+                        },
+                    ],
                     "images": [
                         {
                             "job_id": "fake-image-job",
                             "image_url": "/api/fake-image",
                             "source_text": "测试图片",
                             "created_at": 1,
-                        }
+                        },
+                        {
+                            "job_id": "fake-image-job-2",
+                            "image_url": "/api/fake-image",
+                            "source_text": "第二张测试图片",
+                            "created_at": 2,
+                        },
                     ],
                     "errors": {},
                 },
             )
             return
-        if path == "/api/fake-image" and method == "GET":
+        if path in {"/api/fake-image", "/api/fake-image-2"} and method == "GET":
             fake_svg = (
                 b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="3">'
                 b'<rect width="4" height="3" fill="#2783de"/></svg>'
@@ -458,9 +507,9 @@ def _start_server(args: argparse.Namespace) -> ServerHandle:
         temporary_dir = tempfile.TemporaryDirectory(prefix="leon-vue-e2e-")
         env["LEON_SESSION_DB"] = str(Path(temporary_dir.name) / "leon.db")
         command = [
-            _command("uv"),
-            "run",
-            "leon-server",
+            sys.executable,
+            "-m",
+            "leon_agent.gateway.server",
             "--host",
             "127.0.0.1",
             "--port",
@@ -701,7 +750,19 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             gateway.active_turn = {"retry": False}
             gateway.cancel_post_405 = True
             page.reload(wait_until="domcontentloaded")
-            page.get_by_role("button", name="停止生成").click()
+            stop_button = page.get_by_role("button", name="停止生成")
+            stop_style = stop_button.evaluate(
+                "el => ({ color: getComputedStyle(el).backgroundColor, "
+                "image: getComputedStyle(el).backgroundImage })"
+            )
+            check(
+                "停止生成按钮使用主题危险色而不是黑色",
+                "38, 57, 79" not in stop_style["color"]
+                and "38, 57, 79" not in stop_style["image"]
+                and "linear-gradient" in stop_style["image"],
+                repr(stop_style),
+            )
+            stop_button.click()
             page.get_by_role("button", name="发送消息").wait_for(state="visible")
             page.wait_for_timeout(200)
             cancel_calls = [
@@ -736,7 +797,10 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             meta_text = meta_row.inner_text()
             check(
                 "assistant.completed 的 tokens 上屏且不显示模型名",
-                "↑1.2k" in meta_text and "↓567" in meta_text and "fake-model-x" not in meta_text,
+                "1.8k tokens" in meta_text
+                and "↑" not in meta_text
+                and "↓" not in meta_text
+                and "fake-model-x" not in meta_text,
                 meta_text.replace("\n", " "),
             )
 
@@ -857,10 +921,22 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 and user_toolbar.get_by_role("button", name="编辑").is_visible(),
             )
             user_toolbar.get_by_role("button", name="编辑").click()
-            user_editor = user_row.locator(".message-editor")
+            edit_dialog = page.locator(".message-edit-dialog")
+            edit_dialog.wait_for(state="visible")
+            user_editor = edit_dialog.get_by_label("消息内容")
+            messages_panel = page.locator(".messages-panel")
+            check(
+                "编辑使用独立弹窗且不改变气泡布局",
+                user_row.locator(".message-bubble").is_visible()
+                and edit_dialog.is_visible()
+                and messages_panel.evaluate("el => el.scrollWidth <= el.clientWidth + 1"),
+            )
             user_editor.fill("编辑后的用户消息")
-            user_row.get_by_role("button", name="保存").click()
+            edit_dialog.get_by_role("button", name="保存").click()
+            edit_dialog.wait_for(state="hidden")
             check("用户消息可以原位编辑", "编辑后的用户消息" in user_row.inner_text())
+            agent_count_before_retry = page.locator(".message-row[data-role='agent']").count()
+            page.evaluate("() => { window.__leonCompleteRetryBeforePost = true; }")
             user_row.get_by_role("button", name="重试").click()
             retried_agent = page.locator(".message-row[data-role='agent']").last
             retried_agent.get_by_text("这是重试后的本地回复。").wait_for(state="visible")
@@ -870,6 +946,11 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 "2 / 2" in revision_button.inner_text()
                 and gateway.calls[-1]["body"].get("retry") is True,
                 repr(gateway.calls[-1]),
+            )
+            check(
+                "SSE 先完成时 HTTP 兜底不会追加重复气泡",
+                page.locator(".message-row[data-role='agent']").count()
+                == agent_count_before_retry,
             )
             revision_button.click()
             check(
@@ -938,10 +1019,17 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             page.evaluate(
                 "([event, data]) => window.__leonEmit(event, data)",
                 [
+                    "image.completed",
+                    {"job_id": "live-image-job-2", "image_url": "/api/fake-image-2"},
+                ],
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                [
                     "assistant.notice",
                     {
-                        "content": "图片生成好了，1 张图在呢，赶紧点开看！",
-                        "job_ids": ["live-image-job"],
+                        "content": "图片生成好了，2 张图在呢，赶紧点开看！",
+                        "job_ids": ["live-image-job", "live-image-job-2"],
                     },
                 ],
             )
@@ -949,10 +1037,28 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             image_result.wait_for(state="visible")
             check(
                 "图片与完成文案合并且不显示文本工具栏",
-                image_result.locator(".markdown-image").count() == 1
+                image_result.locator(".markdown-image").count() == 2
                 and "赶紧点开看" in image_result.inner_text()
                 and image_result.locator(".message-toolbar").count() == 0,
             )
+            image_result.locator(".markdown-image-link").first.click()
+            chat_viewer = page.locator(".image-viewer")
+            chat_viewer.wait_for(state="visible")
+            chat_counter = chat_viewer.locator("figcaption")
+            check(
+                "聊天全屏包含当前气泡的全部图片",
+                "1 / 2" in chat_counter.inner_text()
+                and chat_viewer.get_by_role("button", name="上一张").is_visible()
+                and chat_viewer.get_by_role("button", name="下一张").is_visible(),
+                chat_counter.inner_text(),
+            )
+            page.mouse.move(320, 422)
+            page.mouse.down()
+            page.mouse.move(70, 422, steps=5)
+            page.mouse.up()
+            chat_counter.get_by_text("2 / 2", exact=False).wait_for(state="visible")
+            check("聊天全屏支持向左滑动切到下一张", "2 / 2" in chat_counter.inner_text())
+            chat_viewer.get_by_role("button", name="关闭").click()
 
             page.get_by_role("button", name="任务").click()
             page.locator(".page-panel[aria-label='生图任务']").wait_for(state="visible")
@@ -965,6 +1071,32 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 ).count()
                 == 0,
             )
+            task_card = page.locator(".task-card").first
+            task_cards = page.locator(".task-card")
+            task_thumbnail = task_card.locator(".task-card__thumbnail")
+            task_boxes = [
+                task_cards.nth(index).bounding_box() for index in range(task_cards.count())
+            ]
+            check(
+                "完成任务直接展示可点击缩略图且移除任务详情",
+                task_thumbnail.is_visible()
+                and task_card.locator(".task-card__details").count() == 0
+                and "任务详情" not in task_card.inner_text(),
+            )
+            check(
+                "不同状态任务卡保持等高",
+                len(task_boxes) >= 2
+                and all(box is not None for box in task_boxes)
+                and max(box["height"] for box in task_boxes if box is not None)
+                - min(box["height"] for box in task_boxes if box is not None)
+                <= 1,
+                repr(task_boxes),
+            )
+            task_thumbnail.click()
+            task_viewer = page.locator(".image-viewer")
+            task_viewer.wait_for(state="visible")
+            check("任务缩略图点击后进入全屏", True)
+            task_viewer.locator(".image-viewer__close").click()
 
             page.get_by_role("button", name="图库").click()
             page.locator(".gallery-grid").wait_for(state="visible")
@@ -978,13 +1110,40 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             viewer.wait_for(state="visible")
             image_box = viewer.locator(".image-viewer__figure img").bounding_box()
             close_box = viewer.locator(".image-viewer__close").bounding_box()
+            image_metrics = viewer.locator(".image-viewer__figure img").evaluate(
+                "el => ({ naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight, "
+                "clientWidth: el.clientWidth, clientHeight: el.clientHeight, "
+                "objectFit: getComputedStyle(el).objectFit })"
+            )
+            viewer_metrics = viewer.evaluate(
+                "el => ({ backgroundColor: getComputedStyle(el).backgroundColor, "
+                "touchAction: getComputedStyle(el).touchAction, "
+                "overflow: getComputedStyle(el).overflow })"
+            )
+            control_positions = viewer.locator(
+                ".image-viewer__close, .image-viewer__nav"
+            ).evaluate_all("els => els.map(el => getComputedStyle(el).position)")
             check(
-                "全屏图片横向铺满并保留关闭安全区",
+                "全屏图片保持原比例并使用统一留边背景",
                 image_box is not None
                 and round(image_box["width"]) == 390
+                and round(image_box["height"]) == 844
+                and image_metrics["objectFit"] == "contain"
+                and image_metrics["naturalWidth"] / image_metrics["naturalHeight"]
+                != image_metrics["clientWidth"] / image_metrics["clientHeight"]
+                and viewer_metrics["backgroundColor"] != "rgb(0, 0, 0)"
+                and "22, 37, 55" in viewer_metrics["backgroundColor"]
+                and viewer_metrics["touchAction"] == "none"
+                and viewer_metrics["overflow"] == "hidden"
                 and close_box is not None
                 and close_box["y"] >= 20,
-                f"图片={image_box}，关闭={close_box}",
+                f"图片={image_box}，比例={image_metrics}，查看器={viewer_metrics}，关闭={close_box}",
+            )
+            check(
+                "全屏关闭与左右切图按钮固定在视口",
+                len(control_positions) == 3
+                and all(value == "fixed" for value in control_positions),
+                repr(control_positions),
             )
             viewer.locator(".image-viewer__close").click()
             page.get_by_role("button", name="聊天").click()
@@ -1108,9 +1267,60 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 repr(nav_box),
             )
             check(
+                "底部导航与历史按钮不会触发双击缩放",
+                page.locator(".bottom-nav button").first.evaluate(
+                    "el => getComputedStyle(el).touchAction === 'manipulation'"
+                )
+                and page.locator(".timeline-toggle").evaluate(
+                    "el => getComputedStyle(el).touchAction === 'manipulation'"
+                ),
+            )
+            check(
                 "设置页底部提供大号退出登录按钮",
                 page.locator(".logout-big").is_visible()
                 and "退出登录" in page.locator(".logout-big").inner_text(),
+            )
+            page.locator(".logout-big").click()
+            logout_confirm = page.locator(".confirm-dialog")
+            logout_confirm.wait_for(state="visible")
+            check(
+                "退出登录需要二次确认",
+                "确认退出登录" in logout_confirm.inner_text()
+                and logout_confirm.get_by_role("button", name="确认退出").is_visible(),
+            )
+            logout_confirm.get_by_role("button", name="取消").click()
+            logout_confirm.wait_for(state="hidden")
+            voice_card = page.locator(".voice-settings")
+            model_get_count = sum(
+                call["method"] == "GET"
+                and call["path"] == f"/api/agent/sessions/{FAKE_SESSION_ID}/model"
+                for call in gateway.calls
+            )
+            page.get_by_role("button", name="聊天").click()
+            page.get_by_role("button", name="设置").click()
+            page.locator(".settings-panel").wait_for(state="visible")
+            page.wait_for_timeout(100)
+            cached_model_get_count = sum(
+                call["method"] == "GET"
+                and call["path"] == f"/api/agent/sessions/{FAKE_SESSION_ID}/model"
+                for call in gateway.calls
+            )
+            check(
+                "再次进入设置复用模型缓存且不自动刷新",
+                model_get_count == 1 and cached_model_get_count == model_get_count,
+                f"first={model_get_count}, cached={cached_model_get_count}",
+            )
+            page.get_by_label("刷新模型目录").click()
+            page.wait_for_timeout(100)
+            refreshed_model_get_count = sum(
+                call["method"] == "GET"
+                and call["path"] == f"/api/agent/sessions/{FAKE_SESSION_ID}/model"
+                for call in gateway.calls
+            )
+            check(
+                "手动刷新模型目录会重新请求",
+                refreshed_model_get_count == cached_model_get_count + 1,
+                f"cached={cached_model_get_count}, refreshed={refreshed_model_get_count}",
             )
             voice_card = page.locator(".voice-settings")
             voice_before = voice_card.bounding_box()
@@ -1127,6 +1337,13 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             page.get_by_label("模型 ID").press("Escape")
             voice_toggle = page.get_by_role("button", name="选择音色")
             voice_toggle.wait_for(state="visible")
+            check(
+                "模型和音色只在选择框内显示当前值",
+                "当前：" not in page.locator(".settings-panel").inner_text()
+                and "测试音色" in voice_toggle.inner_text()
+                and voice_toggle.locator(".lucide-audio-lines").count() == 1,
+                voice_toggle.inner_text().replace("\n", " "),
+            )
             check("语音列表默认收起", not page.locator(".voice-list").is_visible())
             logout_before = page.locator(".logout-big").bounding_box()
             voice_toggle.click()
@@ -1229,8 +1446,74 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             page.locator(".voice-catalog-backdrop").click(position={"x": 4, "y": 4})
             voice_panel.wait_for(state="hidden")
             check("音色弹层可点击空白遮罩关闭", True)
+            autoplay_input.evaluate("el => { if (!el.checked) el.click(); }")
             page.get_by_role("button", name="聊天").click()
             page.get_by_role("heading", name="Leon").wait_for(state="visible")
+
+            latest_tts_before = sum(
+                call["path"] == "/api/agent/tts" for call in gateway.calls
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["tool.started", {"tool_name": "get_latest_images", "input": {"limit": 2}}],
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                [
+                    "tool.finished",
+                    {
+                        "tool_name": "get_latest_images",
+                        "ok": True,
+                        "output": {
+                            "ok": True,
+                            "items": [
+                                {"image_url": "/api/fake-image?filename=latest-1.png"},
+                                {"image_url": "/api/fake-image-2?filename=latest-2.png"},
+                            ],
+                        },
+                    },
+                ],
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                [
+                    "assistant.completed",
+                    {
+                        "content": (
+                            "最新的 2 张图：\n"
+                            "1. [查看图片 1（写实基础）]"
+                            "(/api/fake-image?filename=latest-1.png)\n"
+                            "2. [查看图片 2（蒂法增强）]"
+                            "(/api/fake-image-2?filename=latest-2.png)"
+                        )
+                    },
+                ],
+            )
+            latest_images_row = page.locator(
+                ".message-row[data-kind='image-result']", has_text="读取最近图片"
+            ).last
+            latest_images_row.wait_for(state="visible")
+            latest_image_count = latest_images_row.locator(".markdown-image").count()
+            latest_image_sources = latest_images_row.locator(".markdown-image").evaluate_all(
+                "nodes => nodes.map(node => node.getAttribute('src'))"
+            )
+            check(
+                "查询最近图片直接渲染图片而不是查看链接列表",
+                latest_image_count == 2
+                and "查看图片" not in latest_images_row.inner_text(),
+                f"images={latest_image_count}, sources={latest_image_sources}, text="
+                f"{latest_images_row.inner_text().replace(chr(10), ' ')}",
+            )
+            page.wait_for_timeout(200)
+            latest_tts_after = sum(
+                call["path"] == "/api/agent/tts" for call in gateway.calls
+            )
+            check(
+                "图片查询结果不会自动朗读查看图片文案",
+                latest_tts_after == latest_tts_before
+                and latest_images_row.locator(".message-speak").count() == 0,
+                f"before={latest_tts_before}, after={latest_tts_after}",
+            )
 
             gateway.token_valid = False
             page.evaluate("() => window.__leonFailEvents(true)")

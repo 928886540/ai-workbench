@@ -24,7 +24,7 @@
 - Leon 环境只读自检：19 模式、38 节点类型、39 LoRA，通过
 - 架构决策：`notes/decisions/0002-leon-agent-boundary.md`
 - 新需求计划：`notes/plans/leon-agent-expansion.md`
-- Web 图片体验已升级：全屏查看器变可缩放相册（左右切换 / 计数 / 滑动翻页 / 定点缩放），生图完成后在底部追加新气泡并自动滚到可视区，模型选择改为可点击列表
+- Web 图片体验已升级：聊天 / 任务 / 图库共用全屏相册（整组图片 / 计数 / 左右按钮 / 键盘 / 滑动切图），图片按原比例 `contain` 展示，控制按钮固定在视口；生图完成后在底部追加新气泡并自动滚到可视区
 - 前端演进评估：`projects/02-leon-agent/docs/web-client-evolution.md`
 - **前端栈决策（2026-08-15，用户拍板）：迁 Vue 3 + Vite**。评估文档里「暂不迁 Vue3」的结论已被推翻，后续以本条为准。
   目标结构：`web/src/{api,stores,views,components}` + `vite.config.ts`，构建产物 `dist/` 交给 FastAPI 托管。
@@ -41,8 +41,8 @@
 - SSE `voice.ready` 已接入 Vue 聊天：事件会追加带音频元数据的助手气泡，复用单例播放器并遵守 iOS 用户手势解锁与待播恢复
 - 可通过 `LEON_SYSTEM_PROMPT_FILE` 读取 UTF-8 TXT 并追加到 Agent system prompt；本机文件位于被 Git 忽略的
   `data/system-prompts/双人成行预设.txt`，CLI 与 Web Gateway 都已接入
-- Web 修复（2026-08-15）：旧 session 聊天记录恢复渲染、任务/图库按 `created_at` 最新优先、
-  全屏图片 edge-to-edge `cover` 显示；Vue SW 当前为 v9
+- Web 修复（2026-08-16）：旧 session 聊天记录恢复渲染、任务/图库按 `created_at` 最新优先；
+  编辑改为独立弹窗，完成任务显示缩略图，退出登录二次确认；Vue SW 当前为 v19
 - CLI 已升级为日用全屏 TUI：上方可滚动聊天记录，底部 1～6 行动态输入框；Enter 发送，
   Shift+Enter 换行，并为不兼容终端保留 Ctrl+Enter / Esc+Enter。非 TTY 继续使用 Rich fallback。
 - CLI 已补 `/resume`、`/retry`、`/last`、`/copy`、`/tools`、`/status`，斜杠命令支持中文说明、
@@ -60,9 +60,9 @@
 - SSE 事件现在带进程内递增 `id`，Gateway 保留最近 100 条并按 `Last-Event-ID` 补发断线期间事件；
   `session.connected` 是不推进游标的连接标记。Vue 让浏览器原生 EventSource 处理瞬时断线，
   stale token 会回到登录页，系统恢复在线时会重新连接 CLOSED 的流。
-- 当前验证（2026-08-16）：显式 fake `LLM_SOURCE=env` 下 Python **166 passed**、仓库级 Ruff clean、
+- 当前验证（2026-08-16）：显式 fake `LLM_SOURCE=env` 下 Python **175 passed**、仓库级 Ruff clean、
   `uv run leon --help` 通过；Vue `npm run typecheck` / `npm run build` 和 provider-free Playwright smoke
-  也已通过，Vite/FastAPI 两种入口各 **19/19**。浏览器脚本拦截所有 `/api/**`，不代表真实公网/手机验收。
+  也已通过，Vite/FastAPI 两种入口各 **76/76**。浏览器脚本拦截所有 `/api/**`，不代表真实公网/手机验收。
 - 当前真实 `~/.codex/config.toml` 若没有顶层 `model_provider`，直接跑全量测试会有 6 个 Gateway session
   用例在捕获 TOML provider 时失败；显式 fake env 可稳定复现全绿，且不会请求真实 provider。
 - 元数据边界：Gateway 当前没有权威 `model`/`usage` 字段；Vue 的 elapsed 是客户端观测值，tokens/实际响应模型暂不显示。

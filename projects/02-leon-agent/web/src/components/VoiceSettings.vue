@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronUp, LoaderCircle, Pause, Play, RefreshCw, Star, X } from "@lucide/vue";
+import { AudioLines, LoaderCircle, Pause, Play, RefreshCw, Star, X } from "@lucide/vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ApiError } from "../api/client";
 import {
@@ -134,12 +134,7 @@ onBeforeUnmount(() => {
 <template>
   <article class="settings-card voice-settings">
     <header class="voice-settings__header">
-      <div>
-        <h3>语音</h3>
-        <p class="settings-subtitle">
-          当前：{{ active?.name || "跟随服务端默认" }}
-        </p>
-      </div>
+      <h3>语音</h3>
     </header>
 
     <template v-if="voiceEnabled || !voiceCatalogLoaded">
@@ -161,15 +156,15 @@ onBeforeUnmount(() => {
           type="button"
           :disabled="!voiceCatalogLoaded"
           :aria-expanded="catalogOpen"
+          aria-label="选择音色"
           aria-controls="voice-catalog-panel"
           @click="catalogOpen = !catalogOpen"
         >
           <span>
-            <strong>选择音色</strong>
-            <small>{{ voiceCatalogLoaded ? `${voices.length} 个` : "—" }}</small>
+            <strong>{{ active?.name || "选择音色" }}</strong>
+            <small>{{ voiceCatalogLoaded ? `选择音色 · ${voices.length} 个` : "加载音色目录" }}</small>
           </span>
-          <ChevronUp v-if="catalogOpen" :size="18" aria-hidden="true" />
-          <ChevronDown v-else :size="18" aria-hidden="true" />
+          <AudioLines :size="18" :stroke-width="2" aria-hidden="true" />
         </button>
         <button
           v-if="catalogOpen"

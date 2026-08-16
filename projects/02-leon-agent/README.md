@@ -16,12 +16,13 @@
 - 调用现有 `/ios/*` HTTP 接口，不复制 Prompt、Workflow 或 LoRA 配置
 - 任务与图库返回的图片地址统一补全成绝对 URL，可直接打开
 - CLI 与 Web 设置页从当前 LLM provider 的 `/models` 动态读取模型目录，手输模型 ID 保持原始大小写
-- Web 全屏图片查看器是可缩放相册：左右切换、计数、滑动翻页、双指 / 双击定点缩放、平移夹在真实图片边界内
+- 聊天与图库共用全屏相册：整组图片、计数、左右按钮、键盘和移动端滑动切图，图片保持原比例不裁切
 - 生图完成后丢弃骨架屏，在聊天底部追加一条新图片气泡并自动跟随到底
-- 任务页以生图模式和中文状态为主信息，内部任务 ID / 生成计划 ID 收进折叠详情
+- 任务页以生图模式和中文状态为主信息，完成任务直接显示可点击缩略图，不暴露内部任务 ID
 - 模型选择改为可点击列表（不再依赖手机浏览器不友好的 `<datalist>`）
 - Volink TTS 已接入：4 个模型 / 561 个中文音色，支持搜索、收藏、试听、手动朗读与自动朗读
 - TTS 会在前后端清理 Markdown 列表符号、emoji、链接、模式 ID 和任务 ID，换行转成自然停顿
+- 最近图片查询会直接渲染工具返回的结构化图片；LLM 附带的“查看图片”链接不会重复显示或进入自动朗读
 - SSE 的 `voice.ready` 事件会在聊天中追加可播放的语音气泡；播放器支持单例复用、iOS 用户手势解锁和待播恢复
 - 助手气泡支持复制、重试、编辑和朗读；编辑后的文字会成为后续朗读内容
 - iOS 有声播放使用单例播放器 + 用户手势解锁，被拦截时保留待播音频并显示开启按钮
@@ -163,8 +164,8 @@ Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 jo
 聊天气泡直接显示图片，不需要再次询问 LLM。Web 设置页可为当前 session 选择模型，或恢复跟随 Codex 配置中的
 默认模型；选择会与 CLI 共用同一份 SQLite 会话状态。
 
-任务页默认显示中文模式名、用户原始描述和中文状态；`job_id` / `generation_plan_id` 只在
-“任务详情”中展开。TTS 的 `502` 代表 Volink 上游失败，不是本项目的文本长度限制；网关会记录
+任务页默认显示中文模式名、用户原始描述和中文状态；完成任务显示可点击缩略图，内部
+`job_id` / `generation_plan_id` 不在界面暴露。TTS 的 `502` 代表 Volink 上游失败，不是本项目的文本长度限制；网关会记录
 原始字符数、净化后字符数和上游错误，Web 会显示返回的 `detail`，当前不做无依据的自动重试。
 
 Vue 客户端已迁移聊天、任务、图库和设置四个主要视图，并复用同一套 Gateway/SSE 协议。
@@ -181,7 +182,7 @@ Vue 客户端是唯一 Web 实现，源码位于 `web/src/`，构建产物位于
 [Web 客户端演进评估](docs/web-client-evolution.md)。
 
 Vue 3 + Vite 迁移基座位于 `web/`，当前已覆盖聊天、任务、图库、设置视图和 Agent Timeline。provider-free
-Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **60/60**；
+Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **76/76**；
 它拦截所有 `/api/**`，不会触发真实 LLM、Volink 或图片 provider。本机与公网 Gateway/SSE 已完成只读验收；
 Cloudflare 控制台 Cache Bypass 规则和手机实机验收仍待做。旧单文件 Web 客户端及其浏览器脚本已删除，
 Gateway 不再提供前端选择开关。

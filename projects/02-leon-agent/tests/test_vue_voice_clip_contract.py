@@ -109,6 +109,6 @@ def test_voice_bubble_owns_visible_custom_player_without_message_actions() -> No
     assert ".voice-bubble__audio" in styles and "display: none;" in styles
     assert ".voice-player__toggle" in styles
 
-    # Voice bubbles are rendered outside both action-toolbar branches, so a
-    # voice.ready event cannot expose edit/retry controls.
-    assert 'v-if="!isVoiceMessage && showToolbar && !editing"' in bubble
+    # Editing now uses a separate dialog, but voice bubbles must still stay
+    # outside the shared action toolbar so voice.ready cannot expose actions.
+    assert 'v-if="!isVoiceMessage && showToolbar"' in bubble

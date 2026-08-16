@@ -1,5 +1,6 @@
 import { reactive, readonly, ref } from "vue";
 import { api } from "../api/client";
+import { stripImageLinks } from "./markdown";
 
 export type SpeechStatus = "idle" | "loading" | "playing";
 
@@ -332,7 +333,7 @@ export function clearSpeechState(): void {
 
 /** Strip content that should not be read aloud, preserving human prose. */
 export function speakableText(raw: string): string {
-  return String(raw || "")
+  return stripImageLinks(String(raw || ""))
     .replace(/\r\n?/g, "\n")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")

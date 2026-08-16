@@ -6,6 +6,10 @@ defineProps<{
   error: string;
 }>();
 
+const emit = defineEmits<{
+  preview: [url: string];
+}>();
+
 function statusKey(status: string): string {
   const value = status.trim().toLowerCase();
   if (["running", "processing", "in_progress"].includes(value)) return "running";
@@ -41,23 +45,34 @@ function progressLabel(progress: number | null): string {
       <span>发送生图请求后，任务会出现在这里。</span>
     </div>
     <div v-else class="task-list">
-      <article v-for="task in imageTasks" :key="task.jobId" class="task-card">
-        <div class="task-card__top">
-          <strong>{{ task.modeName || task.modeId || task.jobId }}</strong>
-          <span class="status-badge" :data-status="statusKey(task.status)">
-            {{ statusLabel(task.status) }}
-          </span>
+      <article
+        v-for="task in imageTasks"
+        :key="task.jobId"
+        class="task-card"
+        :class="{ 'has-thumbnail': Boolean(task.imageUrl) }"
+      >
+        <div class="task-card__content">
+          <div class="task-card__top">
+            <strong>{{ task.modeName || task.modeId || task.jobId }}</strong>
+            <span class="status-badge" :data-status="statusKey(task.status)">
+              {{ statusLabel(task.status) }}
+            </span>
+          </div>
+          <p v-if="task.sourceText" class="task-card__source">{{ task.sourceText }}</p>
+          <div v-if="task.progress !== null" class="task-card__progress">
+            <span>进度 {{ progressLabel(task.progress) }}</span>
+            <progress :value="task.progress" max="100"></progress>
+          </div>
         </div>
-        <p v-if="task.sourceText" class="task-card__source">{{ task.sourceText }}</p>
-        <div v-if="task.progress !== null" class="task-card__progress">
-          <span>进度 {{ progressLabel(task.progress) }}</span>
-          <progress :value="task.progress" max="100"></progress>
-        </div>
-        <details class="task-card__details">
-          <summary>任务详情</summary>
-          <code>任务 ID：{{ task.jobId }}</code>
-          <code v-if="task.generationPlanId">生成计划 ID：{{ task.generationPlanId }}</code>
-        </details>
+        <button
+          v-if="task.imageUrl"
+          class="task-card__thumbnail"
+          type="button"
+          :aria-label="`查看任务图片 ${task.sourceText || task.modeName || task.jobId}`"
+          @click="emit('preview', task.imageUrl)"
+        >
+          <img :src="task.imageUrl" :alt="task.sourceText || '任务生成图片'" loading="lazy" />
+        </button>
       </article>
     </div>
   </section>

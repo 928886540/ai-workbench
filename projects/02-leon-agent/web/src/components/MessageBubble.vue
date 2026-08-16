@@ -3,7 +3,12 @@ import { Check, CircleAlert, Copy, History, LoaderCircle, Pause, Pencil, Play, R
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ChatMessage, MessageToolCall } from "../stores/messages";
 import { activeVoiceId, voiceEnabled } from "../stores/voice";
-import { renderExplicitImages, renderMarkdown } from "../utils/markdown";
+import {
+  extractImageHrefs,
+  renderExplicitImages,
+  renderMarkdown,
+  stripImageLinks,
+} from "../utils/markdown";
 import {
   getSpeechError,
   getSpeechStatus,
@@ -15,15 +20,12 @@ import {
 const props = defineProps<{ message: ChatMessage }>();
 const emit = defineEmits<{
   retry: [messageId: string];
-  edit: [messageId: string, text: string];
+  edit: [messageId: string];
   revision: [messageId: string];
-  preview: [url: string];
+  preview: [urls: string[], index: number];
   mediaLoaded: [];
 }>();
 
-const editing = ref(false);
-const editDraft = ref("");
-const editor = ref<HTMLTextAreaElement | null>(null);
 const copied = ref(false);
 let copiedTimer: number | null = null;
 
@@ -41,10 +43,8 @@ const revisionLabel = computed(
 const renderedBody = computed(() => {
   const message = displayedMessage.value;
   if (message.role !== "agent" || message.status === "error") return "";
-  return `${renderExplicitImages(
-    message.images,
-    message.text,
-  )}${renderMarkdown(message.text)}`;
+  const imageUrls = [...new Set([...message.images, ...extractImageHrefs(message.text)])];
+  return `${renderExplicitImages(imageUrls, "")}${renderMarkdown(stripImageLinks(message.text))}`;
 });
 
 const voiceClip = computed(() => displayedMessage.value.audio || displayedMessage.value.voice || null);
@@ -61,6 +61,8 @@ const showToolbar = computed(
     (displayedMessage.value.role === "agent" || displayedMessage.value.role === "user") &&
     ["done", "error", "cancelled"].includes(displayedMessage.value.status) &&
     displayedMessage.value.kind !== "image-result" &&
+    displayedMessage.value.images.length === 0 &&
+    extractImageHrefs(displayedMessage.value.text).length === 0 &&
     !isVoiceMessage.value &&
     (Boolean(displayedMessage.value.text.trim()) ||
       displayedMessage.value.images.length > 0 ||
@@ -97,10 +99,8 @@ function formatTokenCount(value: number): string {
 function tokensLabel(): string {
   const { tokensIn, tokensOut } = displayedMessage.value.meta;
   if (tokensIn === null && tokensOut === null) return "";
-  const parts: string[] = [];
-  if (tokensIn !== null) parts.push(`↑${formatTokenCount(tokensIn)}`);
-  if (tokensOut !== null) parts.push(`↓${formatTokenCount(tokensOut)}`);
-  return parts.join(" ");
+  const total = (tokensIn || 0) + (tokensOut || 0);
+  return `${formatTokenCount(total)} tokens`;
 }
 
 function voiceSizeLabel(bytes: number): string {
@@ -243,31 +243,6 @@ async function copyText(): Promise<void> {
   }, 1400);
 }
 
-function startEditing(): void {
-  if (
-    !viewingCurrentRevision.value ||
-    isVoiceMessage.value ||
-    displayedMessage.value.kind === "image-result"
-  ) return;
-  editDraft.value = displayedMessage.value.text;
-  editing.value = true;
-  void nextTick(() => {
-    editor.value?.focus();
-    editor.value?.setSelectionRange(editDraft.value.length, editDraft.value.length);
-  });
-}
-
-function cancelEditing(): void {
-  editing.value = false;
-  editDraft.value = "";
-}
-
-function saveEditing(): void {
-  stopSpeech(props.message.id);
-  emit("edit", props.message.id, editDraft.value);
-  editing.value = false;
-}
-
 function toggleSpeech(): void {
   if (currentSpeechStatus.value !== "idle") {
     stopSpeech(props.message.id);
@@ -285,7 +260,14 @@ function handleContentClick(event: MouseEvent): void {
   const link = target.closest("a.markdown-image-link") as HTMLAnchorElement | null;
   if (!link) return;
   event.preventDefault();
-  emit("preview", link.href);
+  const container = event.currentTarget;
+  const links =
+    container instanceof Element
+      ? Array.from(container.querySelectorAll<HTMLAnchorElement>("a.markdown-image-link"))
+      : [link];
+  const urls = [...new Set(links.map((item) => item.href).filter(Boolean))];
+  const index = Math.max(0, urls.indexOf(link.href));
+  emit("preview", urls.length ? urls : [link.href], index);
 }
 
 onBeforeUnmount(() => {
@@ -314,23 +296,7 @@ watch(
 <template>
   <article class="message-row" :data-role="message.role" :data-kind="message.kind">
     <div class="message-stack">
-      <template v-if="editing && !isVoiceMessage">
-        <textarea
-          ref="editor"
-          v-model="editDraft"
-          class="message-editor"
-          rows="4"
-          @keydown.escape.prevent="cancelEditing"
-          @keydown.ctrl.enter.prevent="saveEditing"
-          @keydown.meta.enter.prevent="saveEditing"
-        ></textarea>
-        <div class="message-edit-actions">
-          <button type="button" @click="cancelEditing">取消</button>
-          <button class="primary-small" type="button" @click="saveEditing">保存</button>
-        </div>
-      </template>
       <div
-        v-else
         class="message-bubble"
         :data-status="displayedMessage.status"
         @click="handleContentClick"
@@ -449,7 +415,7 @@ watch(
           <span>{{ revisionLabel }}</span>
         </button>
       </div>
-      <div v-if="!isVoiceMessage && showToolbar && !editing" class="message-toolbar">
+      <div v-if="!isVoiceMessage && showToolbar" class="message-toolbar">
         <button
           v-if="canSpeak"
           class="message-speak"
@@ -483,7 +449,7 @@ watch(
           type="button"
           aria-label="编辑"
           title="编辑"
-          @click="startEditing"
+          @click="emit('edit', message.id)"
         >
           <Pencil class="toolbar-icon" :size="16" :stroke-width="2" aria-hidden="true" />
         </button>

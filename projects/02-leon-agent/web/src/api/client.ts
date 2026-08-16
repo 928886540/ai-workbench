@@ -103,6 +103,7 @@ function readStorage(key: string): string {
 export class LeonApi {
   token = readStorage(TOKEN_KEY);
   sessionId = readStorage(SESSION_KEY);
+  private readonly modelSettingsCache = new Map<string, ModelSettingsResponse>();
 
   setToken(token: string): void {
     this.token = token.trim();
@@ -120,6 +121,7 @@ export class LeonApi {
   }
 
   clearSession(): void {
+    if (this.sessionId) this.modelSettingsCache.delete(this.sessionId);
     this.sessionId = "";
     if (typeof localStorage !== "undefined") localStorage.removeItem(SESSION_KEY);
   }
@@ -178,20 +180,30 @@ export class LeonApi {
   }
 
   async getModelSettings(sessionId: string, refresh = false): Promise<ModelSettingsResponse> {
+    const cached = this.modelSettingsCache.get(sessionId);
+    if (cached && !refresh) return cached;
     const suffix = refresh ? "?refresh=true" : "";
-    return this.request<ModelSettingsResponse>(
+    const settings = await this.request<ModelSettingsResponse>(
       `/api/agent/sessions/${sessionId}/model${suffix}`,
     );
+    this.modelSettingsCache.set(sessionId, settings);
+    return settings;
+  }
+
+  getCachedModelSettings(sessionId: string): ModelSettingsResponse | null {
+    return this.modelSettingsCache.get(sessionId) || null;
   }
 
   async setModelSettings(
     sessionId: string,
     model: string | null,
   ): Promise<ModelSettingsResponse> {
-    return this.request<ModelSettingsResponse>(`/api/agent/sessions/${sessionId}/model`, {
+    const settings = await this.request<ModelSettingsResponse>(`/api/agent/sessions/${sessionId}/model`, {
       method: "PUT",
       body: JSON.stringify({ model }),
     });
+    this.modelSettingsCache.set(sessionId, settings);
+    return settings;
   }
 
   async getVoiceCatalog(refresh = false): Promise<VoiceCatalogResponse> {

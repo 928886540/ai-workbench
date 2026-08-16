@@ -10,14 +10,16 @@ function escapeHtml(value: unknown): string {
 export function safeHref(value: unknown): string {
   try {
     const base = typeof location === "undefined" ? "http://localhost" : location.origin;
-    const url = new URL(String(value ?? ""), base);
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    const url = new URL(raw, base);
     return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
   } catch {
     return "";
   }
 }
 
-function isImageHref(value: string): boolean {
+export function isImageHref(value: string): boolean {
   try {
     const base = typeof location === "undefined" ? "http://localhost" : location.origin;
     const url = new URL(value, base);
@@ -32,6 +34,47 @@ function isImageHref(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function markdownLinkPattern(): RegExp {
+  return /!?\[[^\]]*\]\(([^)\s]+)\)/g;
+}
+
+function bareUrlPattern(): RegExp {
+  return /https?:\/\/[^\s<>"']+/gi;
+}
+
+function cleanBareUrl(value: string): string {
+  return value.replace(/[.,;!?，。；！？）]+$/, "");
+}
+
+export function extractImageHrefs(raw: string): string[] {
+  const text = String(raw || "");
+  const urls: string[] = [];
+  const append = (value: string): void => {
+    const href = safeHref(cleanBareUrl(value));
+    if (href && isImageHref(href) && !urls.includes(href)) urls.push(href);
+  };
+  for (const match of text.matchAll(markdownLinkPattern())) append(match[1]);
+  for (const match of text.matchAll(bareUrlPattern())) append(match[0]);
+  return urls;
+}
+
+/** Remove image links from prose after their URLs have been promoted to image cards. */
+export function stripImageLinks(raw: string): string {
+  return String(raw || "")
+    .split(/\r?\n/)
+    .map((line) => {
+      const withoutMarkdown = line.replace(markdownLinkPattern(), (whole, url: string) =>
+        isImageHref(safeHref(url)) ? "" : whole,
+      );
+      const withoutBareUrls = withoutMarkdown.replace(bareUrlPattern(), (whole) =>
+        isImageHref(safeHref(cleanBareUrl(whole))) ? "" : whole,
+      );
+      return /^\s*(?:\d+[.)]|[-*+])?\s*$/.test(withoutBareUrls) ? "" : withoutBareUrls;
+    })
+    .filter((line) => line.trim())
+    .join("\n");
 }
 
 function renderInline(raw: string): string {

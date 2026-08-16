@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, X } from "@lucide/vue";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
+import ImageViewer, { type ViewerImage } from "../components/ImageViewer.vue";
 import { galleryImages } from "../stores/images";
 
 defineProps<{
@@ -8,40 +8,18 @@ defineProps<{
   error: string;
 }>();
 
-const selectedJobId = ref("");
-const viewer = ref<HTMLElement | null>(null);
-const selectedIndex = computed(() =>
-  galleryImages.value.findIndex((image) => image.jobId === selectedJobId.value),
-);
-const selectedImage = computed(() =>
-  selectedIndex.value >= 0 ? galleryImages.value[selectedIndex.value] : null,
+const viewerIndex = ref(-1);
+const viewerItems = computed<ViewerImage[]>(() =>
+  galleryImages.value.map((image) => ({ url: image.url, label: image.sourceText })),
 );
 
 function openViewer(jobId: string): void {
-  selectedJobId.value = jobId;
-  void nextTick(() => viewer.value?.focus());
+  viewerIndex.value = galleryImages.value.findIndex((image) => image.jobId === jobId);
 }
 
 function closeViewer(): void {
-  selectedJobId.value = "";
+  viewerIndex.value = -1;
 }
-
-function moveViewer(offset: number): void {
-  const count = galleryImages.value.length;
-  if (!count) return;
-  const current = selectedIndex.value >= 0 ? selectedIndex.value : 0;
-  selectedJobId.value = galleryImages.value[(current + offset + count) % count].jobId;
-}
-
-function handleKeydown(event: KeyboardEvent): void {
-  if (!selectedImage.value) return;
-  if (event.key === "Escape") closeViewer();
-  else if (event.key === "ArrowLeft") moveViewer(-1);
-  else if (event.key === "ArrowRight") moveViewer(1);
-}
-
-onMounted(() => window.addEventListener("keydown", handleKeydown));
-onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
 </script>
 
 <template>
@@ -66,44 +44,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
       </button>
     </div>
 
-    <div
-      v-if="selectedImage"
-      ref="viewer"
-      class="image-viewer"
-      tabindex="0"
-      role="dialog"
-      aria-modal="true"
-      aria-label="图片预览"
-      @click.self="closeViewer"
-    >
-      <button class="image-viewer__close" type="button" aria-label="关闭" @click="closeViewer">
-        <X :size="22" :stroke-width="2" aria-hidden="true" />
-      </button>
-      <button
-        v-if="galleryImages.length > 1"
-        class="image-viewer__nav image-viewer__nav--prev"
-        type="button"
-        aria-label="上一张"
-        @click="moveViewer(-1)"
-      >
-        <ChevronLeft :size="30" :stroke-width="1.8" aria-hidden="true" />
-      </button>
-      <figure class="image-viewer__figure">
-        <img :src="selectedImage.url" :alt="selectedImage.sourceText || '生成图片'" />
-        <figcaption>
-          {{ selectedIndex + 1 }} / {{ galleryImages.length }}
-          <span v-if="selectedImage.sourceText"> · {{ selectedImage.sourceText }}</span>
-        </figcaption>
-      </figure>
-      <button
-        v-if="galleryImages.length > 1"
-        class="image-viewer__nav image-viewer__nav--next"
-        type="button"
-        aria-label="下一张"
-        @click="moveViewer(1)"
-      >
-        <ChevronRight :size="30" :stroke-width="1.8" aria-hidden="true" />
-      </button>
-    </div>
+    <ImageViewer
+      v-if="viewerIndex >= 0"
+      v-model:index="viewerIndex"
+      :items="viewerItems"
+      @close="closeViewer"
+    />
   </section>
 </template>

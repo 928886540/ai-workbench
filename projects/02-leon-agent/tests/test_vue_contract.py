@@ -35,8 +35,8 @@ def test_vue_entry_is_the_only_web_client() -> None:
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-16"' in main
-    assert "leon-vue-v16" in service_worker
+    assert 'register("/sw.js?v=vue-19"' in main
+    assert "leon-vue-v19" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:
@@ -53,6 +53,9 @@ def test_vue_api_contract_is_fake_gateway_friendly() -> None:
         'async sendMessage(',
         'async cancelMessage(sessionId: string)',
         'async getModelSettings(sessionId: string, refresh = false)',
+        'private readonly modelSettingsCache = new Map<string, ModelSettingsResponse>()',
+        'getCachedModelSettings(sessionId: string): ModelSettingsResponse | null',
+        'if (cached && !refresh) return cached;',
         'async setModelSettings(',
         'async getVoiceCatalog(refresh = false)',
         'private async request<T>(',
@@ -116,23 +119,27 @@ def test_vue_chat_login_session_restore_and_error_dedup_contract() -> None:
 
 def test_vue_message_bubble_copy_edit_retry_contract() -> None:
     bubble = _read("web/src/components/MessageBubble.vue")
+    editor = _read("web/src/components/MessageEditDialog.vue")
+    viewer = _read("web/src/components/ImageViewer.vue")
     chat = _read("web/src/views/ChatView.vue")
     messages = _read("web/src/stores/messages.ts")
+    markdown = _read("web/src/utils/markdown.ts")
 
     for fragment in (
         "navigator.clipboard.writeText(text)",
         'document.execCommand("copy")',
-        "function startEditing(): void",
-        'emit("edit", props.message.id, editDraft.value)',
+        "edit: [messageId: string];",
+        "emit('edit', message.id)",
         "emit('retry', message.id)",
         "displayedMessage.value.role === \"user\"",
         'class="message-revision"',
         "emit('revision', message.id)",
-        'class="message-editor"',
-        'class="message-edit-actions"',
         'class="message-toolbar"',
         'class="message-tools"',
         'class="message-tool"',
+        "preview: [urls: string[], index: number];",
+        'querySelectorAll<HTMLAnchorElement>("a.markdown-image-link")',
+        'emit("preview", urls.length ? urls : [link.href], index);',
     ):
         assert fragment in bubble, fragment
 
@@ -142,18 +149,56 @@ def test_vue_message_bubble_copy_edit_retry_contract() -> None:
         'else if (selected.role === "agent")',
         "beginMessageRevision(target);",
         "void sendTurn(content, { appendUser: false, retry: retryLatest });",
+        "const turnAssistantId = pendingAssistantId.value;",
+        "if (!current && turnAssistantId) current = findMessage(turnAssistantId);",
         "function cycleRevision(messageId: string): void",
-        "function editMessage(messageId: string, text: string): void",
-        "if (message) message.text = text;",
+        "function openMessageEditor(messageId: string): void",
+        "function saveMessageEditor(): void",
+        "if (message) message.text = editDraft.value;",
+        "const previewItems = ref<ViewerImage[]>([]);",
+        "function openPreview(urls: string[] | string, index = 0): void",
+        'v-model:index="previewIndex"',
+        ':items="previewItems"',
         "@retry=\"retryMessage\"",
-        "@edit=\"editMessage\"",
+        "@edit=\"openMessageEditor\"",
         "@revision=\"cycleRevision\"",
         'case "tool.started":',
         "startTool(data);",
         'case "tool.finished":',
         "finishTool(data);",
+        "function toolOutputImageUrls(output: Record<string, unknown>): string[]",
+        "if (!message.images.includes(url)) message.images.push(url);",
+        'if (message.images.length) message.kind = "image-result";',
+        'message.kind === "image-result"',
+        "message.images.length > 0",
     ):
         assert fragment in chat, fragment
+
+    for fragment in (
+        '<Teleport to="body">',
+        'class="message-edit-overlay"',
+        'class="message-edit-dialog"',
+        'class="message-edit-dialog__textarea"',
+        'aria-label="消息内容"',
+        "emit('save')",
+        "emit('cancel')",
+    ):
+        assert fragment in editor, fragment
+
+    for fragment in (
+        "export interface ViewerImage",
+        'class="image-viewer"',
+        'aria-label="上一张"',
+        'aria-label="下一张"',
+        "function handlePointerDown(event: PointerEvent): void",
+        "function handlePointerUp(event: PointerEvent): void",
+        "Math.abs(deltaX) < 48",
+        "move(deltaX < 0 ? 1 : -1);",
+        '@pointerdown="handlePointerDown"',
+        '@pointerup="handlePointerUp"',
+        "{{ activeIndex + 1 }} / {{ items.length }}",
+    ):
+        assert fragment in viewer, fragment
 
     assert "export const messages = ref<ChatMessage[]>([]);" in messages
     assert "tools: MessageToolCall[];" in messages
@@ -161,10 +206,50 @@ def test_vue_message_bubble_copy_edit_retry_contract() -> None:
     assert "export function beginMessageRevision(message: ChatMessage): void" in messages
     assert 'kind: "message",' in messages
     assert "export function findMessage(id: string | null): ChatMessage | null" in messages
+    assert "return `${formatTokenCount(total)} tokens`;" in bubble
+    assert "↑${formatTokenCount" not in bubble
+    assert "↓${formatTokenCount" not in bubble
+    for fragment in (
+        "export function extractImageHrefs(raw: string): string[]",
+        "export function stripImageLinks(raw: string): string",
+        'renderExplicitImages(imageUrls, "")',
+        "renderMarkdown(stripImageLinks(message.text))",
+    ):
+        assert fragment in f"{markdown}\n{bubble}", fragment
+
+
+def test_vue_task_thumbnail_and_contain_viewer_contract() -> None:
+    tasks = _read("web/src/views/TasksView.vue")
+    chat = _read("web/src/views/ChatView.vue")
+    gallery = _read("web/src/views/GalleryView.vue")
+    styles = _read("web/src/styles.css")
+
+    for fragment in (
+        "preview: [url: string];",
+        "Boolean(task.imageUrl)",
+        'class="task-card__thumbnail"',
+        "emit('preview', task.imageUrl)",
+        ':src="task.imageUrl"',
+    ):
+        assert fragment in tasks, fragment
+    assert "任务详情" not in tasks
+    assert '@preview="openPreview"' in chat
+    assert "ImageViewer" in gallery
+    assert ':items="viewerItems"' in gallery
+    assert ".task-card__thumbnail" in styles
+    assert "max-width: 100vw;" in styles
+    assert "max-height: 100dvh;" in styles
+    assert "object-fit: contain;" in styles
+    assert "grid-auto-rows: 1fr;" in styles
+    assert ".image-viewer__close,\n.image-viewer__nav {\n  position: fixed;" in styles
+    assert "background-color: rgb(22 37 55 / 94%);" in styles
+    assert "overscroll-behavior: none;" in styles
+    assert "touch-action: none;" in styles
 
 
 def test_vue_model_and_voice_settings_dom_contract() -> None:
     settings = _read("web/src/views/SettingsView.vue")
+    confirm = _read("web/src/components/ConfirmDialog.vue")
     voice = _read("web/src/components/VoiceSettings.vue")
     voice_store = _read("web/src/stores/voice.ts")
     styles = _read("web/src/styles.css")
@@ -180,14 +265,33 @@ def test_vue_model_and_voice_settings_dom_contract() -> None:
         "@input=\"handleInput\"",
         "listOpen.value = false",
         "api.setModelSettings(props.sessionId, model)",
+        "api.getCachedModelSettings(props.sessionId)",
+        ":placeholder=\"activeModel || defaultModel || '默认模型'\"",
         "<VoiceSettings />",
+        "<ConfirmDialog",
+        ':open="logoutConfirmOpen"',
+        'title="确认退出登录？"',
+        'confirm-label="确认退出"',
+        '@click="logoutConfirmOpen = true"',
     ):
         assert fragment in settings, fragment
     assert 'status.value = "正在加载…"' not in settings
     assert 'status.value = "正在保存…"' not in settings
+    assert "当前：" not in settings
+    for fragment in (
+        'class="confirm-overlay"',
+        'class="confirm-dialog"',
+        'class="confirm-dialog__actions"',
+        "emit('cancel')",
+        "emit('confirm')",
+    ):
+        assert fragment in confirm, fragment
 
     for fragment in (
         'class="settings-card voice-settings"',
+        "AudioLines",
+        'aria-label="选择音色"',
+        'active?.name || "选择音色"',
         'class="settings-toggle"',
         'class="settings-switch"',
         'type="checkbox"',
@@ -212,6 +316,10 @@ def test_vue_model_and_voice_settings_dom_contract() -> None:
     ):
         assert fragment in voice, fragment
     assert 'status.value = refresh ? "正在刷新…" : "正在加载…"' not in voice
+    assert "当前：" not in voice
+    assert "touch-action: manipulation;" in styles
+    assert "background: linear-gradient(145deg, #f06f78, #d94f5c) !important;" in styles
+    assert ".confirm-overlay" in styles
 
     for fragment in (
         'const PREFS_KEY = "leon_voice_prefs"',
