@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronLeft, ChevronRight, RefreshCw, X } from "@lucide/vue";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { galleryImages } from "../stores/images";
 
@@ -47,12 +48,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
 <template>
   <section class="page-panel" aria-labelledby="gallery-title">
     <header class="page-panel__header">
-      <div>
-        <p class="eyebrow">IMAGE GALLERY</p>
-        <h2 id="gallery-title">图库</h2>
-      </div>
-      <button class="ghost-button" type="button" :disabled="loading" @click="emit('refresh')">
-        {{ loading ? "刷新中…" : "刷新" }}
+      <h2 id="gallery-title">图库</h2>
+      <button class="icon-button" type="button" :disabled="loading" aria-label="刷新图库" title="刷新图库" @click="emit('refresh')">
+        <RefreshCw :class="{ spinning: loading }" :size="17" :stroke-width="2" aria-hidden="true" />
       </button>
     </header>
 
@@ -87,7 +85,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
       @click.self="closeViewer"
     >
       <button class="image-viewer__close" type="button" aria-label="关闭" @click="closeViewer">
-        ×
+        <X :size="22" :stroke-width="2" aria-hidden="true" />
       </button>
       <button
         v-if="galleryImages.length > 1"
@@ -96,7 +94,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
         aria-label="上一张"
         @click="moveViewer(-1)"
       >
-        ‹
+        <ChevronLeft :size="30" :stroke-width="1.8" aria-hidden="true" />
       </button>
       <figure class="image-viewer__figure">
         <img :src="selectedImage.url" :alt="selectedImage.sourceText || '生成图片'" />
@@ -112,7 +110,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
         aria-label="下一张"
         @click="moveViewer(1)"
       >
-        ›
+        <ChevronRight :size="30" :stroke-width="1.8" aria-hidden="true" />
       </button>
     </div>
   </section>

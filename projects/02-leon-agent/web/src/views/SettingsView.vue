@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { RefreshCw } from "@lucide/vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { ApiError, api, type ModelSettingsResponse } from "../api/client";
 import VoiceSettings from "../components/VoiceSettings.vue";
@@ -116,17 +117,16 @@ onMounted(() => void loadSettings());
 <template>
   <section class="page-panel settings-panel" aria-labelledby="settings-title">
     <header class="page-panel__header">
-      <div>
-        <p class="eyebrow">SESSION SETTINGS</p>
-        <h2 id="settings-title">设置</h2>
-      </div>
+      <h2 id="settings-title">设置</h2>
       <button
-        class="ghost-button"
+        class="icon-button"
         type="button"
         :disabled="loading"
+        aria-label="刷新模型目录"
+        title="刷新模型目录"
         @click="void loadSettings(true)"
       >
-        {{ loading ? "加载中…" : "刷新目录" }}
+        <RefreshCw :class="{ spinning: loading }" :size="17" :stroke-width="2" aria-hidden="true" />
       </button>
     </header>
 
@@ -183,7 +183,7 @@ onMounted(() => void loadSettings());
         </p>
       </div>
 
-      <p class="settings-default">留空并保存：跟随当前 provider 默认模型（{{ defaultModel || "未知" }}）</p>
+      <p class="settings-default">留空保存：跟随当前服务的默认模型（{{ defaultModel || "未知" }}）</p>
       <p class="settings-status" :data-tone="statusTone" role="status">{{ status }}</p>
     </article>
 

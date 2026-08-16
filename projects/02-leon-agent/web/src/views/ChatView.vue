@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ArrowDown, History, LogOut, Send, X } from "@lucide/vue";
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
@@ -151,19 +152,20 @@ function timelineValue(value: unknown): string {
 
 function timelineDetail(event: LeonEvent): string {
   const data = event.data || {};
-  const preferred = [
-    "content",
-    "error",
-    "tool_name",
-    "mode_name",
-    "mode_id",
-    "status",
-    "voice_name",
-    "job_id",
-  ];
+  const labels: Record<string, string> = {
+    content: "内容",
+    error: "错误",
+    tool_name: "工具",
+    mode_name: "模式",
+    mode_id: "模式编号",
+    status: "状态",
+    voice_name: "音色",
+    job_id: "任务编号",
+  };
+  const preferred = Object.keys(labels);
   const parts = preferred
     .filter((key) => data[key] !== undefined && data[key] !== null && data[key] !== "")
-    .map((key) => `${key}: ${timelineValue(data[key])}`);
+    .map((key) => `${labels[key]}：${timelineValue(data[key])}`);
   if (!parts.length) {
     for (const [key, value] of Object.entries(data)) {
       parts.push(`${key}: ${timelineValue(value)}`);
@@ -601,7 +603,7 @@ function handleEvent(event: LeonEvent): void {
   recordTimelineEvent(event);
   switch (event.event) {
     case "session.connected":
-      setConnection("Gateway 已连接", "ok");
+      setConnection("已连接", "ok");
       break;
     case "user.message": {
       const content = asString(data.content);
@@ -724,8 +726,8 @@ async function bootstrap(): Promise<void> {
       api.setToken("");
       setConnection("需要登录", "neutral");
     } else {
-      setConnection("Gateway 不可用", "error");
-      loginError.value = error instanceof Error ? error.message : "无法连接 Gateway";
+      setConnection("服务不可用", "error");
+      loginError.value = error instanceof Error ? error.message : "无法连接服务";
     }
   } finally {
     booting.value = false;
@@ -871,36 +873,36 @@ onBeforeUnmount(() => {
 <template>
   <main class="chat-shell">
     <section v-if="!authenticated" class="login-card" aria-labelledby="login-title">
-      <p class="eyebrow">LEON AGENT · VUE 3</p>
-      <h1 id="login-title">登录聊天工作台</h1>
-      <p class="subtitle">登录后会恢复当前会话，并继续接收任务与语音事件。</p>
+      <h1 id="login-title">Leon</h1>
+      <p class="subtitle">输入访问口令，继续上次对话。</p>
       <form class="login-form" @submit.prevent="login">
-        <label for="token">Gateway Token</label>
-        <input id="token" v-model="tokenInput" type="password" autocomplete="current-password" placeholder="公网部署时填写 LEON_API_TOKEN" />
-        <button type="submit" :disabled="booting || !tokenInput.trim()">进入 Leon</button>
+        <label for="token">访问口令</label>
+        <input id="token" v-model="tokenInput" type="password" autocomplete="current-password" placeholder="请输入访问口令" />
+        <button type="submit" :disabled="booting || !tokenInput.trim()">进入</button>
       </form>
       <p v-if="loginError" class="form-error">{{ loginError }}</p>
-      <p v-else-if="booting" class="form-hint">正在检查 Gateway…</p>
+      <p v-else-if="booting" class="form-hint">正在连接…</p>
     </section>
 
-    <section v-else class="chat-app" aria-label="Leon Agent 工作台">
+    <section v-else class="chat-app" aria-label="Leon 工作台">
       <header class="chat-header">
-        <div>
-          <p class="eyebrow">LEON AGENT · VUE 3</p>
-          <h1>Leon Agent</h1>
-        </div>
+        <h1>Leon</h1>
         <div class="header-actions">
           <button
-            class="ghost-button timeline-toggle"
+            class="header-icon-button timeline-toggle"
             type="button"
             aria-controls="timeline-panel"
             :aria-expanded="timelineOpen"
+            aria-label="运行记录"
+            title="运行记录"
             @click="toggleTimeline"
           >
-            时间线
+            <History :size="18" :stroke-width="2" aria-hidden="true" />
           </button>
           <AppStatus :label="connectionLabel" :tone="connectionTone" />
-          <button class="ghost-button" type="button" @click="logout">退出</button>
+          <button class="header-icon-button" type="button" aria-label="退出" title="退出" @click="logout">
+            <LogOut :size="18" :stroke-width="2" aria-hidden="true" />
+          </button>
         </div>
       </header>
 
@@ -912,13 +914,13 @@ onBeforeUnmount(() => {
         tabindex="-1"
         role="dialog"
         aria-modal="false"
-        aria-label="Agent Timeline"
+        aria-label="运行记录"
         @keydown.escape="closeTimeline"
       >
         <div class="timeline-panel__header">
           <div>
-            <h2>Agent Timeline</h2>
-            <p>最近的 SSE 决策事件</p>
+            <h2>运行记录</h2>
+            <p>最近的运行事件</p>
           </div>
           <div class="timeline-panel__actions">
             <button type="button" @click="clearTimeline()">清空</button>
@@ -938,7 +940,6 @@ onBeforeUnmount(() => {
                 <strong>{{ entry.label }}</strong>
                 <time>{{ entry.time }}</time>
               </div>
-              <small>{{ entry.event }}</small>
               <pre v-if="entry.detail" class="timeline-entry__detail">{{ entry.detail }}</pre>
             </div>
           </li>
@@ -956,7 +957,7 @@ onBeforeUnmount(() => {
           >
             <div v-if="!messages.length" class="empty-state">
               <strong>开始一段对话</strong>
-              <span>普通聊天和生图请求都会沿用现有 Gateway 协议。</span>
+              <span>聊天、生图，都可以。</span>
             </div>
             <MessageBubble
               v-for="message in messages"
@@ -975,7 +976,8 @@ onBeforeUnmount(() => {
             aria-label="回到最新消息"
             @click="scrollToLatest(true)"
           >
-            ↓ 回到最新
+            <ArrowDown :size="15" :stroke-width="2.2" aria-hidden="true" />
+            <span>最新</span>
           </button>
         </div>
 
@@ -1010,7 +1012,7 @@ onBeforeUnmount(() => {
               v-model="draft"
               rows="1"
               maxlength="8000"
-              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              placeholder="有什么想聊的？"
               :disabled="sending"
               @keydown="handleComposerKeydown"
               @input="handleComposerInput"
@@ -1018,8 +1020,15 @@ onBeforeUnmount(() => {
               @blur="scheduleHideModeSuggestions"
             ></textarea>
           </div>
-          <button type="submit" :disabled="sending || !draft.trim()">
-            {{ sending ? "发送中…" : "发送" }}
+          <button
+            class="composer__send"
+            type="submit"
+            :disabled="sending || !draft.trim()"
+            :aria-label="sending ? '正在发送' : '发送消息'"
+            :title="sending ? '正在发送' : '发送消息'"
+          >
+            <span v-if="sending" class="send-spinner" aria-hidden="true"></span>
+            <Send v-else :size="18" :stroke-width="2" aria-hidden="true" />
           </button>
         </form>
       </section>
@@ -1061,7 +1070,7 @@ onBeforeUnmount(() => {
         @keydown.escape="closePreview"
       >
         <button class="image-viewer__close" type="button" aria-label="关闭" @click="closePreview">
-          ×
+          <X :size="22" :stroke-width="2" aria-hidden="true" />
         </button>
         <figure class="image-viewer__figure">
           <img :src="previewUrl" alt="图片预览" />

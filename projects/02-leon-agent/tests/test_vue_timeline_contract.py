@@ -39,19 +39,18 @@ def test_timeline_toggle_and_details_are_accessible_plain_text_vue_bindings() ->
     chat = _read("web/src/views/ChatView.vue")
 
     for fragment in (
-        'class="ghost-button timeline-toggle"',
+        'class="header-icon-button timeline-toggle"',
         'aria-controls="timeline-panel"',
         ':aria-expanded="timelineOpen"',
         "@click=\"toggleTimeline\"",
         'id="timeline-panel"',
         'role="dialog"',
-        'aria-label="Agent Timeline"',
+        'aria-label="运行记录"',
         "@keydown.escape=\"closeTimeline\"",
         'v-for="entry in timelineEntries"',
         ':key="entry.id"',
         ':data-kind="entry.kind"',
         "{{ entry.label }}",
-        "{{ entry.event }}",
         "{{ entry.detail }}",
         "{{ entry.time }}",
         "@click=\"clearTimeline()\"",

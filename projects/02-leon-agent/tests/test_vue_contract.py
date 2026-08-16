@@ -35,8 +35,8 @@ def test_vue_entry_is_the_only_web_client() -> None:
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-9"' in main
-    assert "leon-vue-v9" in service_worker
+    assert 'register("/sw.js?v=vue-10"' in main
+    assert "leon-vue-v10" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:

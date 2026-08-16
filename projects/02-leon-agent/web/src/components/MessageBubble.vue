@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Check, Copy, Pencil, RotateCcw, Volume2 } from "@lucide/vue";
 import { computed, nextTick, onBeforeUnmount, ref } from "vue";
 import type { ChatMessage } from "../stores/messages";
 import { activeVoiceId, voiceEnabled } from "../stores/voice";
@@ -210,7 +211,9 @@ onBeforeUnmount(() => {
         v-if="!isVoiceMessage && message.role === 'agent' && message.status === 'error'"
         class="message-toolbar"
       >
-        <button type="button" @click="emit('retry', message.id)">重试</button>
+        <button type="button" aria-label="重试" title="重试" @click="emit('retry', message.id)">
+          <RotateCcw class="toolbar-icon" :size="16" :stroke-width="2" aria-hidden="true" />
+        </button>
       </div>
       <div v-else-if="!isVoiceMessage && showToolbar && !editing" class="message-toolbar">
         <button
@@ -226,14 +229,25 @@ onBeforeUnmount(() => {
           <span v-else-if="currentSpeechStatus === 'playing'" class="speech-wave" aria-hidden="true">
             <i></i><i></i><i></i><i></i>
           </span>
-          <span>{{ speechLabel }}</span>
+          <Volume2 v-else class="toolbar-icon" :size="16" :stroke-width="2" aria-hidden="true" />
         </button>
-        <button v-if="message.text" type="button" @click="void copyText()">
-          {{ copied ? "✓ 已复制" : "复制" }}
+        <button
+          v-if="message.text"
+          type="button"
+          :aria-label="copied ? '已复制' : '复制'"
+          :title="copied ? '已复制' : '复制'"
+          @click="void copyText()"
+        >
+          <Check v-if="copied" class="toolbar-icon" :size="16" :stroke-width="2.2" aria-hidden="true" />
+          <Copy v-else class="toolbar-icon" :size="16" :stroke-width="2" aria-hidden="true" />
         </button>
-        <button type="button" @click="emit('retry', message.id)">重试</button>
-        <button v-if="message.text" type="button" @click="startEditing">编辑</button>
-        <span v-if="elapsedLabel()">{{ elapsedLabel() }}</span>
+        <button type="button" aria-label="重试" title="重试" @click="emit('retry', message.id)">
+          <RotateCcw class="toolbar-icon" :size="16" :stroke-width="2" aria-hidden="true" />
+        </button>
+        <button v-if="message.text" type="button" aria-label="编辑" title="编辑" @click="startEditing">
+          <Pencil class="toolbar-icon" :size="16" :stroke-width="2" aria-hidden="true" />
+        </button>
+        <span v-if="elapsedLabel()" class="message-elapsed">{{ elapsedLabel() }}</span>
       </div>
     </div>
   </article>

@@ -23,6 +23,10 @@ export const voiceCatalogLoading = ref(false);
 
 let catalogRequest: Promise<boolean> | null = null;
 
+function isRetiredVoice(voice: { id: string; name?: string | null }): boolean {
+  return voice.name?.trim().toLocaleLowerCase() === "jok" || voice.id.trim().toLocaleLowerCase() === "jok";
+}
+
 function readPrefs(): void {
   if (typeof localStorage === "undefined") return;
   try {
@@ -71,14 +75,18 @@ export function setVoiceCatalog(payload: {
 }): void {
   voiceEnabled.value = payload.enabled;
   voiceModels.value = payload.models || [];
-  voices.value = (payload.voices || []).map((voice) => ({
-    id: voice.id,
-    name: voice.name || voice.id,
-    model: voice.model || "",
-    languages: voice.languages || [],
-    demo: voice.demo || "",
-  }));
-  defaultVoiceId.value = payload.default_voice_id || "";
+  voices.value = (payload.voices || [])
+    .filter((voice) => !isRetiredVoice(voice))
+    .map((voice) => ({
+      id: voice.id,
+      name: voice.name || voice.id,
+      model: voice.model || "",
+      languages: voice.languages || [],
+      demo: voice.demo || "",
+    }));
+  defaultVoiceId.value = voices.value.some((voice) => voice.id === payload.default_voice_id)
+    ? payload.default_voice_id
+    : voices.value[0]?.id || "";
   voiceCatalogLoaded.value = true;
   if (selectedVoiceId.value && !voices.value.some((voice) => voice.id === selectedVoiceId.value)) {
     selectedVoiceId.value = "";

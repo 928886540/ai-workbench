@@ -204,6 +204,19 @@ Merged from `feat/leon-ux-polish`:
 - Error cards retry the matching previous user message directly
 - CLI image-generation progress indicator
 
+Mobile-compact pass (`feat/leon-web-mobile-compact`, SW cache `leon-vue-v10`):
+
+- Single-line chat header and page headings; English eyebrow labels (`IMAGE JOBS` etc.) removed
+- Page/composer/bubble paddings tightened for 390px-class viewports; composer placeholder is one
+  friendly Chinese sentence
+- Message bubbles are plain rounded rectangles without tails; per-message actions are
+  `@lucide/vue` icon buttons (copy, edit, retry, TTS) instead of text links
+- Voice catalog defaults to collapsed; the JOK voice is filtered out of the catalog and never
+  selectable; the preview button cycles loading/playing/stop states
+- Full-screen viewer spans the viewport (`100vw`/`100dvh`, cover) with a circular close button
+  seated inside the top safe area, shared by chat and gallery
+- Icon system unified on `@lucide/vue` (no hand-drawn SVG buttons)
+
 Deliberately excluded:
 
 - QR-code dependency and terminal QR output

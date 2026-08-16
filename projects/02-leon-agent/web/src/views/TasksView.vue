@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { RefreshCw } from "@lucide/vue";
 import { imageTasks } from "../stores/images";
 
 defineProps<{
@@ -37,12 +38,9 @@ function progressLabel(progress: number | null): string {
 <template>
   <section class="page-panel" aria-labelledby="tasks-title">
     <header class="page-panel__header">
-      <div>
-        <p class="eyebrow">IMAGE JOBS</p>
-        <h2 id="tasks-title">生图任务</h2>
-      </div>
-      <button class="ghost-button" type="button" :disabled="loading" @click="emit('refresh')">
-        {{ loading ? "刷新中…" : "刷新" }}
+      <h2 id="tasks-title">生图任务</h2>
+      <button class="icon-button" type="button" :disabled="loading" aria-label="刷新任务" title="刷新任务" @click="emit('refresh')">
+        <RefreshCw :class="{ spinning: loading }" :size="17" :stroke-width="2" aria-hidden="true" />
       </button>
     </header>
 

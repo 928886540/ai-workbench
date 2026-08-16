@@ -36,6 +36,7 @@ DEFAULT_PORT = 4173
 FAKE_SESSION_ID = "vue-e2e-session"
 FAKE_TOKEN = "vue-e2e-token"
 FAKE_VOICE_ID = "689334e84d3396ad1d28ee9e"
+JOK_VOICE_ID = "jok-voice-unused"
 
 
 FAKE_BROWSER_SCRIPT = r"""
@@ -160,7 +161,28 @@ class FakeGateway:
             _json_response(route, {"session_id": FAKE_SESSION_ID, "messages": []})
             return
         if path == f"{session_prefix}/image-state" and method == "GET":
-            _json_response(route, {"tasks": [], "images": [], "errors": {}})
+            _json_response(
+                route,
+                {
+                    "tasks": [],
+                    "images": [
+                        {
+                            "job_id": "fake-image-job",
+                            "image_url": "/api/fake-image",
+                            "source_text": "测试图片",
+                            "created_at": 1,
+                        }
+                    ],
+                    "errors": {},
+                },
+            )
+            return
+        if path == "/api/fake-image" and method == "GET":
+            fake_svg = (
+                b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="3">'
+                b'<rect width="4" height="3" fill="#2783de"/></svg>'
+            )
+            route.fulfill(status=200, content_type="image/svg+xml", body=fake_svg)
             return
         if path == f"{session_prefix}/messages" and method == "POST":
             _json_response(
@@ -210,15 +232,22 @@ class FakeGateway:
                 route,
                 {
                     "enabled": True,
-                    "default_voice_id": FAKE_VOICE_ID,
+                    "default_voice_id": JOK_VOICE_ID,
                     "models": [{"id": "index-tts2", "name": "Fake TTS"}],
                     "voices": [
+                        {
+                            "id": JOK_VOICE_ID,
+                            "name": "JOK",
+                            "model": "index-tts2",
+                            "languages": ["zh-CN"],
+                            "demo": None,
+                        },
                         {
                             "id": FAKE_VOICE_ID,
                             "name": "测试音色",
                             "model": "index-tts2",
                             "languages": ["zh-CN"],
-                            "demo": None,
+                            "demo": "/api/voice/clips/demo-voice",
                         }
                     ],
                 },
@@ -458,14 +487,14 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
 
         try:
             page.goto(base_url, wait_until="domcontentloaded")
-            login_heading = page.get_by_role("heading", name="登录聊天工作台")
+            login_heading = page.get_by_role("heading", name="Leon")
             login_heading.wait_for(state="visible")
             check("登录页可见（初始 token 被拒绝）", login_heading.is_visible())
 
             page.locator("#token").fill(FAKE_TOKEN)
-            page.get_by_role("button", name="进入 Leon").click()
-            page.get_by_role("heading", name="Leon Agent").wait_for(state="visible")
-            page.get_by_text("Gateway 已连接").wait_for(state="visible")
+            page.get_by_role("button", name="进入").click()
+            page.get_by_role("heading", name="Leon").wait_for(state="visible")
+            page.get_by_text("已连接").wait_for(state="visible")
             check("登录后 Vue 工作台可见", True)
             stored_session = page.evaluate("() => localStorage.getItem('leon_session')")
             check("登录后创建并持久化会话", stored_session == FAKE_SESSION_ID, repr(stored_session))
@@ -482,13 +511,13 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 "([event, data]) => window.__leonEmit(event, data)",
                 ["tool.finished", {"tool_name": "fake_tool", "ok": True}],
             )
-            timeline_toggle = page.get_by_role("button", name="时间线")
+            timeline_toggle = page.get_by_role("button", name="运行记录")
             timeline_toggle.click()
             timeline_panel = page.locator("#timeline-panel")
             timeline_panel.wait_for(state="visible")
             timeline_entries = timeline_panel.locator(".timeline-entry")
             check(
-                "Agent Timeline 收集 SSE 决策事件",
+                "运行记录收集 SSE 决策事件",
                 timeline_entries.count() >= 3
                 and "工具开始" in timeline_panel.inner_text()
                 and "fake_tool" in timeline_panel.inner_text(),
@@ -500,7 +529,7 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             )
             timeline_panel.get_by_role("button", name="关闭时间线").click()
 
-            composer = page.locator("textarea[placeholder^='输入消息']")
+            composer = page.locator("textarea[placeholder='有什么想聊的？']")
             composer.fill("/nsfw --model ")
             suggestions = page.locator(".mode-suggestions .mode-suggestion")
             suggestions.first.wait_for(state="visible")
@@ -549,6 +578,24 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 and message_calls[-1]["body"].get("content") == "普通 provider-free 消息",
                 repr(message_calls[-1]["body"] if message_calls else None),
             )
+
+            page.get_by_role("button", name="图库").click()
+            page.get_by_role("heading", name="图库").wait_for(state="visible")
+            page.get_by_role("button", name="查看 测试图片").click()
+            viewer = page.locator(".image-viewer")
+            viewer.wait_for(state="visible")
+            image_box = viewer.locator(".image-viewer__figure img").bounding_box()
+            close_box = viewer.locator(".image-viewer__close").bounding_box()
+            check(
+                "全屏图片横向铺满并保留关闭安全区",
+                image_box is not None
+                and round(image_box["width"]) == 390
+                and close_box is not None
+                and close_box["y"] >= 20,
+                f"图片={image_box}，关闭={close_box}",
+            )
+            viewer.locator(".image-viewer__close").click()
+            page.get_by_role("button", name="聊天").click()
 
             for index in range(24):
                 page.evaluate(
@@ -628,6 +675,26 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 "语音 clip 请求保持在同源 fake Gateway",
                 any(call["path"] == "/api/voice/clips/clip-vue-e2e" for call in gateway.calls),
             )
+
+            page.get_by_role("button", name="设置").click()
+            page.get_by_role("heading", name="设置").wait_for(state="visible")
+            voice_toggle = page.get_by_role("button", name="选择音色")
+            voice_toggle.wait_for(state="visible")
+            check("语音列表默认收起", not page.locator(".voice-list").is_visible())
+            voice_toggle.click()
+            voice_list = page.locator(".voice-list")
+            voice_list.wait_for(state="visible")
+            check(
+                "已移除 JOK 音色并保留可用音色",
+                "JOK" not in voice_list.inner_text()
+                and page.get_by_role("button", name="试听 测试音色").is_visible(),
+            )
+            page.get_by_role("button", name="试听 测试音色").click()
+            page.get_by_role("button", name="停止试听").wait_for(state="visible")
+            check("试听按钮进入播放状态", True)
+            page.get_by_role("button", name="停止试听").click()
+            page.get_by_role("button", name="聊天").click()
+            page.get_by_role("heading", name="Leon").wait_for(state="visible")
 
             gateway.token_valid = False
             page.evaluate("() => window.__leonFailEvents(true)")
