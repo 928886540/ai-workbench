@@ -753,7 +753,15 @@ async def send_message(
 
     def on_event(event) -> None:  # noqa: ANN001
         kind = event.kind
-        if kind == "tool_started":
+        if kind == "assistant_delta" and event.content:
+            bus.publish(
+                LeonEvent(
+                    event="assistant.delta",
+                    session_id=session_id,
+                    data={"delta": event.content},
+                )
+            )
+        elif kind == "tool_started":
             bus.publish(
                 LeonEvent(
                     event="tool.started",

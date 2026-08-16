@@ -234,6 +234,19 @@ W4/W5 completion pass (SW cache `leon-vue-v11`):
 - Theme base: core palette extracted to CSS variables in `:root` (`--bg/--surface/--text/--primary/
   --line/--danger` …) to prepare for dark mode or custom wallpapers
 
+True streaming:
+
+- `LLMClient.chat_turn(on_delta=...)` streams with `stream=True` +
+  `stream_options={"include_usage": True}`; content fragments fire `on_delta`, tool-call argument
+  fragments are stitched back per index, and the final usage chunk feeds the W4 meta pipeline
+- The agent loop forwards deltas as `assistant_delta` events; the Gateway republishes them as SSE
+  `assistant.delta`, which the Vue client has always handled (appends to the streaming bubble)
+- `assistant.delta` bypasses the 100-event replay window so deltas cannot evict state events;
+  reconnecting clients recover full text from `assistant.completed`
+- The CLI status line switches from「模型思考中」to「正在生成」on the first delta
+- Clients whose `chat_turn` lacks `on_delta` (older fakes/tests) are detected by signature and keep
+  the non-streaming path
+
 Deliberately excluded:
 
 - QR-code dependency and terminal QR output

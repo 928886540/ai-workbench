@@ -597,6 +597,30 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 meta_text.replace("\n", " "),
             )
 
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["assistant.delta", {"delta": "流式"}],
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["assistant.delta", {"delta": "片段上屏"}],
+            )
+            streaming_bubble = page.locator(
+                ".message-row[data-role='agent'] .message-content", has_text="流式片段上屏"
+            )
+            streaming_bubble.wait_for(state="visible")
+            check(
+                "assistant.delta 流式片段实时上屏",
+                page.get_by_text("正在生成…").count() >= 1,
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                [
+                    "assistant.completed",
+                    {"content": "流式片段上屏", "usage": {"input_tokens": 9, "output_tokens": 9}},
+                ],
+            )
+
             mic_button = page.get_by_role("button", name="语音输入")
             mic_button.wait_for(state="visible")
             mic_button.click()

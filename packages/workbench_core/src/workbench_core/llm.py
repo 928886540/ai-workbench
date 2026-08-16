@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
 from threading import Event
@@ -102,6 +102,7 @@ class LLMClient:
         response_format: dict[str, Any] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         cancel_event: Event | None = None,
+        on_delta: Callable[[str], None] | None = None,
     ) -> ChatTurn:
         if cancel_event is not None and cancel_event.is_set():
             raise CancelledError("LLM request cancelled")
@@ -119,6 +120,11 @@ class LLMClient:
             kwargs["tool_choice"] = tool_choice or "auto"
         if response_format is not None:
             kwargs["response_format"] = response_format
+
+        if on_delta is not None:
+            return self._chat_turn_streaming(
+                kwargs, cancel_event=cancel_event, on_delta=on_delta
+            )
 
         response = self._client.chat.completions.create(**kwargs)
         if cancel_event is not None and cancel_event.is_set():
@@ -172,3 +178,95 @@ class LLMClient:
         if cancel_event is not None and cancel_event.is_set():
             raise CancelledError("LLM request cancelled")
         return result
+
+    def _chat_turn_streaming(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        cancel_event: Event | None,
+        on_delta: Callable[[str], None],
+    ) -> ChatTurn:
+        """Stream one completion, accumulating the same ChatTurn shape.
+
+        Tool-call arguments arrive as per-index fragments and must be stitched
+        back together before the runtime can execute them. The final chunk
+        carries usage when the provider honours ``stream_options``; a missing
+        usage stays ``None`` so consumers follow the render-nothing rule.
+        """
+        stream = self._client.chat.completions.create(
+            stream=True,
+            stream_options={"include_usage": True},
+            **kwargs,
+        )
+        content_parts: list[str] = []
+        tool_calls_by_index: dict[int, dict[str, Any]] = {}
+        usage: dict[str, int] | None = None
+        served_model: str | None = None
+        for chunk in stream:
+            if cancel_event is not None and cancel_event.is_set():
+                raise CancelledError("LLM request cancelled")
+            if served_model is None:
+                served_model = str(getattr(chunk, "model", "") or "").strip() or None
+            usage_obj = getattr(chunk, "usage", None)
+            prompt_tokens = getattr(usage_obj, "prompt_tokens", None)
+            completion_tokens = getattr(usage_obj, "completion_tokens", None)
+            if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
+                usage = {"input_tokens": prompt_tokens, "output_tokens": completion_tokens}
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            delta = getattr(choices[0], "delta", None)
+            if delta is None:
+                continue
+            piece = getattr(delta, "content", None)
+            if piece:
+                content_parts.append(piece)
+                on_delta(piece)
+            for fragment in getattr(delta, "tool_calls", None) or []:
+                index = getattr(fragment, "index", 0) or 0
+                slot = tool_calls_by_index.setdefault(
+                    index, {"id": "", "name": "", "arguments": ""}
+                )
+                if getattr(fragment, "id", None):
+                    slot["id"] = fragment.id
+                function = getattr(fragment, "function", None)
+                if function is not None:
+                    if getattr(function, "name", None):
+                        slot["name"] += function.name
+                    if getattr(function, "arguments", None):
+                        slot["arguments"] += function.arguments
+
+        content = "".join(content_parts) or None
+        tool_calls: list[ToolCall] = []
+        raw_tool_calls: list[dict[str, Any]] = []
+        for index in sorted(tool_calls_by_index):
+            slot = tool_calls_by_index[index]
+            if not slot["name"]:
+                continue
+            tool_calls.append(
+                ToolCall(
+                    id=slot["id"],
+                    name=slot["name"],
+                    arguments=slot["arguments"] or "{}",
+                )
+            )
+            raw_tool_calls.append(
+                {
+                    "id": slot["id"],
+                    "type": "function",
+                    "function": {
+                        "name": slot["name"],
+                        "arguments": slot["arguments"] or "{}",
+                    },
+                }
+            )
+        raw_message: dict[str, Any] = {"role": "assistant", "content": content}
+        if raw_tool_calls:
+            raw_message["tool_calls"] = raw_tool_calls
+        return ChatTurn(
+            content=content,
+            tool_calls=tool_calls,
+            raw_message=raw_message,
+            usage=usage,
+            model=served_model,
+        )

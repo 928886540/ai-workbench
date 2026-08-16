@@ -136,7 +136,11 @@ class SessionEventBus:
         with self._lock:
             if event.id is None:
                 event.id = _next_event_id()
-            self._history.append(event)
+            # Streaming deltas are transient: they would evict state events
+            # from the bounded replay window. Live subscribers still get them;
+            # reconnecting clients recover the full text from assistant.completed.
+            if event.event != "assistant.delta":
+                self._history.append(event)
             queues = list(self._queues)
             for q in queues:
                 self._enqueue(q, event)

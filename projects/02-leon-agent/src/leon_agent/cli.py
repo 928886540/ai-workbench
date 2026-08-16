@@ -939,6 +939,10 @@ class LeonConsole:
             if ui is not None:
                 ui._set_status(f"◐ 模型思考中 · 第 {event.turn} 轮 · Esc/Ctrl+C 取消")
             return
+        if event.kind == "assistant_delta":
+            if ui is not None:
+                ui._set_status("✎ 正在生成 · Esc/Ctrl+C 取消")
+            return
         if event.kind == "cancelled":
             if ui is not None:
                 ui._set_status("⏹ 取消中 · 迟到结果会被丢弃")

@@ -122,6 +122,22 @@ class AgentRuntime:
         )
         return {"cancel_event": cancel_event} if supports_cancel else {}
 
+    @staticmethod
+    def _delta_kwargs(
+        method: Callable[..., Any], on_delta: Callable[[str], None] | None
+    ) -> dict[str, Any]:
+        if on_delta is None:
+            return {}
+        try:
+            parameters = signature(method).parameters.values()
+        except (TypeError, ValueError):
+            return {"on_delta": on_delta}
+        supports_delta = any(
+            parameter.name == "on_delta" or parameter.kind == Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        return {"on_delta": on_delta} if supports_delta else {}
+
     def _chat_turn(
         self,
         messages: list[dict[str, Any]],
@@ -129,6 +145,7 @@ class AgentRuntime:
         tools: list[dict[str, Any]] | None,
         temperature: float,
         cancel_event: Event | None,
+        on_delta: Callable[[str], None] | None = None,
     ) -> ChatTurn:
         self._check_cancelled(cancel_event)
         kwargs: dict[str, Any] = {
@@ -136,6 +153,7 @@ class AgentRuntime:
             "temperature": temperature,
         }
         kwargs.update(self._cancel_kwargs(self.client.chat_turn, cancel_event))
+        kwargs.update(self._delta_kwargs(self.client.chat_turn, on_delta))
         try:
             response = self.client.chat_turn(messages, **kwargs)
         except CancelledError as exc:
@@ -215,11 +233,16 @@ class AgentRuntime:
                 current_turn = turn
                 self._check_cancelled(cancel_event)
                 self._emit(AgentEvent(kind="turn_started", turn=turn))
+
+                def emit_delta(piece: str, turn: int = turn) -> None:
+                    self._emit(AgentEvent(kind="assistant_delta", turn=turn, content=piece))
+
                 response = self._chat_turn(
                     messages,
                     tools=self.tools.schemas,
                     temperature=self.temperature,
                     cancel_event=cancel_event,
+                    on_delta=emit_delta,
                 )
                 accumulate_usage(response)
 

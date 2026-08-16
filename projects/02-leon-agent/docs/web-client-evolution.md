@@ -218,8 +218,10 @@ API，不证明真实 provider、Cloudflare 缓存规则或手机网络行为；
 Vue 已全面替换旧单文件客户端；Gateway 只托管 `web/dist/`，缺少构建产物时启动会明确失败。
 Gateway 自 W4 起在 `assistant.completed` 发送权威 `model` / `elapsed_ms` / `usage` 字段；取不到时为
 `null`，Vue 按「无值不渲染」规则降级为客户端观测耗时。
-Gateway 当前也没有真正发送 `assistant.delta`；Vue 保留兼容分支，真实回复仍以 `assistant.started` /
-`assistant.completed` 事件为主。
+Gateway 现已发送真实 `assistant.delta`：`chat_turn(on_delta=...)` 走 `stream=True` +
+`stream_options.include_usage`，工具调用的分片参数按 index 拼回完整 ChatTurn；`assistant.delta` 只投给
+在线订阅者，不进 100 条回放窗口（重连客户端靠 `assistant.completed` 的全文恢复）。CLI 在收到首个
+delta 时把状态行切为「正在生成」。
 SSE 回放窗口是进程内的最近 100 条，服务重启后不提供历史事件持久回放；页面刷新仍依赖 session/image-state
 接口恢复可见状态。
 

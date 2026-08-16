@@ -2,7 +2,13 @@ import json
 import threading
 
 import pytest
-from workbench_core.agent import AgentCancelled, AgentRuntime, AgentTool, ToolRegistry
+from workbench_core.agent import (
+    AgentCancelled,
+    AgentEvent,
+    AgentRuntime,
+    AgentTool,
+    ToolRegistry,
+)
 from workbench_core.agent.runtime import cancellation_scope
 from workbench_core.llm import ChatTurn, ToolCall
 
@@ -345,3 +351,32 @@ def test_cancellation_scope_reaches_runtime_without_changing_default_callers() -
 class NeverClientForScope:
     def chat_turn(self, messages, tools=None, temperature=0.2):  # noqa: ANN001, ARG002
         raise AssertionError("scoped cancellation must stop before the LLM")
+
+
+class StreamingClient:
+    def chat_turn(self, messages, tools=None, temperature=0.2, on_delta=None):  # noqa: ANN001
+        if on_delta is not None:
+            on_delta("he")
+            on_delta("llo")
+        return ChatTurn(
+            content="hello",
+            raw_message={"role": "assistant", "content": "hello"},
+        )
+
+
+def test_agent_runtime_emits_assistant_delta_events_in_order() -> None:
+    events: list[AgentEvent] = []
+    runtime = AgentRuntime(
+        client=StreamingClient(),  # type: ignore[arg-type]
+        tools=ToolRegistry([]),
+        system_prompt="test",
+        on_event=events.append,
+    )
+
+    result = runtime.run("hi")
+
+    assert result.answer == "hello"
+    deltas = [event.content for event in events if event.kind == "assistant_delta"]
+    assert deltas == ["he", "llo"]
+    assert events[0].kind == "turn_started"
+    assert events[-1].kind == "completed"
