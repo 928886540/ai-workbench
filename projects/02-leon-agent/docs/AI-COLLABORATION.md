@@ -234,6 +234,20 @@ W4/W5 completion pass (SW cache `leon-vue-v11`):
 - Theme base: core palette extracted to CSS variables in `:root` (`--bg/--surface/--text/--primary/
   --line/--danger` …) to prepare for dark mode or custom wallpapers
 
+De-clutter pass (SW cache `leon-vue-v12`):
+
+- Blue `Leon` brand + connection status render side by side, chat view only; Tasks/Gallery/Settings
+  show no product header. Logout is a full-width danger button at the bottom of Settings; the header
+  no longer exposes logout
+- Settings cards dropped one-time hints (base URL, provider id, "留空保存…", "N 个可用模型…",
+  "★ 可收藏"); status lines appear only while loading or on error
+- Model/voice refresh controls are subtle in-row icon buttons inside their cards
+- Voice autoplay is an iOS-style switch (native checkbox stays for a11y, visually hidden)
+- Voice catalog: 全部/收藏 tabs + 20-per-page pagination; the old favorites-only default (which hid
+  the catalog behind a single favorite) is gone
+- Agent bubble meta shows elapsed + `↑in/↓out` tokens only (model name removed) in a spaced,
+  right-aligned muted group
+
 True streaming:
 
 - `LLMClient.chat_turn(on_delta=...)` streams with `stream=True` +

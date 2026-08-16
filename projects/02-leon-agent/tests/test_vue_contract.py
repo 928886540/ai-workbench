@@ -35,8 +35,8 @@ def test_vue_entry_is_the_only_web_client() -> None:
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-11"' in main
-    assert "leon-vue-v11" in service_worker
+    assert 'register("/sw.js?v=vue-12"' in main
+    assert "leon-vue-v12" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:
@@ -191,4 +191,7 @@ def test_vue_model_and_voice_settings_dom_contract() -> None:
     # reactive store; VoiceSettings must not reference a nonexistent `payload`
     # variable after awaiting it.
     assert "status.value = payload.enabled" not in voice
-    assert "status.value = voiceEnabled.value" in voice
+    # Voice catalog is tabbed (all/favorites) and paginated instead of
+    # silently collapsing to favorites-only.
+    assert 'const voiceTab = ref<"all" | "favorites">("all")' in voice
+    assert "const PAGE_SIZE = 20" in voice

@@ -529,6 +529,14 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             page.get_by_role("heading", name="Leon").wait_for(state="visible")
             page.get_by_text("已连接").wait_for(state="visible")
             check("登录后 Vue 工作台可见", True)
+            brand = page.locator(".chat-header__brand")
+            check(
+                "Leon 品牌字呈主题蓝且连接状态紧随其旁",
+                brand.locator("h1").evaluate(
+                    "el => getComputedStyle(el).color !== 'rgb(16, 35, 61)'"
+                )
+                and brand.locator(".app-status").is_visible(),
+            )
             stored_session = page.evaluate("() => localStorage.getItem('leon_session')")
             check("登录后创建并持久化会话", stored_session == FAKE_SESSION_ID, repr(stored_session))
             check(
@@ -592,8 +600,8 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             )
             meta_text = meta_row.inner_text()
             check(
-                "assistant.completed 的 tokens 与模型名上屏",
-                "↑1.2k" in meta_text and "↓567" in meta_text and "fake-model-x" in meta_text,
+                "assistant.completed 的 tokens 上屏且不显示模型名",
+                "↑1.2k" in meta_text and "↓567" in meta_text and "fake-model-x" not in meta_text,
                 meta_text.replace("\n", " "),
             )
 
@@ -802,12 +810,33 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
 
             page.get_by_role("button", name="设置").click()
             page.get_by_role("heading", name="设置").wait_for(state="visible")
+            check(
+                "产品大标题只出现在聊天页",
+                not page.locator(".chat-header").is_visible(),
+            )
+            check(
+                "设置页底部提供大号退出登录按钮",
+                page.locator(".logout-big").is_visible()
+                and "退出登录" in page.locator(".logout-big").inner_text(),
+            )
             voice_toggle = page.get_by_role("button", name="选择音色")
             voice_toggle.wait_for(state="visible")
             check("语音列表默认收起", not page.locator(".voice-list").is_visible())
             voice_toggle.click()
             voice_list = page.locator(".voice-list")
             voice_list.wait_for(state="visible")
+            voice_tabs = page.locator(".voice-tabs button")
+            check(
+                "音色目录提供全部/收藏页签",
+                voice_tabs.count() == 2
+                and "全部" in voice_tabs.nth(0).inner_text()
+                and "收藏" in voice_tabs.nth(1).inner_text(),
+            )
+            autoplay_input = page.locator(".settings-toggle input")
+            check(
+                "自动朗读呈现为滑动开关",
+                autoplay_input.evaluate("el => getComputedStyle(el).opacity === '0'"),
+            )
             check(
                 "已移除 JOK 音色并保留可用音色",
                 "JOK" not in voice_list.inner_text()

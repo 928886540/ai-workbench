@@ -260,11 +260,10 @@ onBeforeUnmount(() => {
         <button v-if="message.text" type="button" aria-label="编辑" title="编辑" @click="startEditing">
           <Pencil class="toolbar-icon" :size="16" :stroke-width="2" aria-hidden="true" />
         </button>
-        <span v-if="elapsedLabel()" class="message-elapsed">{{ elapsedLabel() }}</span>
-        <span v-if="tokensLabel()" class="message-elapsed">{{ tokensLabel() }}</span>
-        <span v-if="message.meta.model" class="message-elapsed message-model">{{
-          message.meta.model
-        }}</span>
+        <span v-if="elapsedLabel() || tokensLabel()" class="message-meta">
+          <span v-if="elapsedLabel()">{{ elapsedLabel() }}</span>
+          <span v-if="tokensLabel()">{{ tokensLabel() }}</span>
+        </span>
       </div>
     </div>
   </article>

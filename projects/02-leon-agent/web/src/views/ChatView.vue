@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, History, LoaderCircle, LogOut, Mic, Send, Square, X } from "@lucide/vue";
+import { ArrowDown, History, LoaderCircle, Mic, Send, Square, X } from "@lucide/vue";
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
@@ -1047,8 +1047,11 @@ onBeforeUnmount(() => {
     </section>
 
     <section v-else class="chat-app" aria-label="Leon 工作台">
-      <header class="chat-header">
-        <h1>Leon</h1>
+      <header v-if="activeView === 'chat'" class="chat-header">
+        <div class="chat-header__brand">
+          <h1>Leon</h1>
+          <AppStatus :label="connectionLabel" :tone="connectionTone" />
+        </div>
         <div class="header-actions">
           <button
             class="header-icon-button timeline-toggle"
@@ -1060,10 +1063,6 @@ onBeforeUnmount(() => {
             @click="toggleTimeline"
           >
             <History :size="18" :stroke-width="2" aria-hidden="true" />
-          </button>
-          <AppStatus :label="connectionLabel" :tone="connectionTone" />
-          <button class="header-icon-button" type="button" aria-label="退出" title="退出" @click="logout">
-            <LogOut :size="18" :stroke-width="2" aria-hidden="true" />
           </button>
         </div>
       </header>
@@ -1235,7 +1234,7 @@ onBeforeUnmount(() => {
         :error="imageStateError"
         @refresh="refreshImageState"
       />
-      <SettingsView v-else :session-id="api.sessionId" />
+      <SettingsView v-else :session-id="api.sessionId" @logout="logout" />
 
       <BottomNav :active="activeView" @select="selectView" />
 
