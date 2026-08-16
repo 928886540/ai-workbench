@@ -43,7 +43,11 @@ const revisionLabel = computed(
 const renderedBody = computed(() => {
   const message = displayedMessage.value;
   if (message.role !== "agent" || message.status === "error") return "";
-  const imageUrls = [...new Set([...message.images, ...extractImageHrefs(message.text)])];
+  // Tool output is the authoritative image list. The model may repeat those
+  // URLs in prose, and rendering both channels creates duplicate/broken cards.
+  const imageUrls = message.images.length
+    ? [...new Set(message.images)]
+    : extractImageHrefs(message.text);
   return `${renderExplicitImages(imageUrls, "")}${renderMarkdown(stripImageLinks(message.text))}`;
 });
 

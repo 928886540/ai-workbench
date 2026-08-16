@@ -45,7 +45,7 @@ function bareUrlPattern(): RegExp {
 }
 
 function cleanBareUrl(value: string): string {
-  return value.replace(/[.,;!?，。；！？）]+$/, "");
+  return value.replace(/[.,;!?，。；！？）)\]}]+$/, "");
 }
 
 export function extractImageHrefs(raw: string): string[] {
@@ -56,25 +56,42 @@ export function extractImageHrefs(raw: string): string[] {
     if (href && isImageHref(href) && !urls.includes(href)) urls.push(href);
   };
   for (const match of text.matchAll(markdownLinkPattern())) append(match[1]);
-  for (const match of text.matchAll(bareUrlPattern())) append(match[0]);
+  // Markdown links already contributed their href. Scan only the remaining
+  // prose so the absolute URL inside `![...](https://...)` is not extracted a
+  // second time, often with the closing Markdown parenthesis attached.
+  const prose = text.replace(markdownLinkPattern(), "");
+  for (const match of prose.matchAll(bareUrlPattern())) append(match[0]);
   return urls;
+}
+
+function isImageLabel(value: string): boolean {
+  const normalized = value.replace(/[\s*_`#]/g, "").trim();
+  return /^(?:(?:最新)?第\d+张(?:图片|图)?|图片\d+)[:：]?$/.test(normalized);
 }
 
 /** Remove image links from prose after their URLs have been promoted to image cards. */
 export function stripImageLinks(raw: string): string {
-  return String(raw || "")
-    .split(/\r?\n/)
-    .map((line) => {
-      const withoutMarkdown = line.replace(markdownLinkPattern(), (whole, url: string) =>
-        isImageHref(safeHref(url)) ? "" : whole,
-      );
-      const withoutBareUrls = withoutMarkdown.replace(bareUrlPattern(), (whole) =>
-        isImageHref(safeHref(cleanBareUrl(whole))) ? "" : whole,
-      );
-      return /^\s*(?:\d+[.)]|[-*+])?\s*$/.test(withoutBareUrls) ? "" : withoutBareUrls;
-    })
-    .filter((line) => line.trim())
-    .join("\n");
+  const lines = String(raw || "").split(/\r?\n/);
+  const visible: string[] = [];
+  for (const line of lines) {
+    const hasImageLink = extractImageHrefs(line).length > 0;
+    const withoutMarkdown = line.replace(markdownLinkPattern(), (whole, url: string) =>
+      isImageHref(safeHref(url)) ? "" : whole,
+    );
+    const withoutBareUrls = withoutMarkdown.replace(bareUrlPattern(), (whole) =>
+      isImageHref(safeHref(cleanBareUrl(whole))) ? "" : whole,
+    );
+    const cleaned = withoutBareUrls.trim();
+    if (hasImageLink && isImageLabel(cleaned)) continue;
+    if (/^\s*(?:\d+[.)]|[-*+])?\s*$/.test(withoutBareUrls)) {
+      if (hasImageLink && visible.length && isImageLabel(visible[visible.length - 1])) {
+        visible.pop();
+      }
+      continue;
+    }
+    if (cleaned) visible.push(withoutBareUrls);
+  }
+  return visible.join("\n");
 }
 
 function renderInline(raw: string): string {
@@ -102,7 +119,7 @@ function renderInline(raw: string): string {
         : label;
     })
     .replace(/https?:\/\/[^\s<>"']+/gi, (rawUrl: string) => {
-      const value = rawUrl.replace(/[.,;!?，。；！？）]+$/, "");
+      const value = cleanBareUrl(rawUrl);
       const suffix = rawUrl.slice(value.length);
       const href = safeHref(value);
       if (!href || !isImageHref(href)) return rawUrl;

@@ -212,6 +212,8 @@ def test_vue_message_bubble_copy_edit_retry_contract() -> None:
     for fragment in (
         "export function extractImageHrefs(raw: string): string[]",
         "export function stripImageLinks(raw: string): string",
+        'const prose = text.replace(markdownLinkPattern(), "");',
+        "function isImageLabel(value: string): boolean",
         'renderExplicitImages(imageUrls, "")',
         "renderMarkdown(stripImageLinks(message.text))",
     ):
@@ -237,6 +239,10 @@ def test_vue_task_thumbnail_and_contain_viewer_contract() -> None:
     assert "ImageViewer" in gallery
     assert ':items="viewerItems"' in gallery
     assert ".task-card__thumbnail" in styles
+    assert ".markdown-image" in styles
+    assert "height: auto;" in styles
+    assert "max-height: none;" in styles
+    assert "object-fit: contain;" in styles
     assert "max-width: 100vw;" in styles
     assert "max-height: 100dvh;" in styles
     assert "object-fit: contain;" in styles

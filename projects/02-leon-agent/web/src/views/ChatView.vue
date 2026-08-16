@@ -883,8 +883,12 @@ function finishAssistant(
     }
   }
   if (completed) {
-    for (const url of extractImageHrefs(content)) {
-      if (!completed.images.includes(url)) completed.images.push(url);
+    // Keep structured tool images authoritative. Assistant prose often repeats
+    // the same URLs, and merging both sources can create duplicate cards.
+    if (!completed.images.length) {
+      for (const url of extractImageHrefs(content)) {
+        if (!completed.images.includes(url)) completed.images.push(url);
+      }
     }
     if (completed.images.length) completed.kind = "image-result";
     if (serverMeta.model) completed.meta.model = serverMeta.model;

@@ -273,10 +273,12 @@ class FakeGateway:
             )
             return
         if path in {"/api/fake-image", "/api/fake-image-2"} and method == "GET":
+            is_portrait = "latest-" in parsed.query
+            width, height = (1536, 2500) if is_portrait else (4, 3)
             fake_svg = (
-                b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="3">'
-                b'<rect width="4" height="3" fill="#2783de"/></svg>'
-            )
+                f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">'
+                '<rect width="100%" height="100%" fill="#2783de"/></svg>'
+            ).encode()
             route.fulfill(status=200, content_type="image/svg+xml", body=fake_svg)
             return
         if path == f"{session_prefix}/messages" and method == "POST":
@@ -1453,6 +1455,8 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             latest_tts_before = sum(
                 call["path"] == "/api/agent/tts" for call in gateway.calls
             )
+            latest_image_one = f"{base_url}/api/fake-image?filename=latest-1.png"
+            latest_image_two = f"{base_url}/api/fake-image-2?filename=latest-2.png"
             page.evaluate(
                 "([event, data]) => window.__leonEmit(event, data)",
                 ["tool.started", {"tool_name": "get_latest_images", "input": {"limit": 2}}],
@@ -1467,8 +1471,8 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                         "output": {
                             "ok": True,
                             "items": [
-                                {"image_url": "/api/fake-image?filename=latest-1.png"},
-                                {"image_url": "/api/fake-image-2?filename=latest-2.png"},
+                                {"image_url": latest_image_one},
+                                {"image_url": latest_image_two},
                             ],
                         },
                     },
@@ -1482,9 +1486,9 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                         "content": (
                             "最新的 2 张图：\n"
                             "1. [查看图片 1（写实基础）]"
-                            "(/api/fake-image?filename=latest-1.png)\n"
+                            f"({latest_image_one})\n"
                             "2. [查看图片 2（蒂法增强）]"
-                            "(/api/fake-image-2?filename=latest-2.png)"
+                            f"({latest_image_two})"
                         )
                     },
                 ],
@@ -1497,12 +1501,32 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             latest_image_sources = latest_images_row.locator(".markdown-image").evaluate_all(
                 "nodes => nodes.map(node => node.getAttribute('src'))"
             )
+            latest_image_metrics = latest_images_row.locator(".markdown-image").first.evaluate(
+                "node => ({ naturalWidth: node.naturalWidth, naturalHeight: node.naturalHeight, "
+                "clientWidth: node.clientWidth, clientHeight: node.clientHeight, "
+                "objectFit: getComputedStyle(node).objectFit })"
+            )
             check(
                 "查询最近图片直接渲染图片而不是查看链接列表",
                 latest_image_count == 2
                 and "查看图片" not in latest_images_row.inner_text(),
                 f"images={latest_image_count}, sources={latest_image_sources}, text="
                 f"{latest_images_row.inner_text().replace(chr(10), ' ')}",
+            )
+            check(
+                "聊天图片保持原始比例且不裁切",
+                latest_image_sources == [latest_image_one, latest_image_two]
+                and latest_image_metrics["naturalWidth"] == 1536
+                and latest_image_metrics["naturalHeight"] == 2500
+                and latest_image_metrics["naturalWidth"] > 0
+                and latest_image_metrics["naturalHeight"] > 0
+                and abs(
+                    latest_image_metrics["clientWidth"] / latest_image_metrics["clientHeight"]
+                    - latest_image_metrics["naturalWidth"] / latest_image_metrics["naturalHeight"]
+                )
+                < 0.02
+                and latest_image_metrics["objectFit"] == "contain",
+                f"sources={latest_image_sources}, metrics={latest_image_metrics}",
             )
             page.wait_for_timeout(200)
             latest_tts_after = sum(
@@ -1514,6 +1538,8 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 and latest_images_row.locator(".message-speak").count() == 0,
                 f"before={latest_tts_before}, after={latest_tts_after}",
             )
+            if args.screenshot:
+                page.screenshot(path=f"{args.screenshot}.latest.png", full_page=True)
 
             gateway.token_valid = False
             page.evaluate("() => window.__leonFailEvents(true)")
