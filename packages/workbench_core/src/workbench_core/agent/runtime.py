@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import CancelledError
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from inspect import Parameter, signature
 from threading import Event
 from typing import Any, Protocol
@@ -73,6 +74,50 @@ def _compact_result(result: dict[str, Any], limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + f"...<truncated {len(text) - limit} chars>"
+
+
+def _audit_payload(
+    tools: ToolExecutor,
+    method_name: str,
+    tool_name: str,
+    payload: dict[str, Any],
+    *,
+    hidden_keys: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Create a detached event/audit view and fail closed on projection errors."""
+
+    try:
+        detached = deepcopy(payload)
+        for key in hidden_keys:
+            detached.pop(key, None)
+        projector = getattr(tools, method_name, None)
+        if callable(projector):
+            projected = projector(tool_name, detached)
+        else:
+            projected = detached
+        if not isinstance(projected, dict):
+            raise TypeError("audit projection must return a dict")
+        audited = deepcopy(projected)
+        for key in hidden_keys:
+            audited.pop(key, None)
+        return audited
+    except Exception:  # noqa: BLE001 - audit output must fail closed
+        return {"audit_error": "projection_failed"}
+
+
+def _audit_tool_name(tools: ToolExecutor, tool_name: str) -> str:
+    """Use an executor's safe name view while keeping legacy executors compatible."""
+
+    projector = getattr(tools, "audit_name", None)
+    if not callable(projector):
+        return tool_name
+    try:
+        audited_name = projector(tool_name)
+    except Exception:  # noqa: BLE001 - audit output must fail closed
+        return "unknown_tool"
+    if not isinstance(audited_name, str) or not audited_name:
+        return "unknown_tool"
+    return audited_name
 
 
 class AgentRuntime:
@@ -253,48 +298,68 @@ class AgentRuntime:
                     for call in response.tool_calls:
                         self._check_cancelled(cancel_event)
                         arguments = parse_tool_arguments(call.arguments)
+                        parse_failed = "_error" in arguments
+                        audited_tool_name = _audit_tool_name(self.tools, call.name)
+                        audited_arguments = _audit_payload(
+                            self.tools,
+                            "audit_arguments",
+                            call.name,
+                            arguments,
+                            hidden_keys=("_raw",) if parse_failed else (),
+                        )
                         self._emit(
                             AgentEvent(
                                 kind="tool_started",
                                 turn=turn,
-                                tool_name=call.name,
-                                arguments=arguments,
+                                tool_name=audited_tool_name,
+                                arguments=audited_arguments,
                             )
                         )
                         self._check_cancelled(cancel_event)
                         if "_error" in arguments:
-                            result = {
+                            raw_result = {
                                 "ok": False,
                                 "error": arguments["_error"],
                                 "raw": arguments.get("_raw"),
                             }
                         else:
-                            result = self.tools.execute(call.name, arguments)
+                            raw_result = self.tools.execute(call.name, arguments)
                         self._check_cancelled(cancel_event)
                         direct_answer = (
-                            direct_answer_resolver(call.name, arguments, result)
-                            if direct_answer_resolver is not None
+                            direct_answer_resolver(call.name, arguments, raw_result)
+                            if direct_answer_resolver is not None and not parse_failed
                             else None
                         )
                         if direct_answer:
                             direct_answers.append(direct_answer)
                         self._check_cancelled(cancel_event)
-                        steps.append(ToolStep(call.name, arguments, result))
+                        audited_result = _audit_payload(
+                            self.tools,
+                            "audit_result",
+                            call.name,
+                            raw_result,
+                            hidden_keys=("raw",) if parse_failed else (),
+                        )
+                        steps.append(
+                            ToolStep(audited_tool_name, audited_arguments, audited_result)
+                        )
                         self._emit(
                             AgentEvent(
                                 kind="tool_finished",
                                 turn=turn,
-                                tool_name=call.name,
-                                arguments=arguments,
-                                result=result,
+                                tool_name=audited_tool_name,
+                                arguments=audited_arguments,
+                                result=audited_result,
                             )
                         )
                         self._check_cancelled(cancel_event)
+                        # ``messages`` is the in-memory LLM transcript. Persisted/event audit
+                        # consumers receive only ``audited_arguments``/``audited_result`` above.
                         messages.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": call.id,
-                                "content": _compact_result(result, self.result_limit),
+                                "content": _compact_result(raw_result, self.result_limit),
                             }
                         )
                     if direct_answers:

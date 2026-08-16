@@ -8,6 +8,8 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ToolStep:
+    """Persistable tool audit data; arguments and result may be projected."""
+
     name: str
     arguments: dict[str, Any]
     result: dict[str, Any]
@@ -15,6 +17,8 @@ class ToolStep:
 
 @dataclass(frozen=True)
 class AgentEvent:
+    """Stream-safe runtime event; tool payloads use the same audit projection."""
+
     kind: str
     turn: int = 0
     tool_name: str | None = None

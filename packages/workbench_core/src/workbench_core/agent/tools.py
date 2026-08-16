@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
 ToolHandler = Callable[..., dict[str, Any]]
 DirectAnswerFormatter = Callable[[dict[str, Any], dict[str, Any]], str | None]
+AuditProjection = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -18,6 +20,8 @@ class AgentTool:
     handler: ToolHandler
     return_direct: bool = False
     answer_formatter: DirectAnswerFormatter | None = None
+    audit_arguments: AuditProjection | None = None
+    audit_result: AuditProjection | None = None
 
     @property
     def schema(self) -> dict[str, Any]:
@@ -52,6 +56,11 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools)
 
+    def audit_name(self, name: str) -> str:
+        """Return a persistable name without echoing an unknown model-supplied value."""
+
+        return name if name in self._tools else "unknown_tool"
+
     def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         tool = self._tools.get(name)
         if tool is None:
@@ -62,6 +71,38 @@ class ToolRegistry:
             return {"ok": False, "error": f"Invalid arguments for {name}: {exc}"}
         except Exception as exc:  # noqa: BLE001 - tools are an external execution boundary
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    @staticmethod
+    def _project(
+        projection: AuditProjection | None,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Apply an audit projection without exposing the live/raw payload on failure."""
+
+        try:
+            detached = deepcopy(payload)
+            projected = projection(detached) if projection is not None else detached
+            if not isinstance(projected, dict):
+                raise TypeError("audit projection must return a dict")
+            return deepcopy(projected)
+        except Exception:  # noqa: BLE001 - audit output must fail closed
+            return {"audit_error": "projection_failed"}
+
+    def audit_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Return the event/audit view of one tool's arguments."""
+
+        tool = self._tools.get(name)
+        if tool is None:
+            return {"audit_error": "unknown_tool"}
+        return self._project(tool.audit_arguments, arguments)
+
+    def audit_result(self, name: str, result: dict[str, Any]) -> dict[str, Any]:
+        """Return the event/audit view of one tool's result."""
+
+        tool = self._tools.get(name)
+        if tool is None:
+            return {"audit_error": "unknown_tool"}
+        return self._project(tool.audit_result, result)
 
     def direct_answer(
         self,
