@@ -21,11 +21,9 @@ DEFAULT_PLUGIN_DIR = (
 
 
 class LeonSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=REPO_ROOT / ".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    # CLI/Gateway inject the canonical ~/.leon/config.toml before creating
+    # settings. The repository .env is a one-time migration source only.
+    model_config = SettingsConfigDict(extra="ignore")
 
     backend_url: str = Field(
         default="http://192.168.8.100:8188",
@@ -68,6 +66,45 @@ class LeonSettings(BaseSettings):
     asr_model: str = Field(default="whisper-1", alias="LEON_ASR_MODEL")
     asr_max_bytes: int = Field(default=15 * 1024 * 1024, alias="LEON_ASR_MAX_BYTES")
 
+    # Optional Tavily web search. The key stays server-side and is never
+    # included in Agent events or tool results.
+    tavily_api_key: SecretStr | None = Field(default=None, alias="TAVILY_API_KEY")
+    tavily_base_url: str = Field(
+        default="https://api.tavily.com",
+        alias="TAVILY_BASE_URL",
+    )
+    tavily_timeout_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        alias="TAVILY_TIMEOUT_SECONDS",
+    )
+    tavily_max_results: int = Field(default=5, ge=1, le=10, alias="TAVILY_MAX_RESULTS")
+
+    # Optional read-only local document roots. Values are parsed from a JSON
+    # object so Windows drive letters never conflict with a path separator.
+    file_roots: dict[str, Path] = Field(default_factory=dict, alias="LEON_FILE_ROOTS")
+
+    @field_validator("plugin_dir", "system_prompt_file", mode="before")
+    @classmethod
+    def empty_optional_path_is_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("session_db", mode="before")
+    @classmethod
+    def empty_session_db_uses_default(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return REPO_ROOT / "data" / "leon-agent.db"
+        return value
+
+    @field_validator("file_roots", mode="before")
+    @classmethod
+    def empty_file_roots_is_disabled(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return {}
+        return value
+
     @field_validator("backend_url", "public_image_base_url")
     @classmethod
     def normalize_base_url(cls, value: str) -> str:
@@ -100,6 +137,17 @@ class LeonSettings(BaseSettings):
             and self.asr_token
             and self.asr_token.get_secret_value().strip()
         )
+
+    @property
+    def search_enabled(self) -> bool:
+        return bool(
+            self.tavily_api_key
+            and self.tavily_api_key.get_secret_value().strip()
+        )
+
+    @property
+    def file_search_enabled(self) -> bool:
+        return bool(self.file_roots)
 
     def read_additional_system_prompt(self) -> str | None:
         """Read the optional UTF-8 text appended to Leon's system prompt."""

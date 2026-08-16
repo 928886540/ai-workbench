@@ -7,6 +7,7 @@ import os
 from typing import Annotated
 
 from leon_agent.config import LeonSettings
+from leon_agent.config_file import apply_config_file
 from leon_agent.leon_client import LeonImageClient
 from leon_agent.service import LeonToolService
 from mcp.server.fastmcp import FastMCP
@@ -18,7 +19,11 @@ DEFAULT_HTTP_PORT = 8240
 
 
 def create_service(*, session_id: str, settings: LeonSettings | None = None) -> LeonToolService:
-    config = settings or LeonSettings()
+    if settings is None:
+        apply_config_file()
+        config = LeonSettings()
+    else:
+        config = settings
     client = LeonImageClient(
         backend_url=config.backend_url,
         public_base_url=config.active_public_image_base_url,

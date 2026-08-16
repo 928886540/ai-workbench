@@ -38,3 +38,18 @@ def test_empty_system_prompt_file_fails_clearly(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="LEON_SYSTEM_PROMPT_FILE is empty"):
         settings_with_prompt_file(prompt_file).read_additional_system_prompt()
+
+
+def test_empty_path_values_do_not_resolve_to_working_directory() -> None:
+    settings = LeonSettings(
+        _env_file=None,
+        LEON_PLUGIN_DIR="",
+        LEON_SYSTEM_PROMPT_FILE="",
+        LEON_SESSION_DB="",
+        LEON_FILE_ROOTS="",
+    )
+
+    assert settings.plugin_dir is None
+    assert settings.system_prompt_file is None
+    assert settings.session_db.name == "leon-agent.db"
+    assert settings.file_roots == {}

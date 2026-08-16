@@ -10,15 +10,17 @@
 2. **开场一句话** = 快速对齐
 3. **Codex session 续接** = 加分项，有就用，没有也能继续
 
-## 当前主线（2026-08-16）
+## 当前主线（2026-08-17）
 
 - 当前集成分支：`feat/leon-model-switch`；Web/Gateway SSE 恢复基线为 `df7e92e`，
   CLI 日用 TUI 基线为 `d520df9`，两条并行改造均已统一审查并推送
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
 - `02-leon-agent`：独立 `leon` CLI、SQLite、7 个生图工具和 `speak_text` 已完成
+- `02-leon-agent`：可选只读 File Search MVP 已接入 CLI/Web，默认关闭，详见 `projects/02-leon-agent/docs/file-search.md`
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
-- CLI 与 Web 已接入 CCS 模型切换；Web 会话会继承已有 session 的模型选择
+- CLI、Web 与 Leon MCP 的唯一持久配置源是 `%USERPROFILE%\.leon\config.toml`；`.codex` 和
+  仓库 `.env` 只参与首次 `leon-config init`，CC Switch 后续操作与 Leon 无关
 - 公网入口已部署到 `https://leon.928886540.xyz`，由 Cloudflare Tunnel 转发到 `127.0.0.1:8233`
 - Windows 计划任务 `Leon Agent` 与 `CF Tunnel` 已运行，并配置登录自启/异常重试
 - Leon 环境只读自检：19 模式、38 节点类型、39 LoRA，通过
@@ -60,18 +62,16 @@
 - SSE 事件现在带进程内递增 `id`，Gateway 保留最近 100 条并按 `Last-Event-ID` 补发断线期间事件；
   `session.connected` 是不推进游标的连接标记。Vue 让浏览器原生 EventSource 处理瞬时断线，
   stale token 会回到登录页，系统恢复在线时会重新连接 CLOSED 的流。
-- 当前验证（2026-08-16）：显式 fake `LLM_SOURCE=env` 下 Python **188 passed**、仓库级 Ruff clean、
+- 历史验证（2026-08-16）：显式 fake `LLM_SOURCE=env` 下 Python **188 passed**、仓库级 Ruff clean、
   `uv run leon --help` 通过；Vue `npm run typecheck` / `npm run build` 和 provider-free Playwright smoke
   也已通过，Vite/FastAPI 两种入口各 **76/76**。浏览器脚本拦截所有 `/api/**`，不代表真实公网/手机验收。
-- 当前真实 `~/.codex/config.toml` 若没有顶层 `model_provider`，直接跑全量测试会有 6 个 Gateway session
-  用例在捕获 TOML provider 时失败；显式 fake env 可稳定复现全绿，且不会请求真实 provider。
+- 当前测试通过临时 `LEON_CONFIG_FILE` 使用 fake provider，不读取真实 `.leon` 或 `.codex`，也不会请求 provider。
 - 元数据已补齐：Gateway 在 `assistant.completed` 返回权威 `model` / `elapsed_ms` / `usage`；provider 不返回
   usage 时前端按无值降级。
 - 真实流式已补齐：LLM transport 使用 `stream=True`，Gateway 在线推送 `assistant.delta`，重连后以
   `assistant.completed` 全文恢复；delta 不占用 100 条回放窗口。
-- ⚠️ LLM provider 已被 CC Switch 换过（`~/.codex/config.toml`，8/15 09:30）：
-  `anyrouter.top` → `new-api.abrdns.com`，默认模型 `gpt-5.6-sol` → `DeepSeek-V4-Flash-0731`，目录从 17 个模型变成 96 个。
-  会话里「同样的话上次能答、这次不能答」优先怀疑这里，而不是提示词。
+- 8/15 的 CC Switch provider 变化仅是迁移前历史。完成 `.leon` 初始化后不再跟随；provider 问题只检查
+  `.leon/config.toml` 和当前进程/session pin。
 - 工具面：Leon 后端 iOS 插件层共 17 个端点，agent 原先只接了 5 个。已补 `cancel_image_task`
   （`POST /ios/async_autogen/{job_id}/cancel`，会同时中断正在跑的 ComfyUI prompt），工具数 6 → 7。
   仍未暴露、可按需接入：`async_cancel_matching`（批量取消）、`image_gallery/delete`（删图，破坏性）、
@@ -79,8 +79,8 @@
   `async_autogen/recover`（恢复）、`comic_compose` / `async_comic`（漫画模式）
 - 真实只读探测（2026-08-16）：本机与公网 health 均 `200`，SSE 均立即收到 `session.connected`，stale token 均返回
   `204 no-store`；仍需在 Cloudflare 控制台确认 Cache Bypass Rule，再做手机实机 SSE、生图和 TTS 闭环验收
-- Web session 已把 provider identity 与 base URL（不含 API key）持久化到 SQLite；Gateway 重启后按 identity
-  安全重解析密钥，不匹配时返回 409，禁止静默切换 provider。
+- Web session 已把 provider identity 与 base URL（不含 API key）持久化到 SQLite；Gateway 重启后只按
+  当前 `.leon` identity 重解析密钥，不匹配或旧 `ccs:*` pin 返回 409，禁止静默切换或查询 CCS。
 - Vue 页面迁移主体已完成并成为唯一入口；旧单文件 Web、`LEON_WEB_CLIENT` 开关及旧浏览器脚本已删除。
   W1 的 `messages[]` 直接对应 `stores/messages.ts`，不用重写
 - ASR 已接入：`POST /api/agent/asr` 代理 OpenAI-compatible 转写服务，需配置 `LEON_ASR_*`；前端录音后只回填输入框。
@@ -106,6 +106,46 @@
   `src/leon_agent/gateway/app.py`、`src/leon_agent/tools.py` 的 search hunks、`src/leon_agent/search/`、
   `tests/{test_cli,test_search}.py`、`docs/TUI-REDESIGN-COLLABORATION.md`），不要回滚、覆盖或混入
   Service/MCP 提交。下一条主线是 Telegram Bot。
+
+### Leon Tavily `web_search` 可中断 checkpoint（2026-08-16）
+
+- 放置位置：`projects/02-leon-agent/src/leon_agent/search/`。`provider.py` 只负责 Tavily HTTP 适配，
+  `service.py` 负责参数校验和结构化结果；工具 schema 仍在 `src/leon_agent/tools.py`，不并入图片专用的
+  `LeonToolService`。CLI 与 Web Gateway 复用同一 service，不各写一套搜索逻辑。
+- 当前状态：仅配置 `TAVILY_API_KEY` 时注册只读 `web_search`；支持 `basic` / `advanced`、
+  `general` / `news` 和 1～10 条结果，返回标题、URL、摘要、来源和发布时间，由 LLM 综合并引用 URL。
+  Key 使用 `SecretStr`，仅经 `Authorization` header 发给 Tavily，不进入 tool result、事件或请求 JSON。
+- 已验证：搜索专项在 Python 3.10 / 3.13 均为 **16 passed**，Leon 项目全套为 **173 passed**，
+  显式 fake LLM 环境下全仓为 **206 passed**；`uv run ruff check .` 通过。Tavily 官方 keyless
+  `/search` 只读探测返回了
+  `title/url/content`，未使用已泄露 Key，也未消耗用户账户 credits。
+- 运行态（22:xx）：本机 Git 忽略的 `.env` 已配置 Tavily Key，计划任务 `Leon Agent` 已重启；本机和公网
+  `/api/health/detail` 均为 `search_tool: ready`。真实 `WebSearchService` basic 搜索成功返回 1 条
+  `title/url/snippet`，已验证 Bearer 鉴权和结果标准化。该 Key 曾出现在聊天中，仍应在方便时轮换。
+- 完整联调已通过：默认模型切换为 `grok-4.6` 后，`leon --once` 实际产生
+  `调用工具 web_search -> web_search 完成`，最终中文回答引用 Tavily 官方文档 URL。此前
+  `gpt-5.6-sol` 的 `403 channel:client_restricted` 已不再阻塞。非 UTF-8 自动化终端仍需临时设置
+  `PYTHONUTF8=1`，否则当前 TUI 的 `✦` 状态字符会触发 GBK 编码错误。
+- 不要做：不要把旧 Key、真实 Key 或带 Key 的 MCP URL 写进仓库/日志；不要把当前 MVP 宣称为
+  `extract` / `crawl` / `map` 或 Tavily MCP 接入；不要让自动测试消耗真实 Tavily credits；不要为 CLI、
+  Web、未来 Telegram 分叉 provider 实现。`extract` / `crawl` / `map` 应在搜索闭环稳定后另行设计。
+
+### Leon File Search 可中断 checkpoint（2026-08-16）
+
+- 放置位置：共享内核 `packages/workbench_core/src/workbench_core/files/`；Leon 适配层是
+  `projects/02-leon-agent/src/leon_agent/file_tools.py`。`02-code-agent` 的 `workspace.py` 和旧工具
+  只保留兼容导出，不要复制另一套路径策略。
+- 当前状态：已实现 `list_files`、`file_search`、`read_file` 三个只读工具。只有配置
+  `LEON_FILE_ROOTS={"id":"绝对目录"}` 才注册；结果只暴露 root id、相对路径和 citation，不泄露绝对路径。
+- 安全/资源边界：最多 8 个 root；拒绝绝对/越界/ADS 路径；每次解析检查 containment；跳过 symlink、
+  junction/reparse、隐藏/系统项、`.env*`、凭据、私钥、SQLite；支持受限 UTF-8/BOM UTF-16；单文件 1 MiB，
+  搜索 2,000 文件/20 MiB/50 结果，读取 200 行/16,000 字符。
+- 已验证（定向）：`packages/workbench_core/tests/test_file_search.py` 与
+  `projects/02-leon-agent/tests/test_leon_file_search.py` 覆盖配置、工具 schema、路径穿越、敏感文件、
+  binary/编码/预算和不可信内容标记。全量与真实进程验证完成后，把结果补到本节，不要只写“代码存在”。
+- 接手顺序：先跑共享内核测试，再跑 Leon 文件工具测试，最后用临时目录启动新的 `leon-server`，检查
+  `/api/health/detail` 的 `file_tool` 状态和实际注册列表；不要把个人密钥目录加进 roots。当前 MVP 不含
+  写文件、PDF/DOCX、embedding/RAG 或 File Search MCP。
 
 ---
 
@@ -182,7 +222,7 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 
 我是 Java 后端转 AI 应用/Agent。
 当前主线：把 02-leon-agent 做成日用 Agent，并继续理解 tool-calling loop。
-模型配置走 CC Switch（CCS），默认薄荷。
+模型与全部 Leon 持久配置只走 %USERPROFILE%\.leon\config.toml，不跟随 CC Switch。
 
 请先快速确认：
 1. 仓库当前进度
@@ -222,3 +262,16 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 2. **换天继续**，优先用上面开场，不要只说“继续”
 3. **CCS 配置**继续说名字即可：`用 CCS 的薄荷` / `用 CCS 的大黑客`
 4. session 能续就续；**不能续也没问题**，以仓库为准
+
+---
+
+## 配置与自启动运行态 checkpoint（2026-08-17 01:49）
+
+- 分支仍为 `feat/leon-model-switch`；当前工作区保留 CLI-TUI-Codex、Web Bug-Fix 和配置/File Search 的并行未提交改动，禁止 reset/checkout/清理。
+- Leon 的唯一持久配置已落在 `%USERPROFILE%\\.leon\\config.toml`（本机 `C:\\Users\\Administrator\\.leon\\config.toml`，Git 外）；CLI、Gateway、MCP 都先加载它，后续不读取 CCS、`.codex` 或仓库 `.env`。
+- `leon-config init` 只允许首次迁移；目标已存在时直接编辑。受管 `[leon.env]` 键由文件权威覆盖 ambient 环境，旧 `ccs:*` session pin 返回 409。
+- Gateway 配置夹具已改为临时 TOML，避免测试落到真实 SQLite：`test_gateway.py` 25 passed、`test_gateway_server.py` 1 passed；全项目 Leon 测试已验证 206 passed，仅有既有 Starlette/httpx 弃用警告。
+- Windows 任务已由 `scripts/windows/install-leon-autostart.ps1` 注册并运行：`Leon Agent` -> `127.0.0.1:8233`，`IDEA MCP Auth Proxy` -> `127.0.0.1:64343`；登录/开机触发、`IgnoreNew`、每分钟 5 次重试、隐藏 wrapper、日志目录均已验收。
+- 本机冷启动证据：授权 `/api/health` 与 `/api/health/detail` 均返回 200；无 token 返回 401；Gateway 子进程命令为仓库 `.venv\\Scripts\\leon-server.exe`，日志在 `%USERPROFILE%\\.leon\\logs`。
+- `64343` 的真实入口是 `D:\\cloudflared\\idea-mcp-auth-proxy.mjs`，固定上游 `127.0.0.1:64342` 当前没有监听；代理端口能启动，但不能宣称 IDEA MCP 后端已恢复。下一位接手者先定位/恢复 64342，再做 MCP `initialize/tools/list` 验收。
+- 下一步顺序：跑完整 Python/Ruff + Vue build/smoke，检查公网 Tunnel health；按文件范围单独 stage/commit/push，随后继续 File Search 真实运行态验收。

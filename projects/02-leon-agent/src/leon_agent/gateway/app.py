@@ -31,14 +31,15 @@ import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field
 from workbench_core.agent import AgentCancelled, AgentResult, ToolStep, cancellation_scope
-from workbench_core.ccs import resolve_provider
 from workbench_core.config import Settings, get_settings, reset_settings_cache
 from workbench_core.llm import LLMClient
 
 from leon_agent.agent import LeonAgent
 from leon_agent.config import LeonSettings
+from leon_agent.config_file import apply_config_file
+from leon_agent.file_tools import create_file_search_service
 from leon_agent.gateway.events import EventBusRegistry, LeonEvent
 from leon_agent.image_modes import (
     DEFAULT_NSFW_MODE_ID,
@@ -49,6 +50,7 @@ from leon_agent.image_modes import (
 )
 from leon_agent.leon_client import LeonImageClient
 from leon_agent.models import model_provider_scope
+from leon_agent.search import create_search_service
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
 from leon_agent.voice_client import VoiceError, VolinkVoiceClient, prepare_speech_text
@@ -94,6 +96,8 @@ _WEB_DIR: Path = _resolve_web_dir()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _config, _store, _bus_registry, _llm_snapshots, _active_turns
+    apply_config_file()
+    reset_settings_cache()
     _config = LeonSettings()
     _config.read_additional_system_prompt()
     _store = SessionStore(_config.session_db)
@@ -208,7 +212,7 @@ class SessionLLMSnapshot:
 
 
 def _capture_llm_snapshot() -> SessionLLMSnapshot:
-    """Freeze the active TOML provider for one Web login/session."""
+    """Freeze the process-start TOML provider for one Web login/session."""
     reset_settings_cache()
     settings = get_settings()
     # Accessing profile loads and caches the complete TOML provider, including
@@ -240,43 +244,19 @@ class ProviderPinLost(HTTPException):
 def _resolve_pinned_snapshot(pin: tuple[str, str]) -> SessionLLMSnapshot:
     """Rebuild a snapshot from the persisted pin, resolving the secret by identity."""
     pinned_scope, pinned_base_url = pin
+    profile = pinned_scope.split("|", 1)[0]
+    if profile.startswith("ccs:"):
+        raise ProviderPinLost(
+            pinned_scope,
+            "旧会话使用 CCS provider；Leon 已与 CC Switch 脱钩，不能再解析该 pin",
+        )
     current = _capture_llm_snapshot()
     if current.scope == pinned_scope:
         return current
 
-    profile = pinned_scope.split("|", 1)[0]
-    if profile.startswith("ccs:"):
-        name = profile[len("ccs:") :]
-        try:
-            provider = resolve_provider(
-                name,
-                app_type=current.settings.ccs_app,
-                db_path=current.settings.ccs_db_path,
-            )
-        except Exception as exc:  # noqa: BLE001 - surfaced to the client as 409
-            raise ProviderPinLost(
-                pinned_scope, f"CC Switch 中已找不到该 provider（{exc}）"
-            ) from exc
-        if provider.base_url.strip().rstrip("/") != pinned_base_url.strip().rstrip("/"):
-            raise ProviderPinLost(
-                pinned_scope,
-                f"该 provider 的 base URL 已从钉选值变更为 {provider.base_url}",
-            )
-        settings = Settings(
-            LLM_SOURCE="env",
-            LLM_BASE_URL=provider.base_url,
-            LLM_API_KEY=SecretStr(provider.api_key),
-            LLM_MODEL=provider.model,
-        )
-        return SessionLLMSnapshot(
-            settings=settings,
-            scope=pinned_scope,
-            profile=profile,
-            base_url=pinned_base_url,
-        )
     raise ProviderPinLost(
         pinned_scope,
-        "当前来源（toml/env）无法按名称解析非活跃 provider",
+        "当前 `.leon` provider 与会话记录不一致",
     )
 
 
@@ -554,6 +534,8 @@ async def health_detail(config: LeonSettings = Depends(get_config)):
     except Exception:
         results["comfyui"] = "offline"
     results["image_tool"] = "ready" if config.active_plugin_dir else "not_configured"
+    results["search_tool"] = "ready" if config.search_enabled else "not_configured"
+    results["file_tool"] = "ready" if config.file_search_enabled else "not_configured"
     results["llm"] = "unknown"
     return {"ok": True, "services": results}
 
@@ -866,6 +848,17 @@ async def send_message(
 
     try:
         image_client = _create_image_client(config)
+        search_service = create_search_service(
+            api_key=(
+                config.tavily_api_key.get_secret_value()
+                if config.tavily_api_key
+                else None
+            ),
+            base_url=config.tavily_base_url,
+            timeout_seconds=config.tavily_timeout_seconds,
+            max_results=config.tavily_max_results,
+        )
+        file_service = create_file_search_service(config.file_roots)
 
         def on_generation_submitted(submission: dict[str, Any]) -> None:
             workflow_ids = [
@@ -964,6 +957,7 @@ async def send_message(
                 default_mode_ids=config.default_mode_ids,
                 wait_for_image_completion=False,
                 on_generation_submitted=on_generation_submitted,
+                search_service=search_service,
             )
             def execute_direct_generation() -> dict[str, Any]:
                 with cancellation_scope(cancel_event):
@@ -1022,6 +1016,8 @@ async def send_message(
             wait_for_image_completion=False,
             on_generation_submitted=on_generation_submitted,
             speak_handler=_session_speak_factory(config, session_id, bus.publish),
+            search_service=search_service,
+            file_service=file_service,
             additional_system_prompt=config.read_additional_system_prompt(),
         )
 

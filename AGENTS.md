@@ -57,8 +57,9 @@ understand goal
 - Shared infra goes in `packages/workbench_core`.
 - Stage projects go in `projects/*`.
 - Secrets never enter git.
-- Default LLM source is CC Switch (`LLM_SOURCE=ccs`).
-- User may say provider names like `薄荷` / `大黑客` / `current`; resolve from CCS.
+- Shared lab projects may use CC Switch, but `02-leon-agent` must use only
+  `%USERPROFILE%\.leon\config.toml`; never reintroduce runtime `.codex`, CCS DB, or repo `.env` fallback.
+- Provider names like `薄荷` / `大黑客` / `current` may resolve from CCS only outside Leon Agent.
 - Tools are read-only by default; write tools need explicit permission design.
 - Path tools must stay inside workspace root.
 - If root cause is still uncertain, say so directly.

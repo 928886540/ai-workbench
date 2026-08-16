@@ -35,7 +35,7 @@ ai-workbench/
 ├── projects/
 │   ├── 01-llm-core/           # 模型调用、Prompt、结构化输出
 │   ├── 02-code-agent/         # 第一阶段主项目：会用工具的代码分析 Agent
-│   ├── 02-leon-agent/         # 独立 CLI：聊天 + Leon 生图工具
+│   ├── 02-leon-agent/         # 独立 CLI/Web：聊天 + 生图 + 可选联网/本地文件检索
 │   ├── 03-rag-lab/            # 文件/知识库问答
 │   ├── 04-mcp-lab/            # 自建 MCP server / client
 │   ├── 05-workflow/           # 工作流编排与自动化
@@ -110,7 +110,7 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 
 - [x] `01-llm-core`：模型调用 / Prompt / Structured Output
 - [x] `02-code-agent`：Tool-using Code Analysis Agent
-- [x] `02-leon-agent`：独立 CLI / 会话 / Leon 生图工具 / FastAPI + SSE 手机 Web Client
+- [x] `02-leon-agent`：独立 CLI / 会话 / 生图 / 可选 Tavily 搜索与只读 File Search / FastAPI + SSE 手机 Web Client
 - [ ] `03-rag-lab`：文件问答与检索增强
 - [ ] `04-mcp-lab`：Leon MCP Server 第一版已完成；其余 MCP 实验待做
 - [ ] `05-workflow`：工作流自动化
@@ -147,7 +147,10 @@ uv sync
 # 2. 复制环境变量
 copy .env.example .env
 
-# 3. 验证模型底座或进入 Leon Agent
+# 3. 首次为 Leon 创建独立用户配置（之后不再读取 CC Switch/.env）
+uv run leon-config init
+
+# 4. 验证模型底座或进入 Leon Agent
 uv run python -m llm_core.hello
 uv run leon
 ```

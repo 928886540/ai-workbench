@@ -22,6 +22,7 @@
 | Tavo 聊天直接调用 Leon MCP | 当前受限 | 非代码难度 | Tavo v1.0.0 文档明确：外部 MCP Server 尚未接入聊天工具调用 |
 | Tavo 插件贡献 Leon 模型工具 | 当前受限 | 非代码难度 | Tavo v1.0.0 文档明确：插件暂不能贡献模型工具 |
 | Codex 风格完整 TUI | 可行 | 高 | 基础 TUI 不难，成熟交互、流式、并发任务和恢复需要持续迭代 |
+| Leon 本地 File Search MVP | 高 | 中低 | **第一版已实现**：只读 roots、`list_files` / `file_search` / `read_file`、路径隔离和预算限制 |
 
 ## 目标边界
 
@@ -72,6 +73,32 @@ CLI、Telegram 和 MCP 不能各复制一套生成逻辑。现有图片 handler 
 
 可复现脚本：`uv run python projects/04-mcp-lab/leon-mcp-server/scripts/mcp_smoke.py`；默认只做
 `initialize/tools/list`，加 `--check-environment` 才调用只读环境检查。
+
+## Search MVP Checkpoint（2026-08-16）
+
+- **已完成**：CLI 与 Web Gateway 共用可选 `web_search`，后端配置 `TAVILY_API_KEY` 后注册。
+- **边界稳定**：`search/provider.py` 适配 Tavily，`search/service.py` 校验并标准化证据，
+  `tools.py` 只声明 Agent tool schema；搜索不进入图片 `LeonToolService`。
+- **成本默认值**：`basic` depth、5 条结果，允许通过 `TAVILY_MAX_RESULTS` 调整到 `1..10`；
+  `advanced` 只用于用户明确要求的深入研究。
+- **已验证**：`uv run pytest projects/02-leon-agent/tests/test_search.py -q`，16 个测试通过，
+  不消耗真实 Tavily credits。
+- **后续缺口**：`extract/crawl/map`、正文读取、缓存、credits 预算、备用 provider 和 MCP 暴露
+  均未实现；详细接手契约见 `projects/02-leon-agent/docs/web-search.md`。
+
+## File Search MVP Checkpoint（2026-08-16）
+
+- **已实现**：共享 `workbench_core.files.FileSearchService`，Leon CLI 与 Web Gateway 按配置注入同一套
+  `list_files`、`file_search`、`read_file` 工具；`02-code-agent` 的旧 Workspace 工具保留兼容适配。
+- **配置边界**：`LEON_FILE_ROOTS` 是 `root_id -> absolute path` 的 JSON allowlist，最多 8 个 root；
+  未配置时不注册文件工具，不能因为 File Search 配置错误而静默扩大目录范围。
+- **安全边界**：只读、相对路径、每次 resolve 后 containment 检查；跳过 symlink/reparse point、隐藏/系统
+  项、`.env`/密钥/凭据/SQLite 和不支持的 binary；单文件 1 MiB、搜索 2,000 文件/20 MiB/50 命中、读取
+  200 行/16,000 字符。
+- **结果契约**：只返回 root id、相对路径、行号、citation 和 `untrusted_content=true`；文件内容不能修改
+  system prompt，也不能授权写入或其他工具调用。详细参数见 `projects/02-leon-agent/docs/file-search.md`。
+- **当前缺口**：尚未做 PDF/DOCX 解析、embedding/RAG、增量索引、文件写入或 File Search MCP 暴露；先用
+  临时测试目录完成运行态验收，再决定是否进入 `03-rag-lab`。
 
 ## Phase B：Telegram Bot
 

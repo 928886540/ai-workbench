@@ -15,10 +15,8 @@ from leon_agent.session import SessionStore
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
+def client(isolated_user_config):  # noqa: ARG001
     """Provide a TestClient with a temporary SQLite DB."""
-    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
-    monkeypatch.setenv("LEON_API_TOKEN", "")  # disable auth in tests
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c
 
@@ -29,9 +27,8 @@ def test_health(client):
     assert r.json()["ok"] is True
 
 
-def test_health_requires_configured_token(tmp_path, monkeypatch):
-    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
-    monkeypatch.setenv("LEON_API_TOKEN", "test-token")
+def test_health_requires_configured_token(isolated_user_config):
+    isolated_user_config(LEON_API_TOKEN="test-token")
     with TestClient(app, raise_server_exceptions=True) as client:
         assert client.get("/api/health").status_code == 401
         assert client.get(
@@ -39,9 +36,8 @@ def test_health_requires_configured_token(tmp_path, monkeypatch):
         ).status_code == 200
 
 
-def test_sse_invalid_token_stops_eventsource_retry(tmp_path, monkeypatch):
-    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
-    monkeypatch.setenv("LEON_API_TOKEN", "test-token")
+def test_sse_invalid_token_stops_eventsource_retry(isolated_user_config):
+    isolated_user_config(LEON_API_TOKEN="test-token")
     with TestClient(app, raise_server_exceptions=True) as client:
         session_id = client.post(
             "/api/agent/sessions", headers={"Authorization": "Bearer test-token"}
@@ -377,13 +373,9 @@ def test_tts_audio_cache_reuses_results_and_keeps_at_least_ten_entries():
 
 
 def test_asr_status_and_transcription_are_disabled_without_configuration(
-    tmp_path, monkeypatch
+    isolated_user_config,
 ):
-    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
-    monkeypatch.setenv("LEON_API_TOKEN", "")
-    monkeypatch.setenv("LEON_ASR_BASE_URL", "")
-    monkeypatch.setenv("LEON_ASR_TOKEN", "")
-
+    isolated_user_config(LEON_ASR_BASE_URL="", LEON_ASR_TOKEN="")
     with TestClient(app, raise_server_exceptions=True) as test_client:
         assert test_client.get("/api/agent/asr/status").json() == {"enabled": False}
         response = test_client.post(
@@ -395,13 +387,13 @@ def test_asr_status_and_transcription_are_disabled_without_configuration(
     assert "ASR 未配置" in response.json()["detail"]
 
 
-def test_asr_transcription_forwards_audio_and_model(tmp_path, monkeypatch):
+def test_asr_transcription_forwards_audio_and_model(isolated_user_config, monkeypatch):
     gateway_app = importlib.import_module("leon_agent.gateway.app")
-    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
-    monkeypatch.setenv("LEON_API_TOKEN", "")
-    monkeypatch.setenv("LEON_ASR_BASE_URL", "https://asr.example/v1/")
-    monkeypatch.setenv("LEON_ASR_TOKEN", "asr-test-token")
-    monkeypatch.setenv("LEON_ASR_MODEL", "whisper-test")
+    isolated_user_config(
+        LEON_ASR_BASE_URL="https://asr.example/v1/",
+        LEON_ASR_TOKEN="asr-test-token",
+        LEON_ASR_MODEL="whisper-test",
+    )
     calls = {}
 
     class FakeAsyncClient:
@@ -438,13 +430,15 @@ def test_asr_transcription_forwards_audio_and_model(tmp_path, monkeypatch):
     }
 
 
-def test_asr_rejects_empty_and_oversized_audio_before_upstream(tmp_path, monkeypatch):
+def test_asr_rejects_empty_and_oversized_audio_before_upstream(
+    isolated_user_config, monkeypatch
+):
     gateway_app = importlib.import_module("leon_agent.gateway.app")
-    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
-    monkeypatch.setenv("LEON_API_TOKEN", "")
-    monkeypatch.setenv("LEON_ASR_BASE_URL", "https://asr.example/v1")
-    monkeypatch.setenv("LEON_ASR_TOKEN", "asr-test-token")
-    monkeypatch.setenv("LEON_ASR_MAX_BYTES", "4")
+    isolated_user_config(
+        LEON_ASR_BASE_URL="https://asr.example/v1",
+        LEON_ASR_TOKEN="asr-test-token",
+        LEON_ASR_MAX_BYTES="4",
+    )
 
     class UnexpectedAsyncClient:
         def __init__(self, **kwargs):  # noqa: ANN003
@@ -466,12 +460,14 @@ def test_asr_rejects_empty_and_oversized_audio_before_upstream(tmp_path, monkeyp
     assert oversized.status_code == 413
 
 
-def test_asr_maps_upstream_transport_failure_to_bad_gateway(tmp_path, monkeypatch):
+def test_asr_maps_upstream_transport_failure_to_bad_gateway(
+    isolated_user_config, monkeypatch
+):
     gateway_app = importlib.import_module("leon_agent.gateway.app")
-    monkeypatch.setenv("LEON_SESSION_DB", str(tmp_path / "test.db"))
-    monkeypatch.setenv("LEON_API_TOKEN", "")
-    monkeypatch.setenv("LEON_ASR_BASE_URL", "https://asr.example/v1")
-    monkeypatch.setenv("LEON_ASR_TOKEN", "asr-test-token")
+    isolated_user_config(
+        LEON_ASR_BASE_URL="https://asr.example/v1",
+        LEON_ASR_TOKEN="asr-test-token",
+    )
 
     class FailingAsyncClient:
         def __init__(self, **kwargs):  # noqa: ANN003

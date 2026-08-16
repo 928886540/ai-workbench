@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from workbench_core.agent import AgentTool, ToolRegistry
+from workbench_core.files import FileSearchService
 
-from code_agent.workspace import Workspace, WorkspaceError
+from code_agent.workspace import Workspace
 
 DEFAULT_SKIP_NAMES = {
     ".git",
@@ -22,36 +22,78 @@ DEFAULT_SKIP_NAMES = {
     ".vscode",
 }
 
+LEGACY_ROOT_ID = "workspace"
+MAX_LEGACY_CHARS = 16_000
+
+
+def _service(workspace: Workspace) -> FileSearchService:
+    return FileSearchService({LEGACY_ROOT_ID: workspace.root})
+
+
+def _legacy_list_dir(
+    service: FileSearchService,
+    relative_path: str = ".",
+    max_entries: int = 100,
+) -> dict[str, Any]:
+    result = service.list_files(
+        root_id=LEGACY_ROOT_ID,
+        relative_path=relative_path,
+        max_entries=max_entries,
+    )
+    if not result.get("ok"):
+        return result
+    return {
+        "ok": True,
+        "path": result["path"],
+        "entries": result["entries"],
+        "truncated": result["truncated"],
+        "untrusted_content": True,
+        "citation": result["citation"],
+    }
+
 def list_dir(
     workspace: Workspace,
     relative_path: str = ".",
     max_entries: int = 100,
 ) -> dict[str, Any]:
-    try:
-        target = workspace.resolve(relative_path)
-    except WorkspaceError as exc:
-        return {"ok": False, "error": str(exc)}
-    if not target.is_dir():
-        return {"ok": False, "error": f"Not a directory: {relative_path}"}
+    return _legacy_list_dir(_service(workspace), relative_path, max_entries)
 
-    entries = []
-    for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
-        if child.name in DEFAULT_SKIP_NAMES:
-            continue
-        entries.append(
-            {
-                "name": child.name,
-                "type": "dir" if child.is_dir() else "file",
-            }
-        )
-        if len(entries) >= max_entries:
-            break
 
+def _legacy_read_file(
+    service: FileSearchService,
+    relative_path: str,
+    max_chars: int = 8000,
+) -> dict[str, Any]:
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int):
+        return {
+            "ok": False,
+            "error_code": "invalid_argument",
+            "error": "max_chars must be an integer.",
+        }
+    if max_chars < 1 or max_chars > MAX_LEGACY_CHARS:
+        return {
+            "ok": False,
+            "error_code": "invalid_argument",
+            "error": f"max_chars must be between 1 and {MAX_LEGACY_CHARS}.",
+        }
+
+    result = service.read_file(
+        LEGACY_ROOT_ID,
+        relative_path,
+        start_line=1,
+        max_lines=200,
+    )
+    if not result.get("ok"):
+        return result
+    content = result["content"][:max_chars]
     return {
         "ok": True,
-        "path": str(Path(relative_path)),
-        "entries": entries,
-        "truncated": len(entries) >= max_entries,
+        "path": result["path"],
+        "content": content,
+        "truncated": bool(result["truncated"] or len(result["content"]) > max_chars),
+        "chars": len(content),
+        "untrusted_content": True,
+        "citation": result["citation"],
     }
 
 
@@ -60,21 +102,39 @@ def read_file(
     relative_path: str,
     max_chars: int = 8000,
 ) -> dict[str, Any]:
-    try:
-        target = workspace.resolve(relative_path)
-    except WorkspaceError as exc:
-        return {"ok": False, "error": str(exc)}
-    if not target.is_file():
-        return {"ok": False, "error": f"Not a file: {relative_path}"}
+    return _legacy_read_file(_service(workspace), relative_path, max_chars)
 
-    text = target.read_text(encoding="utf-8", errors="replace")
-    truncated = len(text) > max_chars
+
+def _legacy_search_text(
+    service: FileSearchService,
+    query: str,
+    relative_path: str = ".",
+    max_matches: int = 20,
+) -> dict[str, Any]:
+    result = service.search(
+        query,
+        root_id=LEGACY_ROOT_ID,
+        relative_path=relative_path,
+        max_results=max_matches,
+    )
+    if not result.get("ok"):
+        return result
+    matches = [
+        {
+            "path": item["path"],
+            "line": item["line"],
+            "text": item["text"],
+        }
+        for item in result["matches"]
+        if item["match_type"] == "content"
+    ]
     return {
         "ok": True,
-        "path": relative_path,
-        "content": text[:max_chars],
-        "truncated": truncated,
-        "chars": min(len(text), max_chars),
+        "query": query,
+        "matches": matches,
+        "truncated": result["truncated"],
+        "untrusted_content": True,
+        "citation": [item["citation"] for item in result["matches"]],
     }
 
 
@@ -84,53 +144,7 @@ def search_text(
     relative_path: str = ".",
     max_matches: int = 20,
 ) -> dict[str, Any]:
-    if not query.strip():
-        return {"ok": False, "error": "query is empty"}
-
-    try:
-        root = workspace.resolve(relative_path)
-    except WorkspaceError as exc:
-        return {"ok": False, "error": str(exc)}
-
-    matches: list[dict[str, Any]] = []
-    files = [root] if root.is_file() else root.rglob("*")
-
-    for path in files:
-        if not path.is_file():
-            continue
-        if any(part in DEFAULT_SKIP_NAMES for part in path.parts):
-            continue
-        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pyc", ".lock"}:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-
-        rel = str(path.relative_to(workspace.root)).replace("\\", "/")
-        for idx, line in enumerate(text.splitlines(), start=1):
-            if query in line:
-                matches.append(
-                    {
-                        "path": rel,
-                        "line": idx,
-                        "text": line.strip()[:240],
-                    }
-                )
-                if len(matches) >= max_matches:
-                    return {
-                        "ok": True,
-                        "query": query,
-                        "matches": matches,
-                        "truncated": True,
-                    }
-
-    return {
-        "ok": True,
-        "query": query,
-        "matches": matches,
-        "truncated": False,
-    }
+    return _legacy_search_text(_service(workspace), query, relative_path, max_matches)
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -150,6 +164,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "max_entries": {
                         "type": "integer",
                         "description": "Max entries to return.",
+                        "minimum": 1,
+                        "maximum": 200,
                         "default": 100,
                     },
                 },
@@ -172,6 +188,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "max_chars": {
                         "type": "integer",
                         "description": "Max characters to return.",
+                        "minimum": 1,
+                        "maximum": 16000,
                         "default": 8000,
                     },
                 },
@@ -200,6 +218,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "max_matches": {
                         "type": "integer",
                         "description": "Max matches to return.",
+                        "minimum": 1,
+                        "maximum": 50,
                         "default": 20,
                     },
                 },
@@ -216,10 +236,11 @@ class ToolRuntime(ToolRegistry):
 
     def __init__(self, workspace: Workspace) -> None:
         self.workspace = workspace
+        self.service = _service(workspace)
         handlers = {
-            "list_dir": lambda **kwargs: list_dir(self.workspace, **kwargs),
-            "read_file": lambda **kwargs: read_file(self.workspace, **kwargs),
-            "search_text": lambda **kwargs: search_text(self.workspace, **kwargs),
+            "list_dir": lambda **kwargs: _legacy_list_dir(self.service, **kwargs),
+            "read_file": lambda **kwargs: _legacy_read_file(self.service, **kwargs),
+            "search_text": lambda **kwargs: _legacy_search_text(self.service, **kwargs),
         }
         tools = []
         for schema in TOOL_SCHEMAS:

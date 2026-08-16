@@ -34,11 +34,12 @@ Then: Cache eligibility = Bypass cache
 
 ## Gateway 配置
 
-在仓库根 `.env` 中设置强随机 token，不能提交到 Git：
+在 `%USERPROFILE%\.leon\config.toml` 的 `[leon.env]` 中设置强随机 token，不能提交到 Git：
 
-```dotenv
-LEON_API_TOKEN=<a-long-random-secret>
-LEON_PUBLIC_IMAGE_BASE_URL=https://comfyui.928886540.xyz
+```toml
+[leon.env]
+LEON_API_TOKEN = "<a-long-random-secret>"
+LEON_PUBLIC_IMAGE_BASE_URL = "https://comfyui.928886540.xyz"
 ```
 
 本地调试：
@@ -52,20 +53,36 @@ uv run leon-server --host 127.0.0.1 --port 8233
 token 的 query 参数，因为浏览器原生 `EventSource` 不能添加 Authorization header；不要把该 URL
 复制到不受信任的日志或截图中。
 
-## 登录后自启
+## 登录 / 开机自启
 
-使用仓库脚本创建当前 Windows 用户的计划任务：
+使用新的安装器为当前 Windows 用户注册两个独立任务。它们使用隐藏 PowerShell wrapper，
+登录和开机都触发，单实例策略为 `IgnoreNew`，启动前检查端口，失败后每分钟重试 5 次，
+并把 wrapper、stdout 和 stderr 写到 `%USERPROFILE%\.leon\logs`：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\windows\install-leon-agent-task.ps1
+.\scripts\windows\install-leon-autostart.ps1
 ```
 
-任务会在登录时启动，并在异常退出后按 1 分钟间隔自动重试 3 次。用以下命令管理：
+`Leon Agent` 运行仓库 `.venv\Scripts\leon-server.exe`，通过
+`%USERPROFILE%\.leon\config.toml` 启动 `127.0.0.1:8233`；旧的
+`install-leon-agent-task.ps1` 仅保留作历史兼容，不要再用它覆盖新任务。
+
+`IDEA MCP Auth Proxy` 运行真实存在的
+`D:\sfotwore\nodejs\node.exe D:\cloudflared\idea-mcp-auth-proxy.mjs`，监听
+`127.0.0.1:64343`。这个脚本只是 Bearer 认证代理，会把请求转发到固定的
+`127.0.0.1:64342`；只有 64342 的 IDEA MCP 后端也在运行时，64343 才能提供完整 MCP 能力。
+安装器不会伪造或猜测 64342 的入口，代理上游不可用时日志会记录连接错误。
+
+检查任务与日志：
 
 ```powershell
-Get-ScheduledTask -TaskName 'Leon Agent'
+Get-ScheduledTask -TaskName 'Leon Agent','IDEA MCP Auth Proxy'
+Get-ScheduledTaskInfo -TaskName 'Leon Agent'
+Get-ScheduledTaskInfo -TaskName 'IDEA MCP Auth Proxy'
+Get-ChildItem "$env:USERPROFILE\.leon\logs"
 Start-ScheduledTask -TaskName 'Leon Agent'
+Start-ScheduledTask -TaskName 'IDEA MCP Auth Proxy'
 Stop-ScheduledTask -TaskName 'Leon Agent'
-Unregister-ScheduledTask -TaskName 'Leon Agent' -Confirm:$false
+Stop-ScheduledTask -TaskName 'IDEA MCP Auth Proxy'
 ```

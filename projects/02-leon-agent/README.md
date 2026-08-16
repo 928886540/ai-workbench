@@ -30,10 +30,14 @@
 - LLM 回复使用真实流式输出；最终事件携带实际模型、耗时和 provider 可用时的 token usage
 - Web session 会把 provider identity 与 base URL 持久化到 SQLite，Gateway 重启后不会静默切换 provider
 - ASR 语音输入已接入 OpenAI-compatible `/audio/transcriptions`，录音转写后只回填输入框，不自动发送
+- 可选 Tavily `web_search` 已接入 CLI 与 Web：只在后端配置 Key 后注册，并返回可引用的结构化实时搜索结果
+- 可选只读 File Search 已接入 CLI 与 Web：通过配置的目录白名单查找文件名、搜索文本并按行读取文件
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读
 [AI 协作状态](docs/AI-COLLABORATION.md)，其中记录唯一源码路径、事件协议、模型选择契约和交接格式。
+联网搜索的目录边界、工具契约和中断接手步骤见 [联网搜索](docs/web-search.md)。
+本地文件检索的目录白名单、安全边界和工具契约见 [File Search](docs/file-search.md)。
 
 ## 运行边界
 
@@ -56,6 +60,7 @@ Leon MCP Server 让 CLI、Codex 或其他 Host 共用同一套 `LeonToolService`
 
 ```powershell
 uv sync
+uv run leon-config init
 uv run leon
 ```
 
@@ -69,7 +74,7 @@ uv run leon-server --host 127.0.0.1 --port 8233
 ```
 
 本机浏览器打开 `http://127.0.0.1:8233`。通过 Cloudflare Tunnel 暴露时，使用
-`https://leon.928886540.xyz`，并在登录页输入 `.env` 中的 `LEON_API_TOKEN`。Windows 部署与
+`https://leon.928886540.xyz`，并在登录页输入用户配置中的 `LEON_API_TOKEN`。Windows 部署与
 Tunnel 缓存规则见 [Windows + Cloudflare 部署](docs/windows-cloudflare-deploy.md)。
 
 恢复已有会话：
@@ -91,7 +96,7 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 - `/tools` / `/status`：查看已注册工具或当前运行状态
 - `/model`：显示当前模型与可选模型
 - `/model <序号或任意模型ID>`：切换当前 session 的模型
-- `/model default`：恢复 `~/.codex/config.toml` 的默认模型
+- `/model default`：恢复用户配置快照中的默认模型
 - `/clear`：清空当前终端滚动区
 - `/nsfw <描述>`：绕过 LLM，使用默认的玛莉卡模式直接生图
 - `/nsfw --model <中文名或模式ID> <描述>`：指定生图模式，例如
@@ -103,10 +108,11 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 Esc/Ctrl+C 会协作式取消当前轮并丢弃迟到结果，Ctrl+D/Q 退出。同步 HTTP 在途读取无法安全硬中断，
 因此取消后仍可能等待 provider 返回或 30 秒超时，但不会继续后续 LLM/tool 轮，也不会持久化或渲染迟到结果。
 
-启动时直接读取 CC Switch 写入的 `~/.codex/config.toml`，使用其中当前 provider 的
+启动时优先读取 `%USERPROFILE%\.leon\config.toml` 中复制的 provider，使用其中的
 `base_url`、`experimental_bearer_token` 和顶层 `model`。`/model` 接受列表序号或任意新
-model ID，只替换当前会话请求中的 model；URL 与密钥仍跟随配置文件。选择会写入当前
-SQLite session，之后执行 `leon resume <session_id>` 仍会恢复该模型。
+model ID，只替换当前会话请求中的 model；URL 与密钥仍跟随这份配置快照。选择会写入当前
+SQLite session，之后执行 `leon resume <session_id>` 仍会恢复该模型。没有有效用户配置时直接
+报错退出，不读取 CC Switch 或 `%USERPROFILE%\.codex\config.toml`。
 
 单次调用：
 
@@ -124,6 +130,12 @@ uv tool install --editable .\projects\02-leon-agent `
 
 ## 配置
 
+推荐先运行 `uv run leon-config init`，让 CLI 和 Web 共用 `%USERPROFILE%\.leon\config.toml`。
+首次初始化会复制当前 Codex TOML provider，并把本地 `.env` 中受支持的值迁入 `[leon.env]`
+（包括 `TAVILY_API_KEY`、`VOLINK_API_KEY` 和 `LEON_API_TOKEN`）。迁移后该文件是唯一持久配置
+源，会覆盖同名进程环境；仓库 `.env` 和 CC Switch 后续变化均不参与运行。详细初始化、ACL 和
+provider 隔离语义见 [配置说明](docs/configuration.md)。真实密钥只应存在于用户文件，绝不提交 Git。
+
 | 环境变量 | 默认值 | 作用 |
 |---|---|---|
 | `LEON_BACKEND_URL` | `http://192.168.8.100:8188` | Leon / ComfyUI 后端 |
@@ -133,6 +145,7 @@ uv tool install --editable .\projects\02-leon-agent `
 | `LEON_SESSION_DB` | `data/leon-agent.db` | 本地会话数据库 |
 | `LEON_API_TOKEN` | 空 | Web Gateway 鉴权 token；公网暴露时必须设置 |
 | `LEON_SYSTEM_PROMPT_FILE` | 空 | 可选 UTF-8 TXT；内容原样追加到 Agent system prompt，相对路径从仓库根目录解析 |
+| `LEON_FILE_ROOTS` | `{}` | 可选只读文件根目录 JSON 对象，例如 `{"workbench":"D:/apiWorkSpace/ai-workbench"}` |
 | `LEON_HTTP_TIMEOUT_SECONDS` | `30` | Leon HTTP 请求超时秒数 |
 | `LEON_BRIDGE_TIMEOUT_SECONDS` | `20` | Node bridge 执行超时秒数 |
 | `VOLINK_API_KEY` | 空 | Volink TTS 密钥；未配置时 Web 隐藏语音目录与朗读能力 |
@@ -144,6 +157,10 @@ uv tool install --editable .\projects\02-leon-agent `
 | `LEON_ASR_TOKEN` | 空 | ASR 服务密钥，仅保留在 Gateway |
 | `LEON_ASR_MODEL` | `whisper-1` | `/audio/transcriptions` 使用的模型 ID |
 | `LEON_ASR_MAX_BYTES` | `15728640` | 单次 ASR 音频最大字节数 |
+| `TAVILY_API_KEY` | 空 | Tavily 密钥；非空时启用 `web_search`，只保留在后端 |
+| `TAVILY_BASE_URL` | `https://api.tavily.com` | Tavily API 根地址 |
+| `TAVILY_TIMEOUT_SECONDS` | `15` | 单次搜索请求超时秒数 |
+| `TAVILY_MAX_RESULTS` | `5` | 搜索默认结果数，允许 `1..10` |
 
 后端返回的图片可能是 `/view?filename=...` 这类相对路径。工具层会把它拼成
 `LEON_PUBLIC_IMAGE_BASE_URL`（未配置时用 `LEON_BACKEND_URL`）下的绝对地址，已经是
@@ -153,12 +170,47 @@ uv tool install --editable .\projects\02-leon-agent `
 uv run leon --public-image-base-url https://comfyui.928886540.xyz
 ```
 
-模型配置默认读取 `~/.codex/config.toml`；可用 `CODEX_CONFIG_PATH` 指定其他路径，或通过
-`LLM_SOURCE=ccs/env` 使用旧 CC Switch DB / 手工环境变量。它与生图后端配置分离。
+模型配置只读取 `%USERPROFILE%\.leon\config.toml`。可用进程环境变量 `LEON_CONFIG_FILE`
+在启动前选择另一份绝对路径文件；不存在 `.codex` / CCS / repo `.env` 回退。更换 provider 时直接
+编辑 `.leon\config.toml`，然后重启 CLI/Gateway。
+
+### 可选联网搜索
+
+在用户配置的 `[leon.env]` 中保存 Key（首次 `leon-config init` 会从本地 `.env` 迁移）。不要提交
+真实密钥：
+
+```dotenv
+TAVILY_API_KEY=<new-tavily-api-key>
+```
+
+重启 CLI 或 `leon-server` 后，`/tools` 应出现 `web_search`。没有 Key 时工具不会注册，Leon
+其余能力保持可用。当前只实现 Tavily Search；`extract`、`crawl`、`map` 和搜索 MCP 暴露尚未实现，
+完整契约见 [联网搜索](docs/web-search.md)。
+
+### 可选本地文件检索
+
+File Search 默认关闭。需要让 Leon 查阅项目文档、Prompt 或角色设定时，在用户配置的
+`[leon.env]` 中配置一个或多个绝对目录。值是 JSON 对象，`root_id` 是模型看到的稳定别名：
+
+```toml
+[leon.env]
+LEON_FILE_ROOTS = "{\"workbench\":\"D:/apiWorkSpace/ai-workbench\",\"prompts\":\"D:/prompt-library\"}"
+```
+
+启用后，`/tools` 会出现三个只读工具：`list_files`（列目录）、`file_search`（按文件名或正文做
+不区分大小写的字面搜索）和 `read_file`（按行读取）。工具只返回根别名、相对路径和行号，隐藏
+绝对路径；`.env`、密钥、数据库、隐藏目录、链接和不支持的二进制文件会被跳过。没有配置 roots
+时这三个工具不会注册，聊天、生图和联网搜索不受影响。
+
+修改 `LEON_FILE_ROOTS` 或 Python 源码后必须重启 `leon` / `leon-server`；不要把个人密钥目录加入
+allowlist，也不要把 File Search 当作文件写入或 RAG，当前版本没有写文件、PDF/DOCX 解析或向量索引。
+完整参数、限制和中断后接手步骤见 [File Search](docs/file-search.md)。
 
 ## 验证
 
 ```powershell
+uv run pytest projects/02-leon-agent/tests/test_search.py -q
+uv run pytest packages/workbench_core/tests/test_file_search.py projects/02-leon-agent/tests/test_leon_file_search.py -q
 npm --prefix projects/02-leon-agent/web run build
 uv run pytest projects/02-leon-agent/tests -q
 uv run ruff check projects/02-leon-agent

@@ -29,9 +29,10 @@ uv run python projects/04-mcp-lab/leon-mcp-server/scripts/mcp_smoke.py
 Streamable HTTP 默认只监听本机，MCP endpoint 为 `http://127.0.0.1:8240/mcp`。公网暴露前需
 单独设计鉴权，不应直接绑定 `0.0.0.0`。
 
-配置沿用 Leon Agent 的 `LEON_BACKEND_URL`、`LEON_PUBLIC_IMAGE_BASE_URL`、
-`LEON_PLUGIN_DIR`、`LEON_DEFAULT_IMAGE_MODES` 和超时配置。可用 `LEON_MCP_SESSION_ID`
-固定任务/图库 scope，默认值为 `default`。
+配置与 CLI/Web 一样读取 `%USERPROFILE%\.leon\config.toml` 中的
+`LEON_BACKEND_URL`、`LEON_PUBLIC_IMAGE_BASE_URL`、`LEON_PLUGIN_DIR`、
+`LEON_DEFAULT_IMAGE_MODES` 和超时配置；缺少用户配置时直接停止，不回退到仓库 `.env`。
+可用进程环境变量 `LEON_MCP_SESSION_ID` 固定任务/图库 scope，默认值为 `default`。
 
 面试演示可加 `--check-environment` 展示只读自检；脚本默认不调用 `generate_images`：
 
