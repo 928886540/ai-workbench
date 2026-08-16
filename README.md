@@ -144,7 +144,7 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 # 1. 安装依赖（仓库根目录）
 uv sync
 
-# 2. 复制环境变量
+# 2. 复制共享实验配置（Leon 只在首次 init 时迁移受支持项）
 copy .env.example .env
 
 # 3. 首次为 Leon 创建独立用户配置（之后不再读取 CC Switch/.env）

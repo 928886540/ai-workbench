@@ -108,7 +108,7 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 Esc/Ctrl+C 会协作式取消当前轮并丢弃迟到结果，Ctrl+D/Q 退出。同步 HTTP 在途读取无法安全硬中断，
 因此取消后仍可能等待 provider 返回或 30 秒超时，但不会继续后续 LLM/tool 轮，也不会持久化或渲染迟到结果。
 
-启动时优先读取 `%USERPROFILE%\.leon\config.toml` 中复制的 provider，使用其中的
+启动时只读取 `%USERPROFILE%\.leon\config.toml` 中复制的 provider，使用其中的
 `base_url`、`experimental_bearer_token` 和顶层 `model`。`/model` 接受列表序号或任意新
 model ID，只替换当前会话请求中的 model；URL 与密钥仍跟随这份配置快照。选择会写入当前
 SQLite session，之后执行 `leon resume <session_id>` 仍会恢复该模型。没有有效用户配置时直接
@@ -179,8 +179,9 @@ uv run leon --public-image-base-url https://comfyui.928886540.xyz
 在用户配置的 `[leon.env]` 中保存 Key（首次 `leon-config init` 会从本地 `.env` 迁移）。不要提交
 真实密钥：
 
-```dotenv
-TAVILY_API_KEY=<new-tavily-api-key>
+```toml
+[leon.env]
+TAVILY_API_KEY = "<new-tavily-api-key>"
 ```
 
 重启 CLI 或 `leon-server` 后，`/tools` 应出现 `web_search`。没有 Key 时工具不会注册，Leon
@@ -225,8 +226,8 @@ uv run leon-server --help
 Vue Web 客户端的 5 个阶段均已完成：HTTP Gateway、SSE 事件流、手机 PWA 聊天、任务/图库视图，以及运行时间线。
 Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 job id，并在后台跟踪状态和完成图片；CLI 仍保留
 同步等待图片结果的体验。图片完成后 Gateway 会主动持久化并推送一条带图片的助手消息，Web
-聊天气泡直接显示图片，不需要再次询问 LLM。Web 设置页可为当前 session 选择模型，或恢复跟随 Codex 配置中的
-默认模型；选择会与 CLI 共用同一份 SQLite 会话状态。
+聊天气泡直接显示图片，不需要再次询问 LLM。Web 设置页可为当前 session 选择模型，或恢复用户 `.leon`
+配置快照中的默认模型；选择会与 CLI 共用同一份 SQLite 会话状态。
 
 任务页默认显示中文模式名、用户原始描述和中文状态；完成任务显示可点击缩略图，内部
 `job_id` / `generation_plan_id` 不在界面暴露。TTS 的 `502` 代表 Volink 上游失败，不是本项目的文本长度限制；网关会记录

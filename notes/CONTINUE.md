@@ -119,9 +119,11 @@
   显式 fake LLM 环境下全仓为 **206 passed**；`uv run ruff check .` 通过。Tavily 官方 keyless
   `/search` 只读探测返回了
   `title/url/content`，未使用已泄露 Key，也未消耗用户账户 credits。
-- 运行态（22:xx）：本机 Git 忽略的 `.env` 已配置 Tavily Key，计划任务 `Leon Agent` 已重启；本机和公网
-  `/api/health/detail` 均为 `search_tool: ready`。真实 `WebSearchService` basic 搜索成功返回 1 条
-  `title/url/snippet`，已验证 Bearer 鉴权和结果标准化。该 Key 曾出现在聊天中，仍应在方便时轮换。
+- 迁移前运行态历史（22:xx）：当时本机 Git 忽略的 `.env` 配置了 Tavily Key，计划任务 `Leon Agent`
+  重启后，本机和公网 `/api/health/detail` 均为 `search_tool: ready`。该值现已由首次
+  `leon-config init` 迁入 `.leon/config.toml`，仓库 `.env` 不再参与 Leon 运行。真实
+  `WebSearchService` basic 搜索成功返回 1 条 `title/url/snippet`，已验证 Bearer 鉴权和结果标准化。
+  该 Key 曾出现在聊天中，仍应在方便时轮换。
 - 完整联调已通过：默认模型切换为 `grok-4.6` 后，`leon --once` 实际产生
   `调用工具 web_search -> web_search 完成`，最终中文回答引用 Tavily 官方文档 URL。此前
   `gpt-5.6-sol` 的 `403 channel:client_restricted` 已不再阻塞。非 UTF-8 自动化终端仍需临时设置
@@ -250,7 +252,7 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 | `LEARNING_ROADMAP.md` | 学习主线 |
 | `notes/career/transition-plan.md` | 转型 90 天计划 |
 | `notes/decisions/` | 架构为什么这样设计 |
-| `notes/learning/ccs-integration.md` | 如何从 CCS 读模型配置 |
+| `notes/learning/ccs-integration.md` | 共享实验项目的 CCS 接入，以及 Leon 独立 provider / 首次迁移边界 |
 | `projects/02-code-agent/README.md` | 当前 Agent 项目状态 |
 | 本文件 | 下次怎么续聊 |
 
@@ -260,7 +262,8 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 
 1. **每次告一段落**，让我更新对应 README / notes（比只靠聊天记录稳）
 2. **换天继续**，优先用上面开场，不要只说“继续”
-3. **CCS 配置**继续说名字即可：`用 CCS 的薄荷` / `用 CCS 的大黑客`
+3. **非 Leon 共享实验项目的 CCS 配置**继续说名字即可：`用 CCS 的薄荷` / `用 CCS 的大黑客`；
+   Leon 必须直接维护 `%USERPROFILE%\.leon\config.toml`
 4. session 能续就续；**不能续也没问题**，以仓库为准
 
 ---

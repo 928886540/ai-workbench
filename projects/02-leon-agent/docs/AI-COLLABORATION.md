@@ -17,7 +17,8 @@ runtime boundary, canonical path, or known limitation changes.
 - Public Web URL: `https://leon.928886540.xyz`
 - Cloudflare Tunnel config: `D:\cloudflared\config.yml`
 - CLI command: `leon` (editable uv tool install pointing at this repository)
-- Canonical runtime config: `~/.leon/config.toml`; `.codex` and CC Switch are bootstrap-only
+- Canonical runtime config: `~/.leon/config.toml`; `.codex`, CC Switch, and the repository `.env`
+  are bootstrap-only inputs for the first `leon-config init`
 
 Runtime restart rule:
 
