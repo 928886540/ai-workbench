@@ -1,0 +1,116 @@
+{
+  "root_id": "baseline",
+  "documents": [
+    {
+      "path": "agent-evaluation.md",
+      "text": "# Agent Evaluation\npytest 验证代码契约是否保持稳定，Evaluation 验证 Agent 的行为质量。评估集先建立 20 个 case，再扩展到 50 个。核心指标包括 Task Success、Tool Selection、Plan Adherence、Safety、Latency、Tool Calls 和 Tokens/Cost。"
+    },
+    {
+      "path": "rag-pipeline.md",
+      "text": "# RAG Pipeline\nRAG 固定按 chunk → embedding → retrieval → citation 推进。检索质量使用 Recall@K 和 MRR 衡量，答案引用使用 citation precision，生成答案后再评估 faithfulness。"
+    },
+    {
+      "path": "planning-boundary.md",
+      "text": "# Planning Boundary\nPlanning 冻结在 MVP。当前不继续实现 DAG、并行 planner、后台恢复、自动重试或第二套 executor，避免在行为质量没有基线前扩大运行时复杂度。"
+    },
+    {
+      "path": "trace-observability.md",
+      "text": "# Trace and Observability\nTrace 阶段统一 trace_id 与 turn_id，并记录 LLM、Tool、Planning span。审计日志必须继续脱敏，不能记录密钥、原始 Authorization 或未授权的私人内容。"
+    },
+    {
+      "path": "provider-policy.md",
+      "text": "# Provider Policy\n自动化测试和默认评测使用 fake provider，不产生真实额度消耗。真实 provider 必须显式 opt-in，并明确指定专用 embedding model；不能静默把聊天模型当作 embedding 模型。"
+    },
+    {
+      "path": "roadmap.md",
+      "text": "# Roadmap\nLeon Agent 的推进顺序是 Evaluation → RAG → Trace / Observability。Multi-Agent、Telegram 和 Tavo MCP 互通后置，不能抢占当前主线。"
+    },
+    {
+      "path": "unit-testing.md",
+      "text": "# Unit and Integration Testing\npytest 用于验证函数、模块和接口契约，包括异常分支与集成边界。测试通过只能说明代码按契约运行，不能证明 Agent 的工具选择、计划遵循或最终行为质量达标。"
+    },
+    {
+      "path": "web-search-evaluation.md",
+      "text": "# Web Search Evaluation\n联网搜索评估关注结果新鲜度、来源可信度、域名多样性与答案时效性。它与本地向量检索评测相邻但不同，不能用搜索结果数量替代 RAG 的 Recall@K 和 MRR。"
+    },
+    {
+      "path": "recovery-options.md",
+      "text": "# Runtime Recovery Options\n后台恢复、自动重试和持久化执行记录可以作为未来可靠性方案候选。Planning 仍冻结在 MVP 时，这些能力只记录设计选项，不表示当前已经实现或进入主线。"
+    },
+    {
+      "path": "audit-logging.md",
+      "text": "# Audit Logging\n审计日志记录获授权的操作结果并执行密钥、Authorization 与私人内容脱敏。审计规则负责合规留痕，但不会替代 trace_id、turn_id 以及 LLM、Tool、Planning span 的调用链关联。"
+    },
+    {
+      "path": "chat-provider.md",
+      "text": "# Chat Provider\n聊天模型负责生成回答、工具调用或结构化输出。除非服务明确暴露 embeddings 接口和专用模型，聊天模型名称不能直接用于创建检索向量；索引与查询还必须使用同一 embedding 模型和维度。"
+    }
+  ],
+  "cases": [
+    {
+      "id": "eval-vs-pytest",
+      "query": "pytest 和 Agent Evaluation 分别验证什么？",
+      "relevant_paths": ["agent-evaluation.md"]
+    },
+    {
+      "id": "eval-size",
+      "query": "行为评估集应该先做多少个 case，之后扩到多少？",
+      "relevant_paths": ["agent-evaluation.md"]
+    },
+    {
+      "id": "rag-order",
+      "query": "RAG 从文本切分到引用的实现顺序是什么？",
+      "relevant_paths": ["rag-pipeline.md"]
+    },
+    {
+      "id": "retrieval-metrics",
+      "query": "检索质量用 Recall@K 和 MRR 怎么衡量？",
+      "relevant_paths": ["rag-pipeline.md"]
+    },
+    {
+      "id": "planning-freeze",
+      "query": "为什么不继续做 DAG、并行 planner 和第二套 executor？",
+      "relevant_paths": ["planning-boundary.md"]
+    },
+    {
+      "id": "trace-contract",
+      "query": "可观测性需要统一哪些 id 和 span，并遵守什么审计要求？",
+      "relevant_paths": ["trace-observability.md"]
+    },
+    {
+      "id": "provider-opt-in",
+      "query": "真实 embedding provider 如何启用，默认测试会不会消耗额度？",
+      "relevant_paths": ["provider-policy.md"]
+    },
+    {
+      "id": "main-roadmap",
+      "query": "Leon Agent 当前主线顺序是什么，Multi-Agent 和 Telegram 何时做？",
+      "relevant_paths": ["roadmap.md"]
+    },
+    {
+      "id": "eval-contract-hard-negative",
+      "query": "代码测试已经通过后，什么机制继续验证工具选择和 Agent 最终行为质量？",
+      "relevant_paths": ["agent-evaluation.md"]
+    },
+    {
+      "id": "rag-metrics-hard-negative",
+      "query": "不要用搜索结果数量或新鲜度代替，本地向量检索应该使用哪两个排名指标？",
+      "relevant_paths": ["rag-pipeline.md"]
+    },
+    {
+      "id": "planning-recovery-hard-negative",
+      "query": "后台恢复和自动重试现在已经实现了吗，Planning 当前边界是什么？",
+      "relevant_paths": ["planning-boundary.md"]
+    },
+    {
+      "id": "trace-audit-hard-negative",
+      "query": "审计脱敏之外，跨 LLM、Tool 和 Planning 调用需要哪些关联标识？",
+      "relevant_paths": ["trace-observability.md"]
+    },
+    {
+      "id": "embedding-chat-hard-negative",
+      "query": "能否直接拿当前聊天模型名称生成检索向量，真实向量调用需要什么约束？",
+      "relevant_paths": ["provider-policy.md", "chat-provider.md"]
+    }
+  ]
+}

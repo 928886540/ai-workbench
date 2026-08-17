@@ -1,0 +1,22 @@
+[project]
+name = "rag-lab"
+version = "0.1.0"
+description = "Phase 03: retrieval-augmented generation lab."
+requires-python = ">=3.10"
+dependencies = [
+  "httpx>=0.27.0",
+  "openai>=1.40.0",
+  "workbench-core",
+]
+
+[project.scripts]
+rag-eval = "rag_lab.cli:main"
+rag-ask = "rag_lab.ask_cli:main"
+rag-suite = "rag_lab.suite_cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rag_lab"]
