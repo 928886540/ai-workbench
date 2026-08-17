@@ -36,6 +36,8 @@
   共享、支持硬删除，并以有预算的 untrusted context 注入后续 turn
 - per-turn Planning 状态机已接入普通 Agent：复杂请求可创建 2～8 步计划并按服务端规则推进；简单聊天、
   `/nsfw` 直达生图和 Leon MCP 不注册 Planning，计划正文不进入 SSE/SQLite 审计
+- Agent Evaluation 第一版已接入：20 个可审查 case，默认 fake provider，显式 `--live` 才使用真实 provider；
+  指标覆盖 Task Success、Tool Selection、Plan Adherence、Safety、Latency、Tool Calls 和 Tokens/Cost
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读
@@ -271,5 +273,6 @@ Web 前端的 Vue3 迁移边界、模式补全、Agent Timeline、TTS/`voice.rea
 已记录三条扩展需求：面试 MCP、Telegram Bot、Tavo 互通。详细边界与实施顺序见
 [Leon Agent 扩展路线](../../notes/plans/leon-agent-expansion.md)。
 
-当前优先级是 Telegram Bot -> Leon Agent 连接 Tavo MCP。共享 `LeonToolService` 与第一版 MCP Server
-已落地。Tavo v1.0.0 的聊天工具调用暂不能接入外部 MCP Server，等宿主能力开放后再做 Tavo -> Leon MCP。
+当前优先级是 Evaluation -> `03-rag-lab` -> Trace/Observability。共享 `LeonToolService` 与第一版 MCP
+Server 已落地；Telegram Bot、Tavo MCP 互通和 Multi-Agent 等质量基线后再排期。Evaluation 的运行方式和
+case 契约见 [Evaluation](docs/evaluation.md)。

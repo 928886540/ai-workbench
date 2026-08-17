@@ -11,12 +11,14 @@ dependencies = [
   "prompt-toolkit>=3.0.47",
   "python-multipart>=0.0.9",
   "python-dotenv>=1.0.1",
+  "pydantic>=2.7.0",
 ]
 
 [project.scripts]
 leon = "leon_agent.cli:main"
 leon-server = "leon_agent.gateway.server:main"
 leon-config = "leon_agent.config_file:main"
+leon-eval = "leon_agent.evaluation.runner:main"
 
 [build-system]
 requires = ["hatchling"]

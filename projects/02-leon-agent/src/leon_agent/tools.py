@@ -18,6 +18,61 @@ from leon_agent.search.service import WebSearchService
 from leon_agent.service import LeonToolService
 
 
+def _audit_web_search_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Keep search routing metadata, never the user/provider query text."""
+    projected: dict[str, Any] = {}
+    max_results = arguments.get("max_results")
+    if (
+        max_results is not None
+        and isinstance(max_results, int)
+        and not isinstance(max_results, bool)
+    ):
+        projected["max_results"] = max_results
+    search_depth = arguments.get("search_depth")
+    if search_depth in {"basic", "advanced"}:
+        projected["search_depth"] = search_depth
+    topic = arguments.get("topic")
+    if topic in {"general", "news"}:
+        projected["topic"] = topic
+    return projected
+
+
+def _audit_web_search_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Project search output to status, counts, and safe citation URLs only."""
+    if result.get("ok") is not True:
+        error_code = result.get("error_code")
+        return {
+            "ok": False,
+            "error_code": error_code if isinstance(error_code, str) else "tool_failed",
+        }
+    projected: dict[str, Any] = {
+        "ok": True,
+        "provider": str(result.get("provider") or "unknown")[:80],
+        "result_count": 0,
+    }
+    for key in ("search_depth", "topic"):
+        value = result.get(key)
+        allowed_values = (
+            {"basic", "advanced"} if key == "search_depth" else {"general", "news"}
+        )
+        if isinstance(value, str) and value in allowed_values:
+            projected[key] = value
+    raw_results = result.get("results")
+    if not isinstance(raw_results, list):
+        return projected
+    sources: list[str] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url")
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            sources.append(url[:2048])
+    projected["result_count"] = len(raw_results)
+    if sources:
+        projected["sources"] = list(dict.fromkeys(sources))
+    return projected
+
+
 def _format_generation_answer(
     arguments: dict[str, Any],
     result: dict[str, Any],
@@ -272,6 +327,8 @@ def create_leon_tools(
                     "additionalProperties": False,
                 },
                 handler=search_service.search,
+                audit_arguments=_audit_web_search_arguments,
+                audit_result=_audit_web_search_result,
             )
         )
     if memory_service is not None:
