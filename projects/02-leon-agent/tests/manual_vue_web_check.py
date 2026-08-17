@@ -172,6 +172,7 @@ class FakeGateway:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
         self.token_valid = True
+        self.retry_answer = "这是重试后的本地回复。"
         self.active_turn: dict[str, bool] | None = None
         self.clear_active_turn_after_session_read = False
         self.cancel_post_405 = False
@@ -298,7 +299,7 @@ class FakeGateway:
             return
         if path == f"{session_prefix}/messages" and method == "POST":
             answer = (
-                "这是重试后的本地回复。"
+                self.retry_answer
                 if body.get("retry")
                 else "这是 provider-free 的本地回复。"
             )
@@ -1594,6 +1595,73 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             autoplay_input.evaluate("el => { if (!el.checked) el.click(); }")
             page.get_by_role("button", name="聊天").click()
             page.get_by_role("heading", name="Leon").wait_for(state="visible")
+
+            streaming_tts_before = sum(
+                call["path"] == "/api/agent/tts" for call in gateway.calls
+            )
+            streaming_content = "第一段语音已经开始合成。第二段语音也会在回答完成前发出。"
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["assistant.started", {}],
+            )
+            for delta in (
+                "第一段语音已经开始合成。",
+                "第二段语音也会在回答完成前发出。",
+            ):
+                page.evaluate(
+                    "([event, data]) => window.__leonEmit(event, data)",
+                    ["assistant.delta", {"delta": delta}],
+                )
+            page.wait_for_timeout(200)
+            streaming_tts_calls = [
+                call
+                for call in gateway.calls
+                if call["path"] == "/api/agent/tts"
+            ][streaming_tts_before:]
+            check(
+                "回答完成前已分段请求流式语音并使用所选音色",
+                len(streaming_tts_calls) == 2
+                and all(
+                    call["body"].get("voice_id") == FAKE_VOICE_ID
+                    for call in streaming_tts_calls
+                ),
+                repr([call["body"] for call in streaming_tts_calls]),
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["assistant.completed", {"content": streaming_content}],
+            )
+            streamed_agent = page.locator(".message-row[data-role='agent']").last
+            streamed_agent.get_by_text(streaming_content).wait_for(state="visible")
+            page.wait_for_timeout(100)
+            check(
+                "完成事件不会重复合成已收到的流式文字",
+                sum(call["path"] == "/api/agent/tts" for call in gateway.calls)
+                == streaming_tts_before + 2,
+            )
+
+            retry_tts_before = sum(
+                call["path"] == "/api/agent/tts" for call in gateway.calls
+            )
+            gateway.retry_answer = "这是自动朗读重试后的新版本回复。"
+            streamed_agent.get_by_role("button", name="重试").click()
+            streamed_agent.get_by_text(gateway.retry_answer).wait_for(state="visible")
+            page.wait_for_timeout(100)
+            retry_tts_calls = [
+                call
+                for call in gateway.calls
+                if call["path"] == "/api/agent/tts"
+            ][retry_tts_before:]
+            check(
+                "同一助手气泡重试后按新 revision 再次生成语音",
+                len(retry_tts_calls) == 1
+                and retry_tts_calls[0]["body"].get("voice_id") == FAKE_VOICE_ID
+                and "新版本回复" in str(retry_tts_calls[0]["body"].get("text")),
+                repr([call["body"] for call in retry_tts_calls]),
+            )
+            retry_speech = streamed_agent.locator(".message-speak")
+            if retry_speech.get_attribute("aria-label") == "停止":
+                retry_speech.click()
 
             latest_tts_before = sum(
                 call["path"] == "/api/agent/tts" for call in gateway.calls

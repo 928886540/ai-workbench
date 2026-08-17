@@ -50,7 +50,9 @@ import {
   audioUnlockRequired,
   buildVoiceClipUrl,
   clearSpeechState,
+  queueSpeechChunk,
   speakMessage,
+  stopSpeech,
   unlockAudio,
 } from "../utils/speech";
 import { extractImageHrefs, safeHref, stripImageLinks } from "../utils/markdown";
@@ -577,7 +579,11 @@ function retryMessage(messageId: string): void {
 
   const retryLatest = target?.id === latestMessage("agent")?.id;
   if (!target) target = appendMessage(makeMessage("agent", "", "pending"));
-  else beginMessageRevision(target);
+  else {
+    stopSpeech(target.id);
+    resetStreamingSpeech(target.id);
+    beginMessageRevision(target);
+  }
   pendingAssistantId.value = target.id;
   suppressedUserEcho = { content, until: Date.now() + ERROR_DEDUPE_WINDOW_MS };
   void sendTurn(content, { appendUser: false, retry: retryLatest });
@@ -839,6 +845,10 @@ function pendingAssistant(): ChatMessage | null {
 function cancelPendingAssistant(): void {
   resetAssistantStream();
   const message = pendingAssistant();
+  if (message) {
+    stopSpeech(message.id);
+    resetStreamingSpeech(message.id);
+  }
   pendingAssistantId.value = null;
   if (!message) return;
   const hasVisibleWork = Boolean(
@@ -929,7 +939,12 @@ function ensureVoiceCatalog(): Promise<boolean> {
   return loadVoiceCatalog().catch(() => false);
 }
 
+function autoplayAttemptKey(message: ChatMessage): string {
+  return `${message.id}:${message.revisions.length}`;
+}
+
 function maybeAutoplay(message: ChatMessage): void {
+  const attemptKey = autoplayAttemptKey(message);
   if (
     message.role !== "agent" ||
     message.status !== "done" ||
@@ -938,14 +953,14 @@ function maybeAutoplay(message: ChatMessage): void {
     message.images.length > 0 ||
     hasImageContent(message.text) ||
     !autoplayAll.value ||
-    autoplayRequests.has(message.id)
+    autoplayRequests.has(attemptKey)
   ) {
     return;
   }
-  autoplayRequests.add(message.id);
+  autoplayRequests.add(attemptKey);
   void ensureVoiceCatalog().then((enabled) => {
     if (!enabled || !autoplayAll.value) {
-      autoplayRequests.delete(message.id);
+      autoplayRequests.delete(attemptKey);
       return;
     }
     void speakMessage(message.id, message.text, activeVoiceId());
@@ -971,6 +986,140 @@ let assistantStreamMessageId: string | null = null;
 let assistantStreamTimer: number | null = null;
 let assistantStreamQueue: string[] = [];
 let pendingStreamCompletion: PendingStreamCompletion | null = null;
+
+const SPEECH_CHUNK_MIN_CHARS = 8;
+const SPEECH_CHUNK_MAX_CHARS = 64;
+let streamingSpeechMessageId: string | null = null;
+let streamingSpeechAttemptKey: string | null = null;
+let streamingSpeechSource = "";
+let streamingSpeechBuffer = "";
+let streamingSpeechReady = false;
+let streamingSpeechFinal = false;
+let streamingSpeechVoiceId = "";
+let streamingSpeechGeneration = 0;
+
+function resetStreamingSpeech(messageId?: string): void {
+  if (messageId && streamingSpeechMessageId !== messageId) return;
+  streamingSpeechGeneration += 1;
+  streamingSpeechMessageId = null;
+  streamingSpeechAttemptKey = null;
+  streamingSpeechSource = "";
+  streamingSpeechBuffer = "";
+  streamingSpeechReady = false;
+  streamingSpeechFinal = false;
+  streamingSpeechVoiceId = "";
+}
+
+function nextSpeechChunkLength(raw: string, final: boolean): number {
+  const characters = Array.from(raw);
+  if (!characters.length) return 0;
+  const fenceCount = raw.match(/```/g)?.length || 0;
+  if (!final && fenceCount % 2 === 1) return 0;
+
+  const limit = Math.min(characters.length, SPEECH_CHUNK_MAX_CHARS);
+  for (let index = SPEECH_CHUNK_MIN_CHARS - 1; index < limit; index += 1) {
+    if (/[。！？!?；;]/.test(characters[index])) return index + 1;
+  }
+  if (characters.length >= SPEECH_CHUNK_MAX_CHARS) {
+    for (let index = limit - 1; index >= SPEECH_CHUNK_MIN_CHARS - 1; index -= 1) {
+      if (/[，,：:\s]/.test(characters[index])) return index + 1;
+    }
+    return limit;
+  }
+  return final ? characters.length : 0;
+}
+
+function flushStreamingSpeech(): void {
+  if (!streamingSpeechReady || !streamingSpeechMessageId) return;
+  while (streamingSpeechBuffer) {
+    const length = nextSpeechChunkLength(streamingSpeechBuffer, streamingSpeechFinal);
+    if (!length) return;
+    const characters = Array.from(streamingSpeechBuffer);
+    const chunk = characters.splice(0, length).join("");
+    streamingSpeechBuffer = characters.join("");
+    void queueSpeechChunk(streamingSpeechMessageId, chunk, streamingSpeechVoiceId);
+  }
+}
+
+function beginStreamingSpeech(message: ChatMessage): boolean {
+  if (
+    !autoplayAll.value ||
+    message.role !== "agent" ||
+    message.kind === "image-result" ||
+    message.images.length > 0
+  ) {
+    return false;
+  }
+  const attemptKey = autoplayAttemptKey(message);
+  if (
+    streamingSpeechMessageId === message.id &&
+    streamingSpeechAttemptKey === attemptKey
+  ) {
+    return true;
+  }
+
+  resetStreamingSpeech();
+  const generation = streamingSpeechGeneration;
+  streamingSpeechMessageId = message.id;
+  streamingSpeechAttemptKey = attemptKey;
+  autoplayRequests.add(attemptKey);
+  void ensureVoiceCatalog().then((enabled) => {
+    if (
+      generation !== streamingSpeechGeneration ||
+      streamingSpeechMessageId !== message.id ||
+      streamingSpeechAttemptKey !== attemptKey
+    ) {
+      return;
+    }
+    if (!enabled || !autoplayAll.value) {
+      autoplayRequests.delete(attemptKey);
+      resetStreamingSpeech(message.id);
+      return;
+    }
+    streamingSpeechVoiceId = activeVoiceId();
+    streamingSpeechReady = true;
+    flushStreamingSpeech();
+  });
+  return true;
+}
+
+function enqueueStreamingSpeech(message: ChatMessage, delta: string): void {
+  if (!beginStreamingSpeech(message)) return;
+  streamingSpeechSource += delta;
+  streamingSpeechBuffer += delta;
+  if (hasImageContent(streamingSpeechSource)) {
+    stopSpeech(message.id);
+    resetStreamingSpeech(message.id);
+    return;
+  }
+  flushStreamingSpeech();
+}
+
+function completeStreamingSpeech(message: ChatMessage | null, content: string): void {
+  if (
+    !message ||
+    streamingSpeechMessageId !== message.id ||
+    streamingSpeechAttemptKey !== autoplayAttemptKey(message)
+  ) {
+    return;
+  }
+  if (content.startsWith(streamingSpeechSource)) {
+    const suffix = content.slice(streamingSpeechSource.length);
+    streamingSpeechSource += suffix;
+    streamingSpeechBuffer += suffix;
+  }
+  streamingSpeechFinal = true;
+  if (
+    message.kind === "image-result" ||
+    message.images.length > 0 ||
+    hasImageContent(content)
+  ) {
+    stopSpeech(message.id);
+    resetStreamingSpeech(message.id);
+    return;
+  }
+  flushStreamingSpeech();
+}
 
 function resetAssistantStream(): void {
   if (assistantStreamTimer !== null) {
@@ -1042,6 +1191,7 @@ function enqueueAssistantDelta(message: ChatMessage, delta: string): void {
     resetAssistantStream();
     assistantStreamMessageId = message.id;
   }
+  enqueueStreamingSpeech(message, delta);
   assistantStreamQueue.push(...Array.from(delta));
   scheduleAssistantStream();
 }
@@ -1233,14 +1383,17 @@ function handleEvent(event: LeonEvent): void {
       enqueueAssistantDelta(message, delta);
       break;
     }
-    case "assistant.completed":
+    case "assistant.completed": {
       if (shouldSuppressAssistantEvent(data)) break;
+      const content = asString(data.content) || pendingAssistant()?.text || "";
+      completeStreamingSpeech(pendingAssistant(), content);
       queueAssistantCompletion(
-        asString(data.content) || pendingAssistant()?.text || "",
+        content,
         "done",
         parseCompletedMeta(data),
       );
       break;
+    }
     case "assistant.cancelled": {
       const traceId = assistantTraceId(data);
       if (traceId) cancelledAssistantTraceIds.add(traceId);
@@ -1337,7 +1490,11 @@ function restoreActiveTurn(activeTurn: { retry: boolean } | null): void {
   let target: ChatMessage | null = null;
   if (activeTurn.retry) {
     target = latestMessage("agent");
-    if (target) beginMessageRevision(target);
+    if (target) {
+      stopSpeech(target.id);
+      resetStreamingSpeech(target.id);
+      beginMessageRevision(target);
+    }
   }
   if (!target) target = appendMessage(makeMessage("agent", "", "pending"));
   target.status = "pending";
@@ -1438,6 +1595,7 @@ function logout(): void {
   lastEventId = "";
   eventCursorSessionId = "";
   resetAssistantStream();
+  resetStreamingSpeech();
   clearTimeline(true);
   api.logout();
   authenticated.value = false;
@@ -1478,6 +1636,8 @@ async function sendTurn(content: string, options: SendTurnOptions): Promise<void
   // reused by the next assistant.started event.
   if (options.appendUser) {
     resetAssistantStream();
+    resetStreamingSpeech();
+    stopSpeech();
     pendingAssistantId.value = null;
     suppressedUserEcho = null;
     appendMessage(makeMessage("user", content));
@@ -1505,6 +1665,7 @@ async function sendTurn(content: string, options: SendTurnOptions): Promise<void
     if (!current && latest && latest.id !== previousAgentId) current = latest;
     if (current) {
       if (response.ok) {
+        completeStreamingSpeech(current, response.answer);
         queueAssistantCompletion(response.answer, "done", {}, current);
       } else {
         resetAssistantStream();
@@ -1596,6 +1757,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   closeEvents();
   resetAssistantStream();
+  resetStreamingSpeech();
   window.removeEventListener("online", handleOnline);
   window.removeEventListener("pageshow", handlePageShow);
   document.removeEventListener("visibilitychange", handleVisibilityChange);

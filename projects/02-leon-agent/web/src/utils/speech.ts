@@ -11,12 +11,25 @@ interface SpeechOperation {
   objectUrl: string | null;
   /** A gateway clip URL. Unlike a Blob URL, this must never be revoked. */
   remoteUrl: string | null;
+  onComplete?: () => void;
 }
 
 interface PendingSpeech {
   messageId: string;
   objectUrl: string | null;
   remoteUrl?: string | null;
+  onComplete?: () => void;
+}
+
+type QueuedSpeechState = "loading" | "ready" | "failed";
+
+interface QueuedSpeechChunk {
+  messageId: string;
+  token: symbol;
+  controller: AbortController | null;
+  state: QueuedSpeechState;
+  blob: Blob | null;
+  cancelled: boolean;
 }
 
 const SILENT_MP3 =
@@ -36,6 +49,8 @@ let audioUnlocked = false;
 let unlockPromise: Promise<boolean> | null = null;
 let active: SpeechOperation | null = null;
 let pending: PendingSpeech | null = null;
+let queuedMessageId: string | null = null;
+const queuedChunks: QueuedSpeechChunk[] = [];
 
 export function setVoiceMediaSessionMetadata(title: string, artist = "Leon Agent"): void {
   if (
@@ -119,14 +134,15 @@ function finishActive(operation: SpeechOperation): void {
   active = null;
   cleanupOperation(operation);
   setStatus(operation.messageId, "idle");
+  operation.onComplete?.();
 }
 
 async function playOperation(operation: SpeechOperation): Promise<boolean> {
   const audio = getPlayer();
   const url = sourceUrl(operation);
   if (!audio || !url) {
-    finishActive(operation);
     errorState[operation.messageId] = "当前浏览器不支持音频播放";
+    finishActive(operation);
     return false;
   }
 
@@ -144,27 +160,31 @@ async function playOperation(operation: SpeechOperation): Promise<boolean> {
     return true;
   } catch (error) {
     if (active?.token !== operation.token) return false;
-    active = null;
     if (error instanceof DOMException && error.name === "NotAllowedError") {
+      active = null;
       if (pending) cleanupPending(pending);
       if (operation.remoteUrl) {
         pending = {
           messageId: operation.messageId,
           objectUrl: operation.objectUrl,
           remoteUrl: operation.remoteUrl,
+          onComplete: operation.onComplete,
         };
       } else {
         // Keep the Blob-only shape explicit: local TTS URLs are the only
         // pending payload that can ever need revocation.
-        pending = { messageId: operation.messageId, objectUrl: operation.objectUrl };
+        pending = {
+          messageId: operation.messageId,
+          objectUrl: operation.objectUrl,
+          onComplete: operation.onComplete,
+        };
       }
       audioUnlockRequired.value = true;
       setStatus(operation.messageId, "idle");
       return false;
     }
-    cleanupOperation(operation);
-    setStatus(operation.messageId, "idle");
     errorState[operation.messageId] = error instanceof Error ? error.message : "音频播放失败";
+    finishActive(operation);
     return false;
   }
 }
@@ -179,6 +199,7 @@ async function playPendingSpeech(): Promise<boolean> {
     controller: null,
     objectUrl: waiting.objectUrl,
     remoteUrl: waiting.remoteUrl || null,
+    onComplete: waiting.onComplete,
   };
   active = operation;
   setStatus(operation.messageId, "loading");
@@ -225,7 +246,127 @@ export async function unlockAudio(): Promise<boolean> {
   }
 }
 
+function cancelQueuedSpeech(messageId?: string): void {
+  if (!queuedMessageId || (messageId && queuedMessageId !== messageId)) return;
+  const cancelledMessageId = queuedMessageId;
+  queuedMessageId = null;
+  for (const chunk of queuedChunks.splice(0)) {
+    chunk.cancelled = true;
+    chunk.controller?.abort();
+    chunk.controller = null;
+    chunk.blob = null;
+  }
+  setStatus(cancelledMessageId, "idle");
+}
+
+function pumpQueuedSpeech(): void {
+  if (!queuedMessageId || active || pending) return;
+
+  let chunk = queuedChunks[0];
+  while (chunk && (chunk.cancelled || chunk.state === "failed")) {
+    queuedChunks.shift();
+    chunk = queuedChunks[0];
+  }
+  if (!chunk) {
+    const messageId = queuedMessageId;
+    queuedMessageId = null;
+    setStatus(messageId, "idle");
+    return;
+  }
+  if (chunk.state === "loading") {
+    setStatus(chunk.messageId, "loading");
+    return;
+  }
+
+  queuedChunks.shift();
+  const blob = chunk.blob;
+  chunk.blob = null;
+  if (!blob) {
+    chunk.state = "failed";
+    pumpQueuedSpeech();
+    return;
+  }
+  const operation: SpeechOperation = {
+    messageId: chunk.messageId,
+    token: chunk.token,
+    controller: null,
+    objectUrl: URL.createObjectURL(blob),
+    remoteUrl: null,
+    onComplete: pumpQueuedSpeech,
+  };
+  active = operation;
+  setStatus(operation.messageId, "loading");
+  void playOperation(operation);
+}
+
+async function prepareQueuedSpeechChunk(
+  chunk: QueuedSpeechChunk,
+  text: string,
+  voiceId?: string,
+): Promise<boolean> {
+  const cacheKey = ttsCacheKey(text, voiceId);
+  const cachedBlob = getCachedTts(cacheKey);
+  try {
+    const blob =
+      cachedBlob || (await api.synthesizeSpeech(text, voiceId, chunk.controller?.signal));
+    if (chunk.cancelled) return false;
+    chunk.controller = null;
+    if (!cachedBlob) cacheTts(cacheKey, blob);
+    chunk.blob = blob;
+    chunk.state = "ready";
+    pumpQueuedSpeech();
+    return true;
+  } catch (error) {
+    chunk.controller = null;
+    if (chunk.cancelled || (error instanceof DOMException && error.name === "AbortError")) {
+      return false;
+    }
+    chunk.state = "failed";
+    errorState[chunk.messageId] = error instanceof Error ? error.message : "朗读失败";
+    // A failed head must never prevent later, already synthesized chunks from playing.
+    pumpQueuedSpeech();
+    return false;
+  }
+}
+
+/**
+ * Synthesize streamed text chunks concurrently and play them in enqueue order.
+ * A new message takes ownership of the shared player; repeated chunks for the
+ * same message join its queue without interrupting the chunk already playing.
+ */
+export function queueSpeechChunk(
+  messageId: string,
+  rawText: string,
+  voiceId?: string,
+): Promise<boolean> {
+  const text = speakableText(rawText);
+  if (!text) return Promise.resolve(false);
+
+  if (queuedMessageId && queuedMessageId !== messageId) {
+    stopSpeech();
+  } else if (!queuedMessageId && (active || pending)) {
+    stopSpeech();
+  }
+  queuedMessageId = messageId;
+  delete errorState[messageId];
+  setVoiceMediaSessionMetadata(text);
+
+  const cacheKey = ttsCacheKey(text, voiceId);
+  const chunk: QueuedSpeechChunk = {
+    messageId,
+    token: Symbol(messageId),
+    controller: getCachedTts(cacheKey) ? null : new AbortController(),
+    state: "loading",
+    blob: null,
+    cancelled: false,
+  };
+  queuedChunks.push(chunk);
+  setStatus(messageId, active?.messageId === messageId ? "playing" : "loading");
+  return prepareQueuedSpeechChunk(chunk, text, voiceId);
+}
+
 export function stopSpeech(messageId?: string): void {
+  cancelQueuedSpeech(messageId);
   if (pending && (!messageId || pending.messageId === messageId)) {
     const waiting = pending;
     pending = null;

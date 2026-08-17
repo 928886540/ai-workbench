@@ -53,11 +53,10 @@ def test_chat_handles_voice_ready_and_delta_without_provider_calls() -> None:
         "enqueueAssistantDelta(message, delta);",
         "assistantStreamQueue.push(...Array.from(delta));",
         "message.text += characters.join(\"\");",
-        (
-            'queueAssistantCompletion(\n        asString(data.content) || '
-            'pendingAssistant()?.text || "",\n        "done",\n'
-            "        parseCompletedMeta(data),\n      );"
-        ),
+        'const content = asString(data.content) || pendingAssistant()?.text || "";',
+        "completeStreamingSpeech(pendingAssistant(), content);",
+        'queueAssistantCompletion(\n        content,\n        "done",\n'
+        "        parseCompletedMeta(data),\n      );",
     ):
         assert fragment in chat, fragment
 
