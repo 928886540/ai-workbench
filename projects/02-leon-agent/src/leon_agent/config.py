@@ -80,8 +80,10 @@ class LeonSettings(BaseSettings):
     )
     tavily_max_results: int = Field(default=5, ge=1, le=10, alias="TAVILY_MAX_RESULTS")
 
-    # Optional read-only local document roots. Values are parsed from a JSON
-    # object so Windows drive letters never conflict with a path separator.
+    # Optional local document roots. Reads are bounded; writes require a separate
+    # server-side authorization hook and are never granted by this setting alone.
+    # Values are parsed from JSON so Windows drive letters never conflict with a
+    # path separator.
     file_roots: dict[str, Path] = Field(default_factory=dict, alias="LEON_FILE_ROOTS")
 
     @field_validator("plugin_dir", "system_prompt_file", mode="before")

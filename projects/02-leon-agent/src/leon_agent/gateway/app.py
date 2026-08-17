@@ -40,6 +40,7 @@ from leon_agent.agent import LeonAgent
 from leon_agent.config import LeonSettings
 from leon_agent.config_file import apply_config_file
 from leon_agent.file_tools import create_file_search_service
+from leon_agent.file_write_policy import create_file_write_service
 from leon_agent.gateway.events import EventBusRegistry, LeonEvent
 from leon_agent.image_modes import (
     DEFAULT_NSFW_MODE_ID,
@@ -859,6 +860,7 @@ async def send_message(
             max_results=config.tavily_max_results,
         )
         file_service = create_file_search_service(config.file_roots)
+        file_write_service = create_file_write_service(config.file_roots)
 
         def on_generation_submitted(submission: dict[str, Any]) -> None:
             workflow_ids = [
@@ -958,6 +960,8 @@ async def send_message(
                 wait_for_image_completion=False,
                 on_generation_submitted=on_generation_submitted,
                 search_service=search_service,
+                file_service=file_service,
+                file_write_service=file_write_service,
             )
             def execute_direct_generation() -> dict[str, Any]:
                 with cancellation_scope(cancel_event):
@@ -1018,6 +1022,7 @@ async def send_message(
             speak_handler=_session_speak_factory(config, session_id, bus.publish),
             search_service=search_service,
             file_service=file_service,
+            file_write_service=file_write_service,
             additional_system_prompt=config.read_additional_system_prompt(),
         )
 

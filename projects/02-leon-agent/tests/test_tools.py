@@ -181,6 +181,16 @@ def test_agent_prompt_tells_the_model_it_can_cancel() -> None:
     assert "never tell the user cancelling is unsupported" in SYSTEM_PROMPT
 
 
+def test_file_write_prompt_is_opt_in() -> None:
+    read_only_prompt = build_system_prompt()
+    writable_prompt = build_system_prompt(file_write_enabled=True)
+
+    assert "!file create" not in read_only_prompt
+    assert "!file write" not in read_only_prompt
+    assert "!file create" in writable_prompt
+    assert "!file write" in writable_prompt
+
+
 def test_additional_system_prompt_is_appended_verbatim() -> None:
     additional = "自定义第一行\n自定义第二行"
 

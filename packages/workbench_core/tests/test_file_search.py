@@ -48,6 +48,24 @@ def test_file_search_contract_and_cross_root_search(tmp_path: Path) -> None:
     assert str(tmp_path) not in repr(search)
 
 
+def test_root_bindings_are_opaque_stable_copies(tmp_path: Path) -> None:
+    same_root = FileSearchService({"docs": tmp_path})
+    same_root_again = FileSearchService({"docs": tmp_path / "."})
+    other = tmp_path / "other"
+    other.mkdir()
+    other_root = FileSearchService({"docs": other})
+
+    bindings = same_root.root_bindings
+
+    assert bindings == same_root_again.root_bindings
+    assert bindings != other_root.root_bindings
+    assert set(bindings) == {"docs"}
+    assert len(bindings["docs"]) == 64
+    assert str(tmp_path) not in repr(bindings)
+    bindings["docs"] = "mutated"
+    assert bindings != same_root.root_bindings
+
+
 @pytest.mark.parametrize(
     ("relative_path", "error_code"),
     [

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from workbench_core.agent import AgentTool, ToolRegistry
-from workbench_core.files import FileSearchService
+from workbench_core.files import FileSearchService, FileWriteService
 
 from leon_agent.file_tools import create_file_tools
 from leon_agent.leon_client import LeonImageClient
@@ -55,6 +55,7 @@ def create_leon_tools(
     speak_handler: Callable[[str, str | None], dict[str, Any]] | None = None,
     search_service: WebSearchService | None = None,
     file_service: FileSearchService | None = None,
+    file_write_service: FileWriteService | None = None,
 ) -> ToolRegistry:
     service = LeonToolService(
         client,
@@ -255,7 +256,10 @@ def create_leon_tools(
             )
         )
     if file_service is not None:
-        for tool in create_file_tools(file_service):
+        for tool in create_file_tools(
+            file_service,
+            write_service=file_write_service,
+        ):
             registry.register(tool)
     # Voice is optional: the gateway injects a handler only when a TTS key is
     # configured, so a deployment without one never advertises a tool it cannot run.

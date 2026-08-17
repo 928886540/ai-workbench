@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import codecs
+import hashlib
+import os
 import re
+import secrets
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from itertools import islice
@@ -27,6 +30,7 @@ MAX_SEARCH_ENTRIES = 10_000
 MAX_SNIPPET_CHARS = 320
 
 ROOT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+_ROOT_BINDING_KEY = secrets.token_bytes(32)
 
 BLOCKED_NAMES = frozenset(
     {
@@ -185,6 +189,16 @@ def _normalized_name(name: str) -> str:
     return name.rstrip(" .").casefold()
 
 
+def _root_binding_fingerprint(path: Path) -> str:
+    """Return a process-local opaque token for one canonical root path."""
+    normalized = os.path.normcase(os.fspath(path))
+    return hashlib.blake2s(
+        os.fsencode(normalized),
+        key=_ROOT_BINDING_KEY,
+        digest_size=32,
+    ).hexdigest()
+
+
 def _is_blocked_path(relative_path: str) -> bool:
     parts = Path(relative_path).parts
     for part in parts:
@@ -307,6 +321,7 @@ class FileSearchService:
             )
 
         self._roots: dict[str, Workspace] = {}
+        self._root_bindings: dict[str, str] = {}
         seen_casefolded: set[str] = set()
         for root_id, root in roots.items():
             if not isinstance(root_id, str) or not ROOT_ID_PATTERN.fullmatch(root_id):
@@ -327,11 +342,18 @@ class FileSearchService:
                     "File roots must use absolute paths.",
                     error_code="invalid_argument",
                 )
-            self._roots[root_id] = Workspace(candidate)
+            workspace = Workspace(candidate)
+            self._roots[root_id] = workspace
+            self._root_bindings[root_id] = _root_binding_fingerprint(workspace.root)
 
     @property
     def root_ids(self) -> list[str]:
         return list(self._roots)
+
+    @property
+    def root_bindings(self) -> dict[str, str]:
+        """Return opaque composition tokens without exposing absolute roots."""
+        return dict(self._root_bindings)
 
     def _workspace(self, root_id: Any) -> tuple[str, Workspace] | dict[str, Any]:
         if root_id is None:

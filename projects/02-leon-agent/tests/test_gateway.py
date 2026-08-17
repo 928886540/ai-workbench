@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 from threading import Event
+from typing import Any
 
 import httpx
 import pytest
@@ -12,6 +14,12 @@ from fastapi.testclient import TestClient
 from leon_agent.gateway.app import _resolve_web_dir, _track_image_jobs, app, get_store
 from leon_agent.gateway.events import EventBusRegistry
 from leon_agent.session import SessionStore
+from leon_agent.tools import create_leon_tools as build_leon_tools
+from workbench_core.agent import AgentResult
+
+_FILE_TOOL_NAMES = frozenset(
+    {"list_files", "file_search", "read_file", "create_file", "write_file"}
+)
 
 
 @pytest.fixture()
@@ -19,6 +27,58 @@ def client(isolated_user_config):  # noqa: ARG001
     """Provide a TestClient with a temporary SQLite DB."""
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c
+
+
+def _install_gateway_agent_capture(
+    monkeypatch: pytest.MonkeyPatch,
+    captures: list[dict[str, Any]],
+) -> None:
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+
+    class FakeImageClient:
+        def list_modes(self) -> dict[str, Any]:
+            return {
+                "ok": True,
+                "modes": [
+                    {"id": "k2_queen_marika"},
+                    {"id": "k2_tifa_plus"},
+                ],
+            }
+
+    class FakeLLMClient:
+        def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class CapturingAgent:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            file_service = kwargs.get("file_service")
+            file_write_service = kwargs.get("file_write_service")
+            registry = build_leon_tools(
+                kwargs["image_client"],
+                session_id=kwargs["session_id"],
+                default_mode_ids=kwargs["default_mode_ids"],
+                file_service=file_service,
+                file_write_service=file_write_service,
+            )
+            captures.append(
+                {
+                    "file_service": file_service,
+                    "file_write_service": file_write_service,
+                    "file_tools": sorted(_FILE_TOOL_NAMES.intersection(registry.names)),
+                }
+            )
+
+        def run(self, message, *, history=(), cancel_event=None):  # noqa: ANN001
+            del message, history, cancel_event
+            return AgentResult(answer="captured")
+
+    fake_image_client = FakeImageClient()
+    monkeypatch.setattr(gateway_app, "_create_image_client", lambda _config: fake_image_client)
+    monkeypatch.setattr(gateway_app, "LLMClient", FakeLLMClient)
+    monkeypatch.setattr(gateway_app, "LeonAgent", CapturingAgent)
 
 
 def test_health(client):
@@ -296,6 +356,82 @@ def test_send_message_session_not_found(client):
         json={"content": "hello"},
     )
     assert r.status_code == 404
+
+
+def test_send_message_without_file_roots_injects_no_file_registry(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captures: list[dict[str, Any]] = []
+    _install_gateway_agent_capture(monkeypatch, captures)
+    session_id = client.post("/api/agent/sessions").json()["session_id"]
+
+    response = client.post(
+        f"/api/agent/sessions/{session_id}/messages",
+        json={"content": "hello"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "captured"
+    assert len(captures) == 1
+    assert captures[0]["file_service"] is None
+    assert captures[0]["file_write_service"] is None
+    assert captures[0]["file_tools"] == []
+
+
+def test_send_message_builds_isolated_file_write_services_for_agent_and_direct_tools(
+    tmp_path,
+    isolated_user_config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    isolated_user_config(
+        LEON_FILE_ROOTS=json.dumps({"workbench": str(root)}),
+    )
+    captures: list[dict[str, Any]] = []
+    _install_gateway_agent_capture(monkeypatch, captures)
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+
+    with TestClient(app, raise_server_exceptions=True) as configured_client:
+        session_id = configured_client.post("/api/agent/sessions").json()["session_id"]
+        for content in ("first turn", "second turn"):
+            response = configured_client.post(
+                f"/api/agent/sessions/{session_id}/messages",
+                json={"content": content},
+            )
+            assert response.status_code == 200
+
+        direct_captures: list[dict[str, Any]] = []
+
+        class FakeDirectTools:
+            def execute(self, name, arguments):  # noqa: ANN001
+                assert name == "generate_images"
+                assert arguments["source_text"] == "direct turn"
+                return {"ok": True, "generation_plan_id": "probe", "jobs": []}
+
+        def capture_direct_tools(_client, **kwargs):  # noqa: ANN001, ANN003
+            direct_captures.append(kwargs)
+            return FakeDirectTools()
+
+        monkeypatch.setattr(gateway_app, "create_leon_tools", capture_direct_tools)
+        direct_response = configured_client.post(
+            f"/api/agent/sessions/{session_id}/messages",
+            json={"content": "/NSFW --model tifa-plus direct turn"},
+        )
+
+    assert direct_response.status_code == 200
+    assert len(captures) == 2
+    for capture in captures:
+        assert capture["file_tools"] == sorted(_FILE_TOOL_NAMES)
+        assert capture["file_service"].root_bindings == (
+            capture["file_write_service"].root_bindings
+        )
+    assert captures[0]["file_write_service"] is not captures[1]["file_write_service"]
+    assert len(direct_captures) == 1
+    direct = direct_captures[0]
+    assert direct["file_service"].root_bindings == direct["file_write_service"].root_bindings
+    assert direct["file_write_service"] is not captures[1]["file_write_service"]
 
 
 def test_cancel_endpoint_sets_and_releases_the_active_turn(client):

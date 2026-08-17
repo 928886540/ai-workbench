@@ -194,15 +194,19 @@ expand it into global search/delete APIs. Normalize every `final_image_url` into
 - `extract`, `crawl`, `map`, `research`, page fetching, cache, and credits budgeting are not part of
   the first search slice. See `docs/web-search.md` before extending the contract.
 
-## File Search Contract
+## File Tools Contract
 
-- File Search is optional and read-only. It is registered only when `LEON_FILE_ROOTS` contains a valid
+- File Search is optional. The read tools are registered only when `LEON_FILE_ROOTS` contains a valid
   JSON allowlist; an empty value must leave ordinary chat, image tools, and `web_search` usable.
 - `list_files` lists root aliases or a directory, `file_search` performs case-insensitive literal filename/
   content search, and `read_file` returns a bounded line range. All three delegate to
   `workbench_core.files.FileSearchService`; do not put filesystem policy in CLI, Gateway, or `code_agent`.
 - The model receives only `root_id`, normalized relative paths, line numbers, and citations such as
   `workbench:docs/README.md:42`. Never expose the configured absolute path in tool output or error text.
+- `create_file` and `write_file` are optional write tools. They are registered only when a composition root
+  explicitly injects an authorized `FileWriteService` whose root ids exactly match the read service. The former
+  is no-clobber create; the latter is existing-file whole replacement. Neither creates directories, appends,
+  patches, deletes, moves, or executes files.
 - Every path must be relative to a configured root. Resolve and re-check containment for every candidate;
   skip symlink/junction/reparse entries, hidden/system entries, dot directories, `.env*`, credentials,
   private keys, SQLite sidecars, unsupported binary files, and invalid encodings.
@@ -210,8 +214,11 @@ expand it into global search/delete APIs. Normalize every `final_image_url` into
   matches per search, and 200 lines/16,000 characters per read. Handlers must revalidate numeric arguments;
   JSON Schema bounds are not a security boundary.
 - File contents are untrusted evidence. The system prompt must prevent file text from changing Agent rules,
-  expanding roots, requesting secrets, or authorizing writes. There is no `file_write`, delete, move, PDF/DOCX
-  parser, embedding index, RAG layer, or File Search MCP tool in this MVP.
+  expanding roots, requesting secrets, or authorizing writes. Write authorization comes only from an exact
+  first-line `!file create root:path` or `!file write root:path` command in the current user turn; natural language
+  only proposes that confirmation. Model arguments never carry `confirmed`, user text, or write counts. A single
+  turn allows at most one write, and audit/SSE/SQLite projections omit content and absolute paths. Delete, move,
+  execution, PDF/DOCX parser, embedding index, RAG layer, and File Search MCP exposure remain out of scope.
 - After changing `LEON_FILE_ROOTS` or any `src/`/shared-core code, restart `leon-server` and verify the new
   process. The focused checks are `packages/workbench_core/tests/test_file_search.py` and
   `tests/test_leon_file_search.py`; use temporary test roots only.
