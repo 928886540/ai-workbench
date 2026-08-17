@@ -19,14 +19,27 @@ def _format_generation_answer(
     result: dict[str, Any],
 ) -> str:
     """Render a completed image tool result without another provider round-trip."""
-    if not result.get("ok"):
-        return f"图片生成失败：{result.get('error') or '未知错误'}"
-
     images = [
         item.get("image_url")
         for item in result.get("images", [])
         if isinstance(item, dict) and item.get("image_url")
     ]
+    if not result.get("ok"):
+        detail = result.get("error") or "未知错误"
+        if result.get("error_code") == "image_result_unavailable":
+            if images:
+                return (
+                    f"已拿到 {len(images)} 张图片，但还有图片结果暂不可用：{detail}。\n\n"
+                    + "\n".join(f"- {url}" for url in images)
+                )
+            return f"{detail}。"
+        if images:
+            return (
+                f"{len(images)} 张图片生成好了，但另有任务失败：{detail}\n\n"
+                + "\n".join(f"- {url}" for url in images)
+            )
+        return f"图片生成失败：{detail}"
+
     jobs = [item for item in result.get("jobs", []) if isinstance(item, dict)]
     workflow_ids = result.get("workflow_ids") or arguments.get("workflow_ids") or []
     try:
@@ -39,10 +52,10 @@ def _format_generation_answer(
             f"- {url}" for url in images
         )
     if result.get("timed_out"):
-        return f"已提交 {count} 张图片任务，仍在生成中，请稍等；完成后会自动显示在这里。"
+        return f"已提交 {count} 张图片任务，仍在生成；本次等待已结束，稍后可查询最近图片。"
     if result.get("waited_for_completion") is False:
         return f"已提交 {count} 张图片任务，正在后台生成，请稍等；完成后会自动显示在这里。"
-    return f"{count} 张图片已经生成完成，正在同步结果，请稍等；图片会自动显示在这里。"
+    return f"{count} 张图片任务已结束，但没有返回可用的图片地址；请稍后查询最近图片。"
 
 
 def create_leon_tools(

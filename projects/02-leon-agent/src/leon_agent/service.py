@@ -14,10 +14,36 @@ from leon_agent.image_modes import mode_catalog_items
 from leon_agent.leon_client import LeonImageClient
 
 TERMINAL_IMAGE_STATUSES = {"completed", "failed", "cancelled", "canceled"}
+IMAGE_URL_KEYS = ("image_url", "final_image_url", "imageUrl", "finalImageUrl")
 
 
 def _job_id(item: dict[str, Any]) -> str:
     return str(item.get("job_id") or "")
+
+
+def _image_url(item: dict[str, Any]) -> str:
+    for key in IMAGE_URL_KEYS:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _merge_image_items(*item_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    images: list[dict[str, Any]] = []
+    seen_job_ids: set[str] = set()
+    seen_urls: set[str] = set()
+    for items in item_groups:
+        for item in items:
+            image_url = _image_url(item)
+            job_id = _job_id(item)
+            if not image_url or image_url in seen_urls or (job_id and job_id in seen_job_ids):
+                continue
+            images.append({**item, "image_url": image_url})
+            seen_urls.add(image_url)
+            if job_id:
+                seen_job_ids.add(job_id)
+    return images
 
 
 def _check_cancelled(cancel_event: Event | None) -> None:
@@ -31,7 +57,7 @@ def _wait_for_image_results(
     *,
     chat_id: str,
     submission: dict[str, Any],
-    timeout_seconds: float = 240.0,
+    timeout_seconds: float | None = None,
     poll_interval_seconds: float = 2.0,
     cancel_event: Event | None = None,
 ) -> dict[str, Any]:
@@ -45,7 +71,11 @@ def _wait_for_image_results(
     if not job_ids:
         return {**submission, "waited_for_completion": False, "images": []}
 
-    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    deadline = (
+        None
+        if timeout_seconds is None
+        else time.monotonic() + max(0.0, timeout_seconds)
+    )
     latest_tasks: list[dict[str, Any]] = []
 
     while True:
@@ -70,29 +100,90 @@ def _wait_for_image_results(
             for job_id in job_ids
         )
         if all_terminal:
-            _check_cancelled(cancel_event)
-            gallery_result = client.get_recent_images(
-                chat_id=chat_id,
-                limit=max(20, min(100, len(job_ids) * 4)),
-            )
-            _check_cancelled(cancel_event)
-            gallery_items = (
-                gallery_result.get("items", []) if isinstance(gallery_result, dict) else []
-            )
-            images = [
+            completed_tasks = [
                 item
-                for item in gallery_items
-                if isinstance(item, dict) and _job_id(item) in job_ids
+                for item in latest_tasks
+                if str(item.get("status") or "").lower() == "completed"
             ]
-            return {
+            completed_job_ids = {_job_id(item) for item in completed_tasks}
+            task_images = _merge_image_items(completed_tasks)
+            resolved_job_ids = {_job_id(item) for item in completed_tasks if _image_url(item)}
+            gallery_items: list[dict[str, Any]] = []
+            if completed_job_ids - resolved_job_ids:
+                _check_cancelled(cancel_event)
+                gallery_result = client.get_recent_images(
+                    chat_id=chat_id,
+                    limit=max(20, min(100, len(job_ids) * 4)),
+                )
+                _check_cancelled(cancel_event)
+                gallery_items = [
+                    item
+                    for item in (
+                        gallery_result.get("items", [])
+                        if isinstance(gallery_result, dict)
+                        else []
+                    )
+                    if isinstance(item, dict) and _job_id(item) in completed_job_ids
+                ]
+            images = _merge_image_items(task_images, gallery_items)
+            resolved_job_ids.update(
+                _job_id(item) for item in gallery_items if _image_url(item)
+            )
+            missing_image_job_ids = completed_job_ids - resolved_job_ids
+            failed_tasks = [
+                item
+                for item in latest_tasks
+                if str(item.get("status") or "").lower() == "failed"
+            ]
+            cancelled_tasks = [
+                item
+                for item in latest_tasks
+                if str(item.get("status") or "").lower() in {"cancelled", "canceled"}
+            ]
+            result = {
                 **submission,
                 "waited_for_completion": True,
                 "timed_out": False,
                 "tasks": latest_tasks,
                 "images": images,
             }
+            if failed_tasks or cancelled_tasks:
+                details = list(
+                    dict.fromkeys(
+                        str(item.get("error") or "").strip()
+                        for item in failed_tasks
+                        if str(item.get("error") or "").strip()
+                    )
+                )
+                if failed_tasks:
+                    error = "；".join(details) or "图片后端生成失败"
+                else:
+                    error = "图片任务已取消"
+                return {
+                    **result,
+                    "ok": False,
+                    "submitted": bool(submission.get("ok")),
+                    "failed_count": len(failed_tasks),
+                    "cancelled_count": len(cancelled_tasks),
+                    "error": error,
+                }
+            if missing_image_job_ids:
+                missing_count = len(missing_image_job_ids)
+                return {
+                    **result,
+                    "ok": False,
+                    "submitted": bool(submission.get("ok")),
+                    "retryable": True,
+                    "error_code": "image_result_unavailable",
+                    "missing_image_count": missing_count,
+                    "error": (
+                        f"{missing_count} 个图片任务已完成，但后端尚未返回可用的图片地址；"
+                        "请稍后重试查询最近图片"
+                    ),
+                }
+            return result
 
-        if time.monotonic() >= deadline:
+        if deadline is not None and time.monotonic() >= deadline:
             _check_cancelled(cancel_event)
             return {
                 **submission,

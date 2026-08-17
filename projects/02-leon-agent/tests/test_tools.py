@@ -1,7 +1,7 @@
 from typing import Any
 
 from leon_agent.agent import SYSTEM_PROMPT, build_system_prompt
-from leon_agent.tools import create_leon_tools
+from leon_agent.tools import _format_generation_answer, create_leon_tools
 
 
 class FakeImageClient:
@@ -75,6 +75,74 @@ def test_generate_tool_marks_background_submission_for_direct_answer() -> None:
     assert answer == (
         "已提交 1 张图片任务，正在后台生成，请稍等；完成后会自动显示在这里。"
     )
+
+
+def test_generation_answer_reports_terminal_backend_failure_truthfully() -> None:
+    answer = _format_generation_answer(
+        {"source_text": "生成图片"},
+        {
+            "ok": False,
+            "submitted": True,
+            "failed_count": 1,
+            "error": "backend generation failed",
+            "images": [{"image_url": None}],
+        },
+    )
+
+    assert answer == "图片生成失败：backend generation failed"
+    assert "同步结果" not in answer
+
+
+def test_generation_answer_reports_retryable_missing_image_without_auto_display() -> None:
+    answer = _format_generation_answer(
+        {"source_text": "生成图片"},
+        {
+            "ok": False,
+            "retryable": True,
+            "error_code": "image_result_unavailable",
+            "error": "图片任务已完成，但后端尚未返回可用的图片地址；请稍后重试查询最近图片",
+            "images": [],
+        },
+    )
+
+    assert answer == (
+        "图片任务已完成，但后端尚未返回可用的图片地址；请稍后重试查询最近图片。"
+    )
+    assert "自动显示" not in answer
+    assert "同步结果" not in answer
+
+
+def test_generation_answer_keeps_partial_urls_when_another_result_is_unavailable() -> None:
+    answer = _format_generation_answer(
+        {"source_text": "生成两张图片"},
+        {
+            "ok": False,
+            "retryable": True,
+            "error_code": "image_result_unavailable",
+            "error": "1 个图片任务已完成，但后端尚未返回可用的图片地址；请稍后重试查询最近图片",
+            "images": [{"image_url": "https://example.test/ready.png"}],
+        },
+    )
+
+    assert "已拿到 1 张图片" in answer
+    assert "https://example.test/ready.png" in answer
+    assert "自动显示" not in answer
+
+
+def test_generation_answer_does_not_promise_auto_display_after_explicit_timeout() -> None:
+    answer = _format_generation_answer(
+        {"source_text": "生成图片"},
+        {
+            "ok": True,
+            "timed_out": True,
+            "jobs": [{"job_id": "job-1"}],
+            "images": [],
+        },
+    )
+
+    assert answer == "已提交 1 张图片任务，仍在生成；本次等待已结束，稍后可查询最近图片。"
+    assert "自动显示" not in answer
+    assert "正在同步" not in answer
 
 
 def test_mode_catalog_exposes_human_names_and_exact_ids_to_the_model() -> None:
