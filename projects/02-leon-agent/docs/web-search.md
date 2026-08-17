@@ -54,8 +54,8 @@ MCP 等 channel 只负责注入和展示。更换搜索供应商时应新增 pro
 [leon.env]
 TAVILY_API_KEY = "<new-tavily-api-key>"
 TAVILY_BASE_URL = "https://api.tavily.com"
-TAVILY_FALLBACK_API_KEY = "<fallback-key>"
-TAVILY_FALLBACK_BASE_URL = "https://tavily.ivanli.cc/api/tavily"
+TAVILY_FALLBACK_API_KEY = "<fallback-sk-proxy-token>"
+TAVILY_FALLBACK_BASE_URL = "https://search.604020.xyz/tavily"
 TAVILY_TIMEOUT_SECONDS = 15
 TAVILY_MAX_RESULTS = 5
 ```
@@ -71,6 +71,32 @@ TAVILY_MAX_RESULTS = 5
 
 已经粘贴到聊天、日志或截图中的 Key 应先在 Tavily 控制台撤销，再生成新 Key。配置修改后要
 重启对应进程；`src/` 代码修改后也必须重启 `leon-server`，并验证实际运行中的服务。
+
+### 已知兼容备用地址
+
+Leon 当前只有一个 fallback 槽位，下面的 Tavily-compatible 根地址二选一，不做多级轮换：
+
+| 服务 | Leon / Tavily SDK Base URL | 完整 Search URL | Token 类型 |
+|---|---|---|---|
+| 备用站 A | `https://tavily.ivanli.cc/api/tavily` | `https://tavily.ivanli.cc/api/tavily/search` | 站点签发的 Bearer Token |
+| 备用站 B | `https://search.604020.xyz/tavily` | `https://search.604020.xyz/tavily/search` | 站点签发的 `sk-proxy` Token |
+
+Leon 必须填写 Base URL，由 `TavilySearchProvider` 自动追加 `/search`；如果误填完整 Search URL，
+实际请求会变成错误的 `/search/search`。真实 token 只放在 `%USERPROFILE%\.leon\config.toml`，不要写入
+README、日志、截图或 Git。
+
+备用站 B 还提供普通 HTTP 客户端使用的兼容入口；这些地址仅作为 Cherry Studio、Kelivo 等客户端的
+配置资料，**Leon 当前没有实现 Exa 或 Serper provider**：
+
+| 兼容协议 | SDK Base URL | 完整 Search URL |
+|---|---|---|
+| Tavily | `https://search.604020.xyz/tavily` | `https://search.604020.xyz/tavily/search` |
+| Exa | `https://search.604020.xyz/exa` | `https://search.604020.xyz/exa/search` |
+| Serper | `https://search.604020.xyz/serper` | `https://search.604020.xyz/serper/search` |
+
+普通聊天客户端如果支持 provider Base URL，就填对应根地址；只支持自定义搜索 URL 时，填完整
+`/search` 地址。API Key 使用站点签发的 `sk-proxy` token，不使用上游原始 key。公益站的可用性、
+限流和数据处理策略属于外部边界，默认仍建议官方 Tavily 为主、公益站显式 opt-in 为备。
 
 ## 工具契约
 

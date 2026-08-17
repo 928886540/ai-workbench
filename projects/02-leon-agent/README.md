@@ -181,6 +181,8 @@ provider 隔离语义见 [配置说明](docs/configuration.md)。真实密钥只
 | `LEON_ASR_MAX_BYTES` | `15728640` | 单次 ASR 音频最大字节数 |
 | `TAVILY_API_KEY` | 空 | Tavily 密钥；非空时启用 `web_search`，只保留在后端 |
 | `TAVILY_BASE_URL` | `https://api.tavily.com` | Tavily API 根地址 |
+| `TAVILY_FALLBACK_API_KEY` | 空 | 主站失败后使用的备用 Tavily-compatible Bearer Token |
+| `TAVILY_FALLBACK_BASE_URL` | 空 | 备用 Tavily-compatible API 根地址；Leon 会自动追加 `/search` |
 | `TAVILY_TIMEOUT_SECONDS` | `15` | 单次搜索请求超时秒数 |
 | `TAVILY_MAX_RESULTS` | `5` | 搜索默认结果数，允许 `1..10` |
 
@@ -204,11 +206,14 @@ uv run leon --public-image-base-url https://comfyui.928886540.xyz
 ```toml
 [leon.env]
 TAVILY_API_KEY = "<new-tavily-api-key>"
+TAVILY_FALLBACK_API_KEY = "<fallback-sk-proxy-token>"
+TAVILY_FALLBACK_BASE_URL = "https://search.604020.xyz/tavily"
 ```
 
 重启 CLI 或 `leon-server` 后，`/tools` 应出现 `web_search`。没有 Key 时工具不会注册，Leon
 其余能力保持可用。当前只实现 Tavily Search；`extract`、`crawl`、`map` 和搜索 MCP 暴露尚未实现，
-完整契约见 [联网搜索](docs/web-search.md)。
+完整契约和备用站地址见 [联网搜索](docs/web-search.md)。Leon 的 Base URL 不要带末尾 `/search`，
+provider 会在请求时自动追加。
 
 ### 可选本地文件检索
 
