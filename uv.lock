@@ -13,6 +13,7 @@ resolution-markers = [
 members = [
     "ai-workbench",
     "code-agent",
+    "coding-agent",
     "leon-agent",
     "leon-mcp-server",
     "llm-core",
@@ -26,6 +27,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "code-agent" },
+    { name = "coding-agent" },
     { name = "httpx" },
     { name = "leon-agent" },
     { name = "leon-mcp-server" },
@@ -48,6 +50,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "code-agent", editable = "projects/02-code-agent" },
+    { name = "coding-agent", editable = "projects/07-coding-agent" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "leon-agent", editable = "projects/02-leon-agent" },
     { name = "leon-mcp-server", editable = "projects/04-mcp-lab/leon-mcp-server" },
@@ -253,6 +256,17 @@ requires-dist = [
     { name = "llm-core", editable = "projects/01-llm-core" },
     { name = "workbench-core", editable = "packages/workbench_core" },
 ]
+
+[[package]]
+name = "coding-agent"
+version = "0.1.0"
+source = { editable = "projects/07-coding-agent" }
+dependencies = [
+    { name = "workbench-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "workbench-core", editable = "packages/workbench_core" }]
 
 [[package]]
 name = "colorama"

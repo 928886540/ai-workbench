@@ -40,7 +40,7 @@ ai-workbench/
 │   ├── 04-mcp-lab/            # 自建 MCP server / client
 │   ├── 05-workflow/           # 工作流编排与自动化
 │   ├── 06-multi-agent/        # 多 Agent 协作
-│   └── 07-coding-agent/       # 更接近生产的 AI Coding Agent
+│   └── 07-coding-agent/       # 面试用 Coding Agent Vertical Demo
 ├── notes/                     # 设计决策与学习笔记
 ├── scripts/                   # 仓库级脚本
 └── data/samples/              # 示例数据（不含密钥）
@@ -55,26 +55,16 @@ ai-workbench/
 
 ## 当前阶段
 
-**`02-leon-agent` 的 CLI 与手机 Web Client 均已完成；Web 端 5 个阶段已跑通。**
+**当前阶段：`07-coding-agent` 基础闭环已完成。**
 
-做一个能分析本地项目的 AI Agent Assistant：
+在唯一 `AgentRuntime` 上验证一个面试可讲清的垂直场景：
 
 ```text
-用户：帮我分析这个项目
-Agent：
-1. 查看目录
-2. 读取关键文件
-3. 总结结构
-4. 给出风险/改进建议
-5. 输出结构化报告
+读/搜代码 -> 简单计划 -> 改现有文件 -> 跑固定测试 -> 失败后再修一次 -> 输出 Git diff
 ```
 
-一次覆盖：
-- LLM 调用
-- Tool calling
-- Agent loop
-- 基础 memory / context 管理
-- 结构化输出
+基础版只准备 3 个稳定 case：明确 bug、小功能、failing test 后二次修复。它复用现有 File Search/FileWrite、
+Evaluation 和 Trace，不做 IDE 插件、复杂 patch engine、多仓库、自动 PR 或 Multi-Agent。
 
 现在可以从终端进入独立 Agent：
 
@@ -111,11 +101,11 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 - [x] `01-llm-core`：模型调用 / Prompt / Structured Output
 - [x] `02-code-agent`：Tool-using Code Analysis Agent
 - [x] `02-leon-agent`：独立 CLI / 会话 / 生图 / 可选 Tavily 搜索与受控 File Search/FileWrite / FastAPI + SSE 手机 Web Client
-- [ ] `03-rag-lab`：文件问答与检索增强
+- [x] `03-rag-lab`：chunk / embedding / retrieval / citation / reranker 对照
 - [ ] `04-mcp-lab`：Leon MCP Server 第一版已完成；其余 MCP 实验待做
 - [ ] `05-workflow`：工作流自动化
 - [ ] `06-multi-agent`：多 Agent 协作
-- [ ] `07-coding-agent`：生产向 Coding Agent
+- [x] `07-coding-agent`：面试用 Vertical Agent Demo 基础闭环
 
 ## 协作方式（和 AI 一起开发时）
 

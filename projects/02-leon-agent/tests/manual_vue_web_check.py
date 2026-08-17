@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -469,15 +470,37 @@ class ServerHandle:
     temporary_dir: tempfile.TemporaryDirectory[str] | None = None
 
     def close(self) -> None:
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=5)
-        if self.temporary_dir is not None:
-            self.temporary_dir.cleanup()
+        try:
+            if self.process is not None:
+                _terminate_process_tree(self.process)
+        finally:
+            if self.temporary_dir is not None:
+                self.temporary_dir.cleanup()
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        # /PID + /T is deliberately scoped to this Popen root and its descendants.
+        # Never replace this with /IM node.exe: the machine runs unrelated Node services.
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    else:
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            process.kill()
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
 
 
 def _command(name: str) -> str:
@@ -544,6 +567,13 @@ def _start_server(args: argparse.Namespace) -> ServerHandle:
             "--port",
             str(port),
         ]
+    popen_kwargs: dict[str, Any] = {}
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        )
+    else:
+        popen_kwargs["start_new_session"] = True
     process = subprocess.Popen(
         command,
         cwd=ROOT,
@@ -551,6 +581,7 @@ def _start_server(args: argparse.Namespace) -> ServerHandle:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.STDOUT,
         text=True,
+        **popen_kwargs,
     )
     handle = ServerHandle(base_url, process, temporary_dir)
     try:

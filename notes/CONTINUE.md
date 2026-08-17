@@ -24,6 +24,11 @@
   case；`03-rag-lab` 已完成真实 embedding、retrieval、citation、faithfulness 与 reranker 对照；Trace 已统一
   Core/SQLite/CLI/Web 的 trace/turn/span 与脱敏 metadata。Planning 暂停在 MVP，Multi-Agent、
   Telegram/Tavo 互通和更多 workflow 继续后置。
+- **当前主线切到 `07-coding-agent` 基础版收尾**：定位为面试用 Vertical Agent Demo，不做完整开发产品；
+  已复用唯一 AgentRuntime 和共享文件边界，跑通读/搜、简单计划、两次写入/测试上限、失败后二次修复、
+  最终 Git diff，并用 3 个 provider-free 稳定 case 覆盖 bug、小功能和 failing-test repair。
+- `manual_vue_web_check.py` 已改为只结束本次测试创建的完整进程树；Windows 使用精确 PID + `/T`，
+  正常和故意失败路径均验证 4173/4178 回到 0，不会全局结束 `node.exe`，`--base-url` 外部服务不归它管理。
 - 下方带日期 checkpoint 保留历史现场；其中旧“下一步”或“待提交”不覆盖本节当前主线。
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
 - CLI、Web 与 Leon MCP 的唯一持久配置源是 `%USERPROFILE%\.leon\config.toml`；`.codex` 和
@@ -116,6 +121,8 @@
 - **Trace MVP 已接通**：AgentRuntime、SQLite、CLI/Web 共用 trace_id、turn_id 和脱敏 spans；raw 文件、
   Memory、搜索 query、tool payload 和 secret 禁止进入 Trace。
 - **面试表达**：`pytest` 证明代码契约，Evaluation 证明 Agent 行为质量，Trace 解释一次真实运行。
+- **Coding Agent 到此浅尝辄止**：只证明 Runtime 能落到垂直场景；不做 IDE 插件、复杂 patch、多仓库、
+  自动 PR、后台任务、复杂 sandbox 或 Multi-Agent Coder/Reviewer/Tester。
 - **Evaluation 第一版已落地**：`projects/02-leon-agent/evals/cases/` 共 50 个 case；
   `uv run leon-eval` 默认 fake provider，当前 baseline 为 **50/50 passed**。Runner 复用生产
   `LeonAgent`/tool schema，临时文件根、静态搜索和内存 SQLite 不触碰真实外部系统；显式 `--live` 才允许真实 provider。
@@ -262,7 +269,8 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 继续 ai-workbench。
 
 我是 Java 后端转 AI 应用/Agent。
-当前主线：Evaluation → RAG → Trace/Observability；Planning 冻结在 MVP。
+当前主线：07-coding-agent 面试用基础版收尾；Evaluation → RAG → Trace/Observability 已完成最小闭环。
+Planning 冻结在 MVP，Coding Agent 完成 3 个稳定 case 后停止扩功能。
 模型与全部 Leon 持久配置只走 %USERPROFILE%\.leon\config.toml，不跟随 CC Switch。
 
 请先快速确认：
@@ -276,8 +284,8 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 如果你已经想好下一步，直接更具体：
 
 ```text
-继续 ai-workbench 的 02-leon-agent。
-下一步：设计第一批 20 个 Evaluation case、指标与 baseline 格式；默认 fake provider。
+继续 ai-workbench 的 07-coding-agent。
+下一步：核对 3 个 provider-free 稳定 case、Trace 和最终 diff；不要扩成完整 Coding Agent 产品。
 先设计，再改代码。
 ```
 

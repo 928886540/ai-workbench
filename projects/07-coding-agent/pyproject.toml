@@ -1,0 +1,18 @@
+[project]
+name = "coding-agent"
+version = "0.1.0"
+description = "Production-oriented coding agent safety and execution lab."
+requires-python = ">=3.10"
+dependencies = [
+  "workbench-core",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/coding_agent"]
+
+[tool.uv.sources]
+workbench-core = { workspace = true }

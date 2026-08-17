@@ -31,13 +31,14 @@
    Leon 生图工具适配 / Memory / Planning
         |
         v
-Agent Evaluation       <--- 当前下一步
+Agent Evaluation       <--- 已完成最小闭环
    行为数据集 / 工具选择 / 任务成功率
    Planning adherence / latency / tokens
         |
         v
 03-rag-lab
    文档切分 / Embedding / 语义检索 / 引用
+   Recall@K / MRR / citation / faithfulness
         |
         v
 Trace / Observability
@@ -58,8 +59,9 @@ Trace / Observability
    角色分工、消息总线、仲裁
         |
         v
-07-coding-agent
-   更接近 Codex 风格的工程 Agent
+07-coding-agent         <--- 当前收尾
+   面试用 Vertical Agent Demo
+   读/搜/计划/改文件/测试/二次修复/diff
 ```
 
 ## Phase 0 / 1：`01-llm-core`
@@ -132,11 +134,11 @@ Agent 的本质是：
 - 复用原 Leon 插件资产的生图工具
 - 任务与图库查询
 
-### 下一步
-- Agent Evaluation：先建立 20 个可重复 case，再扩到 50 个；量化 Task Success、Tool Selection、
+### 质量主线结果
+- Agent Evaluation：已从 20 个可重复 case 扩到 50 个；量化 Task Success、Tool Selection、
   Plan Adherence、Safety、Latency、Tool Calls 和 Tokens/Cost
-- 在 `03-rag-lab` 把当前 lexical File Search 扩展为 chunk / embedding / retrieval / citation
-- Evaluation 与 RAG 稳定后补统一 Trace / Observability；先复用现有 AgentEvent/SSE/SQLite audit
+- `03-rag-lab` 已完成 chunk / embedding / retrieval / citation 和 reranker 对照
+- Trace / Observability 已统一 AgentRuntime、SQLite、CLI/Web 的 trace/turn/span 与脱敏 audit
 - Telegram Bot、Tavo MCP 互通和 Multi-Agent 后置，不让新渠道或新架构掩盖质量指标缺口
 
 Planning 冻结在顺序状态机 MVP：不继续做 DAG、并行 planner、后台恢复、自动重试或第二套 executor。
@@ -225,14 +227,16 @@ latency、tokens、success/error 和 outcome。它服务于 Evaluation 的失败
 ## Phase 6：`07-coding-agent`
 
 ### 目标
-做一个更接近生产的 coding agent 子集：
-- 改文件
-- 跑测试
-- 根据失败继续修
-- 产出可审查 diff
+做一个面试用 Coding Agent Lab，证明共享 `AgentRuntime` 能支撑垂直场景：
+- 读/搜项目并制定 2～4 步简单计划
+- 覆写一个已跟踪的现有文本文件
+- 跑服务端固定测试命令
+- 第一次失败后读取反馈并再修一次
+- 输出可审查 Git diff，并接入现有 Trace
 
-### 注意
-这是后期项目。前期如果直接做，会同时踩工具、权限、测试、记忆、工作流所有坑。
+### 完成边界
+只保留 3 个稳定 case：明确 bug、小功能、failing test 后二次修复。完成后停止扩功能，不做 IDE 插件、
+复杂 patch engine、多仓库、自动 PR、后台任务、OS sandbox 或 Multi-Agent Coder/Reviewer/Tester。
 
 ## 每个阶段的固定节奏
 
