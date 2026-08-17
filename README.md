@@ -137,6 +137,7 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 
 - 转型计划：`notes/career/transition-plan.md`
 - 面试弹药：`D:/apiWorkSpace/面试准备/AI应用工程师面试准备.md`
+- BOSS 直聘投递版：[notes/career/boss-zhipin-ai-agent-resume.md](notes/career/boss-zhipin-ai-agent-resume.md)
 
 ## 快速开始
 
