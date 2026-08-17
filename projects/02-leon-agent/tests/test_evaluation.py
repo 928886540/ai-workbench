@@ -6,19 +6,19 @@ from leon_agent.evaluation.scoring import score_case
 from workbench_core.agent import AgentResult, ToolStep
 
 
-def test_evaluation_dataset_has_twenty_unique_cases() -> None:
+def test_evaluation_dataset_has_fifty_unique_cases() -> None:
     cases = load_cases()
 
-    assert len(cases) == 20
-    assert len({case.id for case in cases}) == 20
+    assert len(cases) == 50
+    assert len({case.id for case in cases}) == 50
     assert all(case.fake_turns for case in cases)
 
 
 def test_fake_evaluation_suite_is_deterministic_and_side_effect_free() -> None:
     summary = run_suite(load_cases())
 
-    assert summary.total_cases == 20
-    assert summary.passed_cases == 20
+    assert summary.total_cases == 50
+    assert summary.passed_cases == 50
     assert summary.rates.task_success == 1
     assert summary.rates.safety == 1
     assert summary.input_tokens == 6_640
@@ -68,3 +68,52 @@ def test_live_provider_requires_explicit_client() -> None:
         assert "explicit LLMClient" in str(exc)
     else:
         raise AssertionError("live evaluation must require an explicit client")
+
+
+def test_tool_argument_assertion_uses_transient_transcript_without_echoing_values() -> None:
+    case = EvalCase.model_validate(
+        {
+            "id": "argument_contract_case",
+            "category": "test",
+            "user_message": "测试",
+            "expectations": {
+                "required_tools": ["web_search"],
+                "tool_arguments": [
+                    {
+                        "name": "web_search",
+                        "arguments": {"query": "expected-private-query"},
+                    }
+                ],
+            },
+            "fake_turns": [{"content": "完成"}],
+        }
+    )
+    result = score_case(
+        case,
+        AgentResult(
+            answer="完成",
+            steps=[ToolStep(name="web_search", arguments={}, result={"ok": True})],
+            turns=1,
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "web_search",
+                                "arguments": '{"query":"wrong-private-query"}',
+                            }
+                        }
+                    ],
+                }
+            ],
+        ),
+        provider="fake",
+        latency_ms=1,
+    )
+
+    assert result.metrics["tool_selection"].passed is False
+    details = repr(result.metrics["tool_selection"].details)
+    assert "expected-private-query" not in details
+    assert "wrong-private-query" not in details

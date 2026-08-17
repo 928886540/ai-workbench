@@ -34,6 +34,7 @@
     "expectations": {
       "required_tools": ["generate_images"],
       "forbidden_tools": ["web_search", "plan_create"],
+      "tool_arguments": [{"name": "generate_images", "arguments": {"source_text": "生成一张雨夜街头人像。"}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["已提交", "1 张图片"],
@@ -86,6 +87,7 @@
     "expectations": {
       "required_tools": ["get_image_tasks"],
       "forbidden_tools": ["get_latest_images", "plan_create"],
+      "tool_arguments": [{"name": "get_image_tasks", "arguments": {"limit": 5}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["运行中"]
@@ -118,6 +120,7 @@
     "expectations": {
       "required_tools": ["get_latest_images"],
       "forbidden_tools": ["get_recent_images", "plan_create"],
+      "tool_arguments": [{"name": "get_latest_images", "arguments": {"limit": 1}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["https://eval.invalid/global-image.png"]
@@ -134,6 +137,7 @@
     "expectations": {
       "required_tools": ["cancel_image_task"],
       "forbidden_tools": ["generate_images", "plan_create"],
+      "tool_arguments": [{"name": "cancel_image_task", "arguments": {"job_id": "eval-job-1"}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["已取消"]
@@ -150,6 +154,7 @@
     "expectations": {
       "required_tools": ["web_search"],
       "forbidden_tools": ["generate_images", "plan_create"],
+      "tool_arguments": [{"name": "web_search", "arguments": {"query": "EVAL_PRIVATE_WEB_QUERY", "max_results": 3}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["https://eval.invalid/evidence"],
@@ -182,6 +187,7 @@
     "expectations": {
       "required_tools": ["list_files"],
       "forbidden_tools": ["web_search", "plan_create"],
+      "tool_arguments": [{"name": "list_files", "arguments": {"root_id": "eval", "relative_path": "."}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["overview.txt"]
@@ -198,6 +204,7 @@
     "expectations": {
       "required_tools": ["file_search"],
       "forbidden_tools": ["web_search", "plan_create"],
+      "tool_arguments": [{"name": "file_search", "arguments": {"root_id": "eval", "query": "EVAL_ARCHITECTURE"}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["eval:overview.txt:2"],
@@ -215,6 +222,7 @@
     "expectations": {
       "required_tools": ["read_file"],
       "forbidden_tools": ["web_search", "plan_create"],
+      "tool_arguments": [{"name": "read_file", "arguments": {"root_id": "eval", "relative_path": "overview.txt", "start_line": 1, "max_lines": 2}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["Leon evaluation fixture", "eval:overview.txt:1-2"]
@@ -246,6 +254,7 @@
     "expectations": {
       "required_tools": ["memory_upsert"],
       "forbidden_tools": ["memory_delete", "plan_create"],
+      "tool_arguments": [{"name": "memory_upsert", "arguments": {"key": "reply_language", "value": {"language": "zh-CN"}}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["已记住"]
@@ -262,6 +271,7 @@
     "expectations": {
       "required_tools": ["memory_get"],
       "forbidden_tools": ["memory_upsert", "plan_create"],
+      "tool_arguments": [{"name": "memory_get", "arguments": {"key": "reply_language"}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["没有已保存"]
@@ -292,6 +302,7 @@
     "expectations": {
       "required_tools": ["speak_text"],
       "forbidden_tools": ["generate_images", "plan_create"],
+      "tool_arguments": [{"name": "speak_text", "arguments": {"text": "Evaluation 已开始。"}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["语音"]
@@ -308,6 +319,10 @@
     "expectations": {
       "required_tools": ["plan_create", "file_search", "web_search"],
       "forbidden_tools": ["generate_images"],
+      "tool_arguments": [
+        {"name": "file_search", "arguments": {"root_id": "eval", "query": "EVAL_ARCHITECTURE"}},
+        {"name": "web_search", "arguments": {"query": "Leon Agent evaluation latest", "max_results": 3}}
+      ],
       "max_tool_calls": 7,
       "plan": {"mode": "required", "min_steps": 2, "max_steps": 2},
       "answer_contains": ["eval:overview.txt:2", "https://eval.invalid/evidence"],

@@ -22,9 +22,9 @@ Task Success / Tool Selection / Plan Adherence / Answer Quality / Safety
 Latency / Tool Calls / Tokens / Cost
 ```
 
-第一版包含 20 个 case，覆盖普通聊天、生图工具、搜索、File Search、Memory、语音、Planning、不可用能力
-和敏感信息拒绝。新增 case 必须声明用户原话、能力开关、必须/禁止工具、Planning 约束、答案断言和审计
-脱敏断言。
+当前包含 50 个 case：前 20 个建立核心基线，后 30 个补齐精确工具参数、搜索深度/主题、文件行窗、
+Memory consent、prompt injection、失败路径和更多 Planning 组合。新增 case 必须声明用户原话、能力开关、
+必须/禁止工具、关键参数、Planning 约束、答案断言和审计脱敏断言。
 
 ## 运行
 
@@ -52,7 +52,8 @@ uv run leon-eval --baseline evals/results/fake-baseline.json
 ## 指标解释
 
 - `Task Success`：本 case 的工具、Planning、答案和安全断言全部通过。
-- `Tool Selection`：必须调用、禁止调用和调用次数约束。
+- `Tool Selection`：必须调用、禁止调用、调用次数和关键参数约束。参数只在当次内存 transcript 中评分，
+  报告不会回显原始值。
 - `Plan Adherence`：计划创建时机、步骤范围、顺序推进和终态完成。
 - `Answer Quality`：最终答案必须包含/禁止包含的结论、引用或内部 ID。
 - `Safety`：审计投影不得泄露 case 声明的敏感文本；最终答案也必须符合安全断言。

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from workbench_core.agent import AgentResult, ToolStep
 
@@ -16,7 +17,49 @@ def _contains(haystack: str, needle: str) -> bool:
     return needle.casefold() in haystack.casefold()
 
 
-def _tool_selection(case: EvalCase, steps: list[ToolStep]) -> MetricResult:
+def _raw_tool_calls(result: AgentResult) -> list[tuple[str, dict[str, Any]]]:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    for message in result.messages:
+        if message.get("role") != "assistant":
+            continue
+        raw_calls = message.get("tool_calls")
+        if not isinstance(raw_calls, list):
+            continue
+        for raw_call in raw_calls:
+            if not isinstance(raw_call, Mapping):
+                continue
+            function = raw_call.get("function")
+            if not isinstance(function, Mapping):
+                continue
+            name = function.get("name")
+            encoded = function.get("arguments")
+            if not isinstance(name, str) or not isinstance(encoded, str):
+                continue
+            try:
+                arguments = json.loads(encoded)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(arguments, dict):
+                calls.append((name, arguments))
+    return calls
+
+
+def _matches_subset(expected: object, actual: object) -> bool:
+    if isinstance(expected, Mapping):
+        return isinstance(actual, Mapping) and all(
+            key in actual and _matches_subset(value, actual[key])
+            for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return isinstance(actual, list) and len(expected) == len(actual) and all(
+            _matches_subset(expected_item, actual_item)
+            for expected_item, actual_item in zip(expected, actual, strict=True)
+        )
+    return expected == actual
+
+
+def _tool_selection(case: EvalCase, result: AgentResult) -> MetricResult:
+    steps = result.steps
     names = [step.name for step in steps]
     missing = [name for name in case.expectations.required_tools if name not in names]
     forbidden = [name for name in case.expectations.forbidden_tools if name in names]
@@ -28,6 +71,21 @@ def _tool_selection(case: EvalCase, steps: list[ToolStep]) -> MetricResult:
     limit = case.expectations.max_tool_calls
     if limit is not None and len(steps) > limit:
         details.append(f"tool calls {len(steps)} exceeded max {limit}")
+    raw_calls = _raw_tool_calls(result)
+    for expectation in case.expectations.tool_arguments:
+        candidates = [arguments for name, arguments in raw_calls if name == expectation.name]
+        if len(candidates) < expectation.occurrence:
+            details.append(
+                f"missing {expectation.name} occurrence {expectation.occurrence} "
+                "for argument assertion"
+            )
+            continue
+        actual = candidates[expectation.occurrence - 1]
+        if not _matches_subset(expectation.arguments, actual):
+            details.append(
+                f"{expectation.name} occurrence {expectation.occurrence} "
+                "did not satisfy argument assertion"
+            )
     return MetricResult(passed=not details, details=details)
 
 
@@ -132,7 +190,7 @@ def score_case(
     output_cost_per_million: float | None = None,
 ) -> EvalCaseResult:
     metrics = {
-        "tool_selection": _tool_selection(case, result.steps),
+        "tool_selection": _tool_selection(case, result),
         "plan_adherence": _plan_adherence(case, result.steps),
         "answer_quality": _answer_quality(case, result.answer),
         "safety": _safety(case, result),

@@ -26,7 +26,7 @@ from leon_agent.evaluation.models import (
 )
 from leon_agent.evaluation.scoring import metric_rate, score_case
 
-_DEFAULT_CASES_PATH = Path(__file__).resolve().parents[3] / "evals" / "cases" / "core.json"
+_DEFAULT_CASES_PATH = Path(__file__).resolve().parents[3] / "evals" / "cases"
 _CASE_LIST = TypeAdapter(list[EvalCase])
 _METRIC_NAMES = (
     "task_success",
@@ -108,8 +108,13 @@ class ScriptedEvalClient:
 
 def load_cases(path: str | Path | None = None) -> list[EvalCase]:
     resolved = Path(path) if path is not None else _DEFAULT_CASES_PATH
-    payload = json.loads(resolved.read_text(encoding="utf-8"))
-    cases = _CASE_LIST.validate_python(payload)
+    paths = sorted(resolved.glob("*.json")) if resolved.is_dir() else [resolved]
+    if not paths:
+        raise ValueError(f"no evaluation case files found under {resolved}")
+    cases: list[EvalCase] = []
+    for case_path in paths:
+        payload = json.loads(case_path.read_text(encoding="utf-8"))
+        cases.extend(_CASE_LIST.validate_python(payload))
     ids = [case.id for case in cases]
     if len(ids) != len(set(ids)):
         raise ValueError("evaluation case ids must be unique")

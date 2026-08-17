@@ -112,9 +112,11 @@
 - **Trace 第三棒**：统一现有 AgentEvent/SSE/SQLite audit 为 trace_id、turn_id 和脱敏 spans，服务于 eval
   失败解释；raw 文件、Memory、搜索 query 和 secret 继续禁止进入观测。
 - **面试表达**：`pytest` 证明代码契约，Evaluation 证明 Agent 行为；当前要补的是后者，不是继续堆功能名词。
-- **Evaluation 第一版已落地**：`projects/02-leon-agent/evals/cases/core.json` 共 20 个 case；
-  `uv run leon-eval` 默认 fake provider，当前 baseline 为 **20/20 passed**。Runner 复用生产
+- **Evaluation 第一版已落地**：`projects/02-leon-agent/evals/cases/` 共 50 个 case；
+  `uv run leon-eval` 默认 fake provider，当前 baseline 为 **50/50 passed**。Runner 复用生产
   `LeonAgent`/tool schema，临时文件根、静态搜索和内存 SQLite 不触碰真实外部系统；显式 `--live` 才允许真实 provider。
+- Tool Selection 已增加参数级断言：只在当前内存 transcript 中检查 source_text、数量、mode、query、root/path、
+  Memory key/scope 等关键参数，结果报告不回显原始值。
 - Evaluation 首次 baseline 揪出并修复了 `web_search` 审计泄露：持久投影只保留 search metadata 和来源 URL，
   不保存 query 或 snippet；相关设计见 `projects/02-leon-agent/docs/evaluation.md`。
 

@@ -48,9 +48,16 @@ class PlanExpectation(StrictModel):
         return self
 
 
+class ToolArgumentsExpectation(StrictModel):
+    name: str = Field(min_length=1)
+    occurrence: int = Field(default=1, ge=1)
+    arguments: dict[str, object] = Field(default_factory=dict)
+
+
 class EvalExpectations(StrictModel):
     required_tools: list[str] = Field(default_factory=list)
     forbidden_tools: list[str] = Field(default_factory=list)
+    tool_arguments: list[ToolArgumentsExpectation] = Field(default_factory=list)
     max_tool_calls: int | None = Field(default=None, ge=0)
     plan: PlanExpectation = Field(default_factory=PlanExpectation)
     answer_contains: list[str] = Field(default_factory=list)
@@ -78,6 +85,9 @@ class EvalExpectations(StrictModel):
         overlap = set(self.required_tools) & set(self.forbidden_tools)
         if overlap:
             raise ValueError(f"tools cannot be both required and forbidden: {sorted(overlap)}")
+        argument_targets = [(item.name, item.occurrence) for item in self.tool_arguments]
+        if len(argument_targets) != len(set(argument_targets)):
+            raise ValueError("tool argument expectations must target unique occurrences")
         return self
 
 

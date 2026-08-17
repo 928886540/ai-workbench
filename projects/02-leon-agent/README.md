@@ -36,7 +36,7 @@
   共享、支持硬删除，并以有预算的 untrusted context 注入后续 turn
 - per-turn Planning 状态机已接入普通 Agent：复杂请求可创建 2～8 步计划并按服务端规则推进；简单聊天、
   `/nsfw` 直达生图和 Leon MCP 不注册 Planning，计划正文不进入 SSE/SQLite 审计
-- Agent Evaluation 第一版已接入：20 个可审查 case，默认 fake provider，显式 `--live` 才使用真实 provider；
+- Agent Evaluation 第一版已接入：50 个可审查 case，默认 fake provider，显式 `--live` 才使用真实 provider；
   指标覆盖 Task Success、Tool Selection、Plan Adherence、Safety、Latency、Tool Calls 和 Tokens/Cost
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
