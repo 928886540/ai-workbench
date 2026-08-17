@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import tempfile
 import time
 from collections.abc import Sequence
@@ -35,6 +36,14 @@ _METRIC_NAMES = (
     "answer_quality",
     "safety",
 )
+
+
+def _configure_utf8_output() -> None:
+    """Keep evaluator output readable when Windows defaults Python to GBK."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 class ScriptedEvalClient:
@@ -287,6 +296,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    _configure_utf8_output()
     args = _parser().parse_args(argv)
     cases = load_cases(args.cases)
     if args.case_ids:

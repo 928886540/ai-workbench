@@ -56,6 +56,8 @@ def test_apply_config_file_uses_user_toml_instead_of_process_env(
 TAVILY_API_KEY = "file-search-key"
 LEON_BACKEND_URL = "http://file-backend"
 TAVILY_MAX_RESULTS = 7
+TAVILY_FALLBACK_API_KEY = "file-fallback-key"
+TAVILY_FALLBACK_BASE_URL = "https://fallback.test/api/tavily"
 """,
         encoding="utf-8",
     )
@@ -67,7 +69,11 @@ TAVILY_MAX_RESULTS = 7
 
     assert loaded.path == path
     assert loaded.env["TAVILY_MAX_RESULTS"] == "7"
+    assert loaded.env["TAVILY_FALLBACK_BASE_URL"] == (
+        "https://fallback.test/api/tavily"
+    )
     assert config_file.os.environ["TAVILY_API_KEY"] == "file-search-key"
+    assert config_file.os.environ["TAVILY_FALLBACK_API_KEY"] == "file-fallback-key"
     assert config_file.os.environ["LEON_BACKEND_URL"] == "http://file-backend"
     assert config_file.os.environ["CODEX_CONFIG_PATH"] == str(path)
     _clear_applied_config(tmp_path)

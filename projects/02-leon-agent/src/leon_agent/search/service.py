@@ -82,6 +82,10 @@ class WebSearchService:
         _check_cancelled()
 
         raw_items = raw.get("results", []) if isinstance(raw, Mapping) else []
+        provider_name = getattr(self.provider, "name", "unknown")
+        reported_provider = raw.get("_leon_provider") if isinstance(raw, Mapping) else None
+        if isinstance(reported_provider, str) and reported_provider.strip():
+            provider_name = reported_provider.strip()
         results: list[dict[str, Any]] = []
         for item in raw_items if isinstance(raw_items, list) else []:
             if not isinstance(item, Mapping):
@@ -101,7 +105,7 @@ class WebSearchService:
 
         return {
             "ok": True,
-            "provider": getattr(self.provider, "name", "unknown"),
+            "provider": provider_name,
             "query": normalized_query,
             "search_depth": search_depth,
             "topic": topic,

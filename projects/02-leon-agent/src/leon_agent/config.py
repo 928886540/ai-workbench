@@ -73,6 +73,14 @@ class LeonSettings(BaseSettings):
         default="https://api.tavily.com",
         alias="TAVILY_BASE_URL",
     )
+    tavily_fallback_api_key: SecretStr | None = Field(
+        default=None,
+        alias="TAVILY_FALLBACK_API_KEY",
+    )
+    tavily_fallback_base_url: str | None = Field(
+        default=None,
+        alias="TAVILY_FALLBACK_BASE_URL",
+    )
     tavily_timeout_seconds: float = Field(
         default=15.0,
         gt=0,
@@ -86,7 +94,12 @@ class LeonSettings(BaseSettings):
     # path separator.
     file_roots: dict[str, Path] = Field(default_factory=dict, alias="LEON_FILE_ROOTS")
 
-    @field_validator("plugin_dir", "system_prompt_file", mode="before")
+    @field_validator(
+        "plugin_dir",
+        "system_prompt_file",
+        "tavily_fallback_base_url",
+        mode="before",
+    )
     @classmethod
     def empty_optional_path_is_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -107,7 +120,7 @@ class LeonSettings(BaseSettings):
             return {}
         return value
 
-    @field_validator("backend_url", "public_image_base_url")
+    @field_validator("backend_url", "public_image_base_url", "tavily_base_url")
     @classmethod
     def normalize_base_url(cls, value: str) -> str:
         return value.strip().rstrip("/")
@@ -142,10 +155,17 @@ class LeonSettings(BaseSettings):
 
     @property
     def search_enabled(self) -> bool:
-        return bool(
+        primary_enabled = bool(
             self.tavily_api_key
             and self.tavily_api_key.get_secret_value().strip()
         )
+        fallback_enabled = bool(
+            self.tavily_fallback_api_key
+            and self.tavily_fallback_api_key.get_secret_value().strip()
+            and self.tavily_fallback_base_url
+            and self.tavily_fallback_base_url.strip()
+        )
+        return primary_enabled or fallback_enabled
 
     @property
     def file_search_enabled(self) -> bool:

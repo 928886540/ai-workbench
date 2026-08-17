@@ -61,6 +61,7 @@ class EvalExpectations(StrictModel):
     max_tool_calls: int | None = Field(default=None, ge=0)
     plan: PlanExpectation = Field(default_factory=PlanExpectation)
     answer_contains: list[str] = Field(default_factory=list)
+    answer_contains_any: list[list[str]] = Field(default_factory=list)
     answer_not_contains: list[str] = Field(default_factory=list)
     audit_not_contains: list[str] = Field(default_factory=list)
 
@@ -79,6 +80,19 @@ class EvalExpectations(StrictModel):
         if len(set(normalized)) != len(normalized):
             raise ValueError("expectation values must be unique")
         return normalized
+
+    @field_validator("answer_contains_any")
+    @classmethod
+    def non_empty_alternative_groups(cls, groups: list[list[str]]) -> list[list[str]]:
+        normalized_groups: list[list[str]] = []
+        for group in groups:
+            normalized = [value.strip() for value in group]
+            if not normalized or any(not value for value in normalized):
+                raise ValueError("answer alternative groups cannot be empty")
+            if len(set(normalized)) != len(normalized):
+                raise ValueError("answer alternatives must be unique within each group")
+            normalized_groups.append(normalized)
+        return normalized_groups
 
     @model_validator(mode="after")
     def disallow_conflicting_tools(self) -> EvalExpectations:

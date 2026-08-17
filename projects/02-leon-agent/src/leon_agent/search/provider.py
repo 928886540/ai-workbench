@@ -43,6 +43,7 @@ class TavilySearchProvider:
         api_key: str,
         base_url: str = "https://api.tavily.com",
         timeout_seconds: float = 15.0,
+        name: str = "tavily",
     ) -> None:
         self.api_key = api_key.strip()
         if not self.api_key:
@@ -53,6 +54,7 @@ class TavilySearchProvider:
         if timeout_seconds <= 0:
             raise ValueError("Tavily timeout_seconds must be positive")
         self.timeout_seconds = timeout_seconds
+        self.name = name
 
     def search(
         self,
@@ -92,3 +94,39 @@ class TavilySearchProvider:
         if not isinstance(data, dict):
             raise RuntimeError("Tavily returned a non-object response")
         return data
+
+
+class FailoverSearchProvider:
+    """Try one fallback only when the primary provider request fails."""
+
+    name = "tavily-failover"
+
+    def __init__(self, primary: SearchProvider, fallback: SearchProvider) -> None:
+        self.primary = primary
+        self.fallback = fallback
+
+    def search(
+        self,
+        query: str,
+        *,
+        max_results: int,
+        search_depth: str,
+        topic: str,
+    ) -> Mapping[str, Any]:
+        arguments = {
+            "max_results": max_results,
+            "search_depth": search_depth,
+            "topic": topic,
+        }
+        try:
+            data = self.primary.search(query, **arguments)
+            provider_name = getattr(self.primary, "name", "primary")
+        except AgentCancelled:
+            raise
+        except Exception:  # noqa: BLE001 - provider boundary triggers one bounded fallback
+            _check_cancelled()
+            data = self.fallback.search(query, **arguments)
+            provider_name = getattr(self.fallback, "name", "fallback")
+        payload = dict(data)
+        payload["_leon_provider"] = provider_name
+        return payload

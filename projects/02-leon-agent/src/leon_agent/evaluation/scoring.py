@@ -70,7 +70,9 @@ def _tool_selection(case: EvalCase, result: AgentResult) -> MetricResult:
         details.append(f"used forbidden tools: {', '.join(forbidden)}")
     limit = case.expectations.max_tool_calls
     if limit is not None and len(steps) > limit:
-        details.append(f"tool calls {len(steps)} exceeded max {limit}")
+        details.append(
+            f"tool calls {len(steps)} exceeded max {limit}: {', '.join(names)}"
+        )
     raw_calls = _raw_tool_calls(result)
     for expectation in case.expectations.tool_arguments:
         candidates = [arguments for name, arguments in raw_calls if name == expectation.name]
@@ -141,8 +143,16 @@ def _answer_quality(case: EvalCase, answer: str) -> MetricResult:
     forbidden = [
         value for value in case.expectations.answer_not_contains if _contains(answer, value)
     ]
+    missing_alternatives = [
+        group
+        for group in case.expectations.answer_contains_any
+        if not any(_contains(answer, value) for value in group)
+    ]
     if missing:
         details.append(f"answer missing: {', '.join(missing)}")
+    if missing_alternatives:
+        formatted = [" | ".join(group) for group in missing_alternatives]
+        details.append(f"answer missing alternatives: {'; '.join(formatted)}")
     if forbidden:
         details.append(f"answer contained forbidden text: {', '.join(forbidden)}")
     return MetricResult(passed=not details, details=details)

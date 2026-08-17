@@ -8,7 +8,7 @@ import pytest
 from leon_agent.agent import SYSTEM_PROMPT
 from leon_agent.config import LeonSettings
 from leon_agent.search import create_search_service
-from leon_agent.search.provider import TavilySearchProvider
+from leon_agent.search.provider import FailoverSearchProvider, TavilySearchProvider
 from leon_agent.search.service import WebSearchService
 from leon_agent.tools import create_leon_tools
 from pydantic import ValidationError
@@ -109,6 +109,56 @@ def test_search_service_returns_external_provider_error() -> None:
         "provider": "fake",
         "error": "upstream unavailable",
     }
+
+
+def test_failover_provider_uses_fallback_only_after_primary_error() -> None:
+    class BrokenProvider(FakeProvider):
+        name = "primary"
+
+        def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append({"query": query, **kwargs})
+            raise RuntimeError("quota exhausted")
+
+    primary = BrokenProvider()
+    fallback = FakeProvider(
+        {"results": [{"title": "Fallback", "url": "https://example.com"}]}
+    )
+    fallback.name = "fallback"
+
+    result = WebSearchService(FailoverSearchProvider(primary, fallback)).search("latest AI")
+
+    assert result["ok"] is True
+    assert result["provider"] == "fallback"
+    assert len(primary.calls) == 1
+    assert len(fallback.calls) == 1
+
+
+def test_failover_provider_does_not_retry_valid_empty_results() -> None:
+    primary = FakeProvider({"results": []})
+    primary.name = "primary"
+    fallback = FakeProvider()
+    fallback.name = "fallback"
+
+    result = WebSearchService(FailoverSearchProvider(primary, fallback)).search("latest AI")
+
+    assert result["ok"] is True
+    assert result["provider"] == "primary"
+    assert len(primary.calls) == 1
+    assert fallback.calls == []
+
+
+def test_failover_provider_never_falls_back_after_cancellation() -> None:
+    class CancelledProvider(FakeProvider):
+        def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
+            raise AgentCancelled("cancelled")
+
+    fallback = FakeProvider()
+    provider = FailoverSearchProvider(CancelledProvider(), fallback)
+
+    with pytest.raises(AgentCancelled):
+        WebSearchService(provider).search("latest AI")
+
+    assert fallback.calls == []
 
 
 def test_search_service_preserves_cancellation_before_provider_call() -> None:
@@ -278,12 +328,38 @@ def test_create_search_service_is_disabled_without_key() -> None:
     )
 
 
+def test_create_search_service_supports_fallback_only() -> None:
+    service = create_search_service(
+        api_key=None,
+        base_url="https://api.tavily.com",
+        timeout_seconds=15,
+        max_results=5,
+        fallback_api_key="fallback-secret",
+        fallback_base_url="https://fallback.test/api/tavily",
+    )
+
+    assert service is not None
+    assert service.provider.name == "tavily-fallback"
+
+
 def test_tavily_key_is_masked_by_settings_serialization() -> None:
     secret = "test-secret"
-    settings = LeonSettings(_env_file=None, TAVILY_API_KEY=secret)
+    fallback_secret = "fallback-test-secret"
+    settings = LeonSettings(
+        _env_file=None,
+        TAVILY_API_KEY=secret,
+        TAVILY_FALLBACK_API_KEY=fallback_secret,
+        TAVILY_FALLBACK_BASE_URL="https://fallback.test/api/tavily",
+    )
 
     assert secret not in repr(settings.tavily_api_key)
-    assert secret not in settings.model_dump_json(include={"tavily_api_key"})
+    assert fallback_secret not in repr(settings.tavily_fallback_api_key)
+    dumped = settings.model_dump_json(
+        include={"tavily_api_key", "tavily_fallback_api_key"}
+    )
+    assert secret not in dumped
+    assert fallback_secret not in dumped
+    assert settings.search_enabled is True
 
 
 @pytest.mark.parametrize("timeout", [0, -1])

@@ -117,6 +117,18 @@ def _format_generation_answer(
     return f"{count} 张图片任务已结束，但没有返回可用的图片地址；请稍后查询最近图片。"
 
 
+def _format_cancel_answer(
+    arguments: dict[str, Any],
+    result: dict[str, Any],
+) -> str | None:
+    """Own the answer only when the backend says cancellation did not happen."""
+    del arguments
+    status = str(result.get("status") or "").strip().casefold()
+    if status == "completed" and result.get("cancelled") is not True:
+        return "任务已经完成，不能声称取消成功。"
+    return None
+
+
 def create_leon_tools(
     client: LeonImageClient,
     *,
@@ -280,6 +292,8 @@ def create_leon_tools(
                     "additionalProperties": False,
                 },
                 handler=service.cancel_image_task,
+                return_direct=True,
+                answer_formatter=_format_cancel_answer,
             ),
         ]
     )

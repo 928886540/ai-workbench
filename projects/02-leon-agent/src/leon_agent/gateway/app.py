@@ -881,6 +881,12 @@ async def send_message(
             base_url=config.tavily_base_url,
             timeout_seconds=config.tavily_timeout_seconds,
             max_results=config.tavily_max_results,
+            fallback_api_key=(
+                config.tavily_fallback_api_key.get_secret_value()
+                if config.tavily_fallback_api_key
+                else None
+            ),
+            fallback_base_url=config.tavily_fallback_base_url,
         )
         file_service = create_file_search_service(config.file_roots)
         file_write_service = create_file_write_service(config.file_roots)

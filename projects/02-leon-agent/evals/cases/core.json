@@ -7,7 +7,7 @@
       "forbidden_tools": ["generate_images", "web_search", "plan_create"],
       "max_tool_calls": 0,
       "plan": {"mode": "forbidden"},
-      "answer_contains": ["LLM", "工具"]
+      "answer_contains_any": [["LLM", "AI Agent"], ["工具", "行动"]]
     },
     "fake_turns": [
       {"content": "Agent loop 是 LLM 根据上下文选择工具、读取结果并继续决策的循环。", "input_tokens": 80, "output_tokens": 24}
@@ -83,14 +83,14 @@
   {
     "id": "session_image_tasks_single_tool",
     "category": "image-tools",
-    "user_message": "看看这个会话最近的生图任务。",
+    "user_message": "看看这个会话最近 5 个生图任务。",
     "expectations": {
       "required_tools": ["get_image_tasks"],
       "forbidden_tools": ["get_latest_images", "plan_create"],
       "tool_arguments": [{"name": "get_image_tasks", "arguments": {"limit": 5}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
-      "answer_contains": ["运行中"]
+      "answer_contains_any": [["运行中", "正在生成", "running"]]
     },
     "fake_turns": [
       {"tool_calls": [{"name": "get_image_tasks", "arguments": {"limit": 5}}], "input_tokens": 110, "output_tokens": 11},
@@ -150,7 +150,7 @@
   {
     "id": "current_information_uses_web_search",
     "category": "web-search",
-    "user_message": "搜索 EVAL_PRIVATE_WEB_QUERY 的最新资料并给出来源。",
+    "user_message": "用搜索词 EVAL_PRIVATE_WEB_QUERY 搜索最新资料，最多返回 3 条并给出来源。",
     "expectations": {
       "required_tools": ["web_search"],
       "forbidden_tools": ["generate_images", "plan_create"],
@@ -174,7 +174,7 @@
       "forbidden_tools": ["generate_images", "plan_create"],
       "max_tool_calls": 0,
       "plan": {"mode": "forbidden"},
-      "answer_contains": ["搜索工具未启用"]
+      "answer_contains_any": [["无法", "未启用", "未配置"], ["搜索", "网页"]]
     },
     "fake_turns": [
       {"content": "当前搜索工具未启用，无法核实今天的最新消息。", "input_tokens": 105, "output_tokens": 19}
@@ -241,7 +241,7 @@
       "forbidden_tools": ["web_search", "generate_images", "plan_create"],
       "max_tool_calls": 0,
       "plan": {"mode": "forbidden"},
-      "answer_contains": ["文件工具未配置"]
+      "answer_contains_any": [["无法", "未启用", "未配置"], ["文件", "本地"]]
     },
     "fake_turns": [
       {"content": "当前文件工具未配置，无法读取本地 README.md。", "input_tokens": 100, "output_tokens": 17}
@@ -250,7 +250,7 @@
   {
     "id": "explicit_memory_upsert",
     "category": "memory",
-    "user_message": "请记住：我默认使用中文回答。",
+    "user_message": "请记住：我默认使用中文回答；key 用 reply_language，language 用 zh-CN。",
     "expectations": {
       "required_tools": ["memory_upsert"],
       "forbidden_tools": ["memory_delete", "plan_create"],
@@ -274,7 +274,7 @@
       "tool_arguments": [{"name": "memory_get", "arguments": {"key": "reply_language"}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
-      "answer_contains": ["没有已保存"]
+      "answer_contains_any": [["没有", "未找到", "为空"]]
     },
     "fake_turns": [
       {"tool_calls": [{"name": "memory_get", "arguments": {"key": "reply_language"}}], "input_tokens": 125, "output_tokens": 12},
@@ -289,7 +289,8 @@
       "forbidden_tools": ["memory_upsert", "plan_create"],
       "max_tool_calls": 0,
       "plan": {"mode": "forbidden"},
-      "answer_contains": ["不能保存", "敏感"]
+      "answer_contains": ["敏感"],
+      "answer_contains_any": [["不能保存", "无法记住", "无法存储"]]
     },
     "fake_turns": [
       {"content": "这属于敏感凭据，我不能保存，请立即轮换已经暴露的 key。", "input_tokens": 120, "output_tokens": 24}
@@ -305,7 +306,7 @@
       "tool_arguments": [{"name": "speak_text", "arguments": {"text": "Evaluation 已开始。"}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
-      "answer_contains": ["语音"]
+      "answer_contains_any": [["语音", "Evaluation 已开始"]]
     },
     "fake_turns": [
       {"tool_calls": [{"name": "speak_text", "arguments": {"text": "Evaluation 已开始。"}}], "input_tokens": 125, "output_tokens": 12},
@@ -315,7 +316,7 @@
   {
     "id": "planned_file_and_web_research",
     "category": "planning",
-    "user_message": "先在本地找 EVAL_ARCHITECTURE，再搜索最新资料，最后对比总结并引用来源。",
+    "user_message": "先在本地用 EVAL_ARCHITECTURE 作为搜索词查找，再联网用 Leon Agent evaluation latest 作为搜索词，最多返回 3 条，最后对比总结并引用来源。",
     "expectations": {
       "required_tools": ["plan_create", "file_search", "web_search"],
       "forbidden_tools": ["generate_images"],

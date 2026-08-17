@@ -11,13 +11,15 @@
   -> Leon Agent 判断是否需要联网
   -> web_search Agent tool
   -> WebSearchService
-  -> TavilySearchProvider
-  -> POST https://api.tavily.com/search
+  -> TavilySearchProvider（主）
+     -> 失败时 FailoverSearchProvider
+     -> TavilySearchProvider（备）
+  -> POST <base_url>/search
   -> 结构化搜索证据
   -> LLM 归纳并引用 URL
 ```
 
-- 只有配置非空 `TAVILY_API_KEY` 时才注册 `web_search`。
+- 配置主站 `TAVILY_API_KEY` 或完整的备用 Key/Base URL 时注册 `web_search`。
 - 没有 Key 时 Leon 正常启动，搜索工具不会出现在工具列表中。
 - CLI 和 Web Gateway 共用同一套 service、tool schema 和 system prompt 规则。
 - 搜索是只读工具，不提交生图任务，也不修改外部页面。
@@ -52,6 +54,8 @@ MCP 等 channel 只负责注入和展示。更换搜索供应商时应新增 pro
 [leon.env]
 TAVILY_API_KEY = "<new-tavily-api-key>"
 TAVILY_BASE_URL = "https://api.tavily.com"
+TAVILY_FALLBACK_API_KEY = "<fallback-key>"
+TAVILY_FALLBACK_BASE_URL = "https://tavily.ivanli.cc/api/tavily"
 TAVILY_TIMEOUT_SECONDS = 15
 TAVILY_MAX_RESULTS = 5
 ```
@@ -60,6 +64,8 @@ TAVILY_MAX_RESULTS = 5
 |---|---|---|
 | `TAVILY_API_KEY` | 空 | 非空时启用 `web_search`；只保留在后端 |
 | `TAVILY_BASE_URL` | `https://api.tavily.com` | Tavily API 根地址 |
+| `TAVILY_FALLBACK_API_KEY` | 空 | 主站请求失败后使用的备用 Bearer Token |
+| `TAVILY_FALLBACK_BASE_URL` | 空 | 备用 Tavily 风格 HTTP API 根地址 |
 | `TAVILY_TIMEOUT_SECONDS` | `15` | 单次搜索 HTTP 超时秒数 |
 | `TAVILY_MAX_RESULTS` | `5` | 工具默认结果数，允许 `1..10` |
 
@@ -126,9 +132,10 @@ Agent 看见的 `web_search` 输入 schema：
 }
 ```
 
-service 只保留 `http://` 和 `https://` 结果，并限制标题、URL、摘要和发布时间长度。provider
-异常会变成 `{"ok": false, "provider": "tavily", "error": "..."}`；取消当前 Agent
-轮次仍会向上抛出取消信号，不会伪装成搜索失败。
+service 只保留 `http://` 和 `https://` 结果，并限制标题、URL、摘要和发布时间长度。主 provider
+出现 HTTP、网络或 JSON 异常时只尝试一次备用 provider；主站成功返回空结果不会触发切换。
+取消当前 Agent 轮次仍会向上抛出取消信号，不会触发备用请求或伪装成搜索失败。成功结果的
+`provider` 为实际命中的 `tavily-primary` 或 `tavily-fallback`，Key 不进入工具结果。
 
 Tavily 请求当前固定关闭 `include_answer`、`include_raw_content` 和 `include_images`。返回内容是
 供 LLM 判断的证据，不是可执行指令；最终回答应引用结果 URL，且不得补写搜索结果没有支持的事实。
@@ -159,6 +166,7 @@ uv run leon-server --host 127.0.0.1 --port 8233
 - 未配置 Key 时 `/tools` 不包含 `web_search`，普通聊天和生图不受影响。
 - 配置 Key 后，CLI 与 Web 的工具事件包含 `web_search`，但不包含 API Key。
 - 默认请求使用 `basic`、`general` 和配置的结果数。
+- 主站失败时最多请求一次备用 `/search`；主站成功或取消时不调用备用站。
 - 最终回答引用真实返回 URL；空结果或上游错误不会被描述成搜索成功。
 - 修改后端代码后，验证的是重启后的实际服务，而不是旧进程。
 
@@ -166,7 +174,7 @@ uv run leon-server --host 127.0.0.1 --port 8233
 
 - 未实现 Tavily `extract`、`crawl`、`map` 和 `research`。
 - 未实现 `open_url` 或网页正文读取，因此当前只有 Tavily 返回的搜索摘要。
-- 未接入 SearXNG、Brave 等备用 provider，也没有 provider 自动切换。
+- 仅实现一个 Tavily 风格 HTTP 备用 provider；未接入 SearXNG、Brave 或多级轮换。
 - 未做搜索缓存、credits 统计、预算上限或 rate-limit 策略。
 - 未提供 domain、日期范围、国家或语言等高级过滤参数。
 - 未在 Web 设置页录入 Key；Key 只能通过后端环境变量配置。

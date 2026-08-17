@@ -1,6 +1,6 @@
 from typing import Any
 
-from leon_agent.agent import SYSTEM_PROMPT, build_system_prompt
+from leon_agent.agent import SYSTEM_PROMPT, LeonAgent, build_system_prompt
 from leon_agent.tools import _format_generation_answer, create_leon_tools
 
 
@@ -211,6 +211,40 @@ def test_agent_prompt_forbids_image_prompt_rewriting() -> None:
     assert "Do not choose Prompt, Workflow, LoRA" in SYSTEM_PROMPT
 
 
+def test_agent_prompt_hardens_live_tool_adherence() -> None:
+    normalized = " ".join(SYSTEM_PROMPT.split())
+
+    assert "native function-call mechanism" in normalized
+    assert "do not substitute unrelated tools" in normalized
+    assert "Inspect every tool result before answering" in normalized
+    assert "make one search and do not retry" in normalized
+    assert "Copy returned citation strings exactly" in normalized
+    assert ".env" in normalized
+
+    optional_prompt = " ".join(
+        build_system_prompt(memory_enabled=True, planning_enabled=True).split()
+    )
+    assert "multiple independent preferences or values" in optional_prompt
+    assert 'An explicit sequence such as "search, then read"' in optional_prompt
+
+
+def test_agent_prompt_names_unavailable_optional_capabilities() -> None:
+    agent = LeonAgent(
+        llm_client=object(),  # type: ignore[arg-type]
+        image_client=FakeImageClient(),  # type: ignore[arg-type]
+        session_id="session-1",
+        default_mode_ids=["k2_tifa_plus"],
+    )
+    normalized = " ".join(agent.runtime.system_prompt.split())
+
+    assert "Unavailable optional capabilities for this Agent instance" in normalized
+    assert "web search (web_search)" in normalized
+    assert "local file access (list_files, file_search, read_file)" in normalized
+    assert "long-term memory (memory_get, memory_upsert, memory_delete)" in normalized
+    assert "voice output (speak_text)" in normalized
+    assert "do not call any tool to probe or replace it" in normalized
+
+
 def test_cancel_tool_is_exposed_and_forwards_the_job_id() -> None:
     client = FakeImageClient()
     tools = create_leon_tools(
@@ -224,6 +258,28 @@ def test_cancel_tool_is_exposed_and_forwards_the_job_id() -> None:
     assert result["ok"] is True
     assert result["status"] == "cancelled"
     assert client.cancelled == ["job-7"]
+    assert tools.direct_answer("cancel_image_task", {"job_id": "job-7"}, result) is None
+
+
+def test_cancel_tool_answers_completed_no_op_truthfully() -> None:
+    client = FakeImageClient()
+    client.cancel_image_task = lambda job_id: {  # type: ignore[method-assign]
+        "ok": True,
+        "job_id": job_id,
+        "status": "completed",
+        "cancelled": False,
+    }
+    tools = create_leon_tools(
+        client,  # type: ignore[arg-type]
+        session_id="session-1",
+        default_mode_ids=["k2_tifa_plus"],
+    )
+    arguments = {"job_id": "job-complete"}
+
+    result = tools.execute("cancel_image_task", arguments)
+    answer = tools.direct_answer("cancel_image_task", arguments, result)
+
+    assert answer == "任务已经完成，不能声称取消成功。"
 
 
 def test_cancel_tool_schema_requires_a_job_id() -> None:
