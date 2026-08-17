@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import secrets
+import stat
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import islice
@@ -226,23 +227,73 @@ class _ReadError(Exception):
         self.bytes_read = bytes_read
 
 
+def _entry_identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
+def _unsafe_read_metadata(metadata: os.stat_result) -> bool:
+    if stat.S_ISLNK(metadata.st_mode):
+        return True
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    hidden = getattr(stat, "FILE_ATTRIBUTE_HIDDEN", 0x2)
+    system = getattr(stat, "FILE_ATTRIBUTE_SYSTEM", 0x4)
+    return bool(attributes & (reparse | hidden | system))
+
+
+def _validate_read_size(metadata: os.stat_result, *, byte_limit: int) -> None:
+    if metadata.st_size > MAX_FILE_BYTES:
+        raise _ReadError("file_too_large", "The file exceeds the 1 MiB limit.")
+    if metadata.st_size > byte_limit:
+        raise _ReadError(
+            "scan_budget",
+            "The remaining search byte budget is too small.",
+        )
+
+
 def _read_text(path: Path, *, byte_limit: int = MAX_FILE_BYTES) -> tuple[str, int]:
     if not _is_supported_file(path):
         raise _ReadError("unsupported_file_type", "The file type is not supported.")
     try:
-        size = path.stat().st_size
+        expected_metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise _ReadError("path_changed", "The requested file changed.") from exc
     except OSError as exc:
         raise _ReadError("io_error", "The file could not be inspected.") from exc
-    if size > MAX_FILE_BYTES:
-        raise _ReadError("file_too_large", "The file exceeds the 1 MiB limit.")
-    if size > byte_limit:
-        raise _ReadError("scan_budget", "The remaining search byte budget is too small.")
+    if _unsafe_read_metadata(expected_metadata):
+        raise _ReadError("path_changed", "The requested file changed.")
+    if not stat.S_ISREG(expected_metadata.st_mode):
+        raise _ReadError("not_file", "The requested path is not a file.")
+    _validate_read_size(expected_metadata, byte_limit=byte_limit)
 
     try:
         with path.open("rb") as stream:
+            opened_metadata = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(opened_metadata.st_mode)
+                or _entry_identity(opened_metadata) != _entry_identity(expected_metadata)
+            ):
+                raise _ReadError("path_changed", "The requested file changed.")
+            _validate_read_size(opened_metadata, byte_limit=byte_limit)
             payload = stream.read(min(MAX_FILE_BYTES, byte_limit) + 1)
+    except _ReadError:
+        raise
+    except FileNotFoundError as exc:
+        raise _ReadError("path_changed", "The requested file changed.") from exc
     except OSError as exc:
         raise _ReadError("io_error", "The file could not be read.") from exc
+
+    try:
+        final_metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise _ReadError("path_changed", "The requested file changed.") from exc
+    except OSError as exc:
+        raise _ReadError("io_error", "The file could not be inspected.") from exc
+    if (
+        _unsafe_read_metadata(final_metadata)
+        or _entry_identity(final_metadata) != _entry_identity(opened_metadata)
+    ):
+        raise _ReadError("path_changed", "The requested file changed.")
     if len(payload) > MAX_FILE_BYTES:
         raise _ReadError(
             "file_too_large",
@@ -758,6 +809,11 @@ class FileSearchService:
                         truncated = True
                         truncation_reason = "byte_budget"
                         break
+                    if exc.error_code == "path_changed":
+                        return _error(
+                            "path_changed",
+                            "A searched file changed during validation.",
+                        )
                     skipped_files += 1
                     continue
                 if cancel_check is not None:

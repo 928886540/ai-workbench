@@ -173,7 +173,9 @@ roots 的 root id 和 opaque canonical binding 完全一致时注册。模型参
 所有入口，包括用户直接要求 `read_file` 时，都必须执行以下检查：
 
 1. 拒绝绝对路径、UNC、Windows drive-relative 路径、设备路径、ADS `:` 和非法组件。
-2. 根目录和每个候选文件都 `resolve` 后重新验证 containment，跳过 symlink、junction 和 reparse point。
+2. 根目录和每个候选文件都 `resolve` 后重新验证 containment，跳过 symlink、junction 和 reparse point；
+   真正读取时再执行 `lstat -> open -> fstat` identity 对比，并在读取后复验路径 identity。校验与打开之间、
+   或读取期间被替换的文件统一 fail-closed 为 `path_changed`，替换内容不会进入工具结果。
 3. 不列出也不读取点目录、隐藏/系统文件、`.git`、`.env*`、密钥、凭据和 SQLite 数据文件及其
    `-wal` / `-shm` / `-journal` 伴随文件；常见二进制 magic、PEM 私钥头和控制字符也会被拒绝。
 4. 仅允许受支持的文本类型，并进行 binary sniff；编码失败返回错误，不用替换字符伪装成功。
@@ -216,6 +218,7 @@ uv run leon --help
 - 未配置 roots 时五个文件工具均不存在；只注入读 service 时只出现三个读工具。
 - 文件名搜索、正文搜索、行号和分页读取正确。
 - `../`、绝对路径、Windows 特殊路径、symlink/junction 逃逸均被拒绝。
+- 合法文件在校验后、打开前被替换时，`read_file` 与 `file_search` 均返回 `path_changed`，不读取替换正文。
 - `.env`、密钥和数据库既不能被列出，也不能直接读取。
 - 超大文件、binary、伪装 ZIP/私钥、扫描预算、目录预算和结果上限能稳定收口。
 - CLI 与 Gateway/Web 注入同一 roots 后均注册五个文件工具，read/write opaque root binding、schema 和结果保持一致。

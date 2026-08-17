@@ -136,6 +136,75 @@ def test_binary_signatures_and_private_key_markers_are_blocked(tmp_path: Path) -
     assert service.read_file("root", "renamed-key.txt")["error_code"] == "sensitive_content"
 
 
+def test_read_file_rejects_replacement_between_validation_and_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "note.txt"
+    target.write_text("safe original", encoding="utf-8")
+    replacement = tmp_path.parent / f"{tmp_path.name}-replacement.txt"
+    replacement.write_text(
+        "-----BEGIN PRIVATE KEY-----\nreplacement must not be read",
+        encoding="utf-8",
+    )
+    target_path = target.resolve()
+    original_open = Path.open
+    swapped = False
+
+    def swap_before_open(path: Path, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        nonlocal swapped
+        if path == target_path and not swapped:
+            replacement.replace(target_path)
+            swapped = True
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", swap_before_open)
+    service = FileSearchService({"root": tmp_path})
+
+    result = service.read_file("root", "note.txt")
+
+    assert swapped is True
+    assert result == {
+        "ok": False,
+        "error_code": "path_changed",
+        "error": "The requested file changed.",
+    }
+    assert "replacement must not be read" not in repr(result)
+
+
+def test_search_fails_closed_when_candidate_changes_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "note.txt"
+    target.write_text("safe original", encoding="utf-8")
+    replacement = tmp_path.parent / f"{tmp_path.name}-search-replacement.txt"
+    replacement.write_text("needle from replacement", encoding="utf-8")
+    target_path = target.resolve()
+    original_open = Path.open
+    swapped = False
+
+    def swap_before_open(path: Path, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        nonlocal swapped
+        if path == target_path and not swapped:
+            replacement.replace(target_path)
+            swapped = True
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", swap_before_open)
+    service = FileSearchService({"root": tmp_path})
+
+    result = service.search("needle", root_id="root")
+
+    assert swapped is True
+    assert result == {
+        "ok": False,
+        "error_code": "path_changed",
+        "error": "A searched file changed during validation.",
+    }
+    assert "needle from replacement" not in repr(result)
+
+
 def test_search_budget_counts_invalid_and_binary_reads(tmp_path: Path, monkeypatch) -> None:
     for index in range(3):
         (tmp_path / f"invalid-{index}.txt").write_bytes(b"\xff" * 4)
