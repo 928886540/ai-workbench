@@ -18,7 +18,8 @@
 - 生图完成后丢弃骨架屏，在聊天底部追加一条新图片气泡并自动跟随到底
 - 任务页以生图模式和中文状态为主信息，完成任务直接显示可点击缩略图，不暴露内部任务 ID
 - 模型选择改为可点击列表（不再依赖手机浏览器不友好的 `<datalist>`）
-- Volink TTS 已接入：4 个模型 / 561 个中文音色，支持搜索、收藏、试听、手动朗读与自动朗读
+- Volink TTS 已接入：4 个模型 / 561 个中文音色，支持搜索、收藏、试听、手动朗读与自动朗读；自动朗读
+  会按 `assistant.delta` 分段并发合成、顺序播放，重试同一气泡时按新 revision 重新生成且保持所选音色
 - TTS 会在前后端清理 Markdown 列表符号、emoji、链接、模式 ID 和任务 ID，换行转成自然停顿
 - 最近图片查询会直接渲染工具返回的结构化图片；LLM 附带的“查看图片”链接不会重复显示或进入自动朗读
 - SSE 的 `voice.ready` 事件会在聊天中追加可播放的语音气泡；播放器支持单例复用、iOS 用户手势解锁和待播恢复
@@ -166,7 +167,7 @@ provider 隔离语义见 [配置说明](docs/configuration.md)。真实密钥只
 | `LLM_TIMEOUT_SECONDS` | `0` | LLM 响应读取时限；`0` 表示不限时，连接建立仍有短超时 |
 | `LEON_API_TOKEN` | 空 | Web Gateway 鉴权 token；公网暴露时必须设置 |
 | `LEON_SYSTEM_PROMPT_FILE` | 空 | 可选 UTF-8 TXT；内容原样追加到 Agent system prompt，相对路径从仓库根目录解析 |
-| `LEON_FILE_ROOTS` | `{}` | 可选文件根目录 JSON 对象；读取和显式授权写入均限制在这些目录，例如 `{"workbench":"D:/apiWorkSpace/ai-workbench"}` |
+| `LEON_FILE_ROOTS` | `{}` | 可选文件根目录 JSON 对象；读取和显式授权写入均限制在这些目录，例如 `{"workbench":"C:/workspace/ai-workbench"}` |
 | `LEON_HTTP_TIMEOUT_SECONDS` | `30` | Leon HTTP 请求超时秒数 |
 | `LEON_BRIDGE_TIMEOUT_SECONDS` | `20` | Node bridge 执行超时秒数 |
 | `VOLINK_API_KEY` | 空 | Volink TTS 密钥；未配置时 Web 隐藏语音目录与朗读能力 |
@@ -216,7 +217,7 @@ File Search 默认关闭。需要让 Leon 查阅项目文档、Prompt 或角色�
 
 ```toml
 [leon.env]
-LEON_FILE_ROOTS = "{\"workbench\":\"D:/apiWorkSpace/ai-workbench\",\"prompts\":\"D:/prompt-library\"}"
+LEON_FILE_ROOTS = "{\"workbench\":\"C:/workspace/ai-workbench\",\"prompts\":\"C:/workspace/prompts\"}"
 ```
 
 启用后，`/tools` 至少会出现三个读取工具：`list_files`（列目录）、`file_search`（按文件名或正文做
@@ -272,7 +273,7 @@ Vue 客户端是唯一 Web 实现，源码位于 `web/src/`，构建产物位于
 [Web 客户端演进评估](docs/web-client-evolution.md)。
 
 Vue 3 + Vite 迁移基座位于 `web/`，当前已覆盖聊天、任务、图库、设置视图和 Agent Timeline。provider-free
-Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **76/76**；
+Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **87/87**；
 它拦截所有 `/api/**`，不会触发真实 LLM、Volink 或图片 provider。本机与公网 Gateway/SSE 已完成只读验收；
 Cloudflare 控制台 Cache Bypass 规则和手机实机验收仍待做。旧单文件 Web 客户端及其浏览器脚本已删除，
 Gateway 不再提供前端选择开关。
@@ -285,6 +286,6 @@ Web 前端的 Vue3 迁移边界、模式补全、Agent Timeline、TTS/`voice.rea
 已记录三条扩展需求：面试 MCP、Telegram Bot、Tavo 互通。详细边界与实施顺序见
 [Leon Agent 扩展路线](../../notes/plans/leon-agent-expansion.md)。
 
-当前优先级是 Evaluation -> `03-rag-lab` -> Trace/Observability。共享 `LeonToolService` 与第一版 MCP
-Server 已落地；Telegram Bot、Tavo MCP 互通和 Multi-Agent 等质量基线后再排期。Evaluation 的运行方式和
-case 契约见 [Evaluation](docs/evaluation.md)。
+Evaluation -> `03-rag-lab` -> Trace/Observability 质量主线和 `07-coding-agent` 基础闭环均已完成。
+Leon 与 Coding Agent 到此停止扩功能，转入项目讲解、核心理论、简历投递和模拟面试；Telegram Bot、
+Tavo MCP 互通和 Multi-Agent 继续后置。Evaluation 的运行方式和 case 契约见 [Evaluation](docs/evaluation.md)。

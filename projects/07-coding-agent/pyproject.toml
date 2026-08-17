@@ -1,7 +1,7 @@
 [project]
 name = "coding-agent"
 version = "0.1.0"
-description = "Production-oriented coding agent safety and execution lab."
+description = "Interview-sized vertical coding agent safety and execution lab."
 requires-python = ">=3.10"
 dependencies = [
   "workbench-core",

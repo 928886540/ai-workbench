@@ -99,6 +99,7 @@ def test_one_failed_test_allows_one_repair_then_stops(git_repo_factory) -> None:
     diff = tools.execute("show_diff", {})
 
     assert first_write["ok"] is True
+    assert tools.audit_result("write_file", first_write)["authorized"] is True
     assert premature_repair["error_code"] == "test_required"
     assert first_test["passed"] is False
     assert second_write["ok"] is True

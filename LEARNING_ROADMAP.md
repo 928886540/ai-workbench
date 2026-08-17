@@ -147,7 +147,7 @@ Planning 冻结在顺序状态机 MVP：不继续做 DAG、并行 planner、后�
 
 ### 目标
 
-把“430 tests passed”和“Agent 真的更聪明了”分开：`pytest` 验证代码契约，Evaluation dataset 验证
+把“`pytest` 全绿”和“Agent 真的更聪明了”分开：`pytest` 验证代码契约，Evaluation dataset 验证
 Agent 行为质量，而不是只验证函数返回值。
 
 ### 第一版交付

@@ -126,8 +126,7 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 近阶段目标：Java 后端 → **AI 应用工程师 / Agent 工程师**。
 
 - 转型计划：`notes/career/transition-plan.md`
-- 面试弹药：`D:/apiWorkSpace/面试准备/AI应用工程师面试准备.md`
-- BOSS 直聘投递版：[notes/career/boss-zhipin-ai-agent-resume.md](notes/career/boss-zhipin-ai-agent-resume.md)
+- 面试弹药和 BOSS 直聘投递版保存在本机 Git ignored 私人目录，不进入公开仓库
 
 ## 快速开始
 

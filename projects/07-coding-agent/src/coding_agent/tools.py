@@ -46,6 +46,13 @@ def _audit_test_result(result: dict[str, Any]) -> dict[str, Any]:
     return projected
 
 
+def _audit_write_result(result: dict[str, Any]) -> dict[str, Any]:
+    projected = _audit_path_result(result)
+    if result.get("ok") is True:
+        projected["authorized"] = True
+    return projected
+
+
 class CodingToolRuntime(ToolRegistry):
     """One bounded coding task: plan, two writes/tests at most, then diff."""
 
@@ -204,7 +211,7 @@ class CodingToolRuntime(ToolRegistry):
                         "relative_path": arguments.get("relative_path"),
                         "character_count": len(arguments.get("content", "")),
                     },
-                    audit_result=_audit_path_result,
+                    audit_result=_audit_write_result,
                 ),
                 AgentTool(
                     name="run_tests",

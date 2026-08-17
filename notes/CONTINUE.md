@@ -13,7 +13,7 @@
 ## 当前主线（2026-08-17）
 
 - 当前集成分支：`feat/leon-ui-polish`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
-  页面恢复、图片任务补拉和全屏图片缩放平移
+  页面恢复、图片任务补拉、全屏图片缩放平移，以及按 `assistant.delta` 分段合成和按 revision 重试的流式 TTS
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
 - `02-leon-agent`：独立 `leon` CLI、SQLite、7 个生图工具和 `speak_text` 已完成
@@ -24,11 +24,16 @@
   case；`03-rag-lab` 已完成真实 embedding、retrieval、citation、faithfulness 与 reranker 对照；Trace 已统一
   Core/SQLite/CLI/Web 的 trace/turn/span 与脱敏 metadata。Planning 暂停在 MVP，Multi-Agent、
   Telegram/Tavo 互通和更多 workflow 继续后置。
-- **当前主线切到 `07-coding-agent` 基础版收尾**：定位为面试用 Vertical Agent Demo，不做完整开发产品；
-  已复用唯一 AgentRuntime 和共享文件边界，跑通读/搜、简单计划、两次写入/测试上限、失败后二次修复、
+- **`07-coding-agent` 基础版已经收口，开发主线停止扩功能并转入面试准备**：它定位为 Vertical Agent Demo，
+  已复用唯一 AgentRuntime 和共享文件边界，跑通读/搜、简单计划、显式授权写入、固定测试、失败后二次修复、
   最终 Git diff，并用 3 个 provider-free 稳定 case 覆盖 bug、小功能和 failing-test repair。
 - `manual_vue_web_check.py` 已改为只结束本次测试创建的完整进程树；Windows 使用精确 PID + `/T`，
   正常和故意失败路径均验证 4173/4178 回到 0，不会全局结束 `node.exe`，`--base-url` 外部服务不归它管理。
+- 旧的“后台图片等待超时”未稳定复现：图片与 `/api/**` 均由本地 FakeGateway 接管，不涉及外部 provider；
+  后续 Vite/FastAPI 入口各 **87/87**。另一次超时发生在更早的最近图片加载，疑似测试持有旧 DOM handle，
+  证据不足，因此没有调大超时、降低断言或改业务语义；测试退出后 4173/4178/4187/4188 均无监听残留。
+- 最终收口验证：全仓 `pytest` **628 passed**，Coding Agent 三个 demo case **3 passed**；Ruff、compileall、
+  `uv lock --check`、Vue typecheck/build、`git diff --check`、UTF-8/BOM 与 secret 扫描均通过。
 - 下方带日期 checkpoint 保留历史现场；其中旧“下一步”或“待提交”不覆盖本节当前主线。
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
 - CLI、Web 与 Leon MCP 的唯一持久配置源是 `%USERPROFILE%\.leon\config.toml`；`.codex` 和
@@ -104,8 +109,8 @@
 - ASR 已接入：`POST /api/agent/asr` 代理 OpenAI-compatible 转写服务，需配置 `LEON_ASR_*`；前端录音后只回填输入框。
 - `LeonToolService` 已抽出，Leon MCP Server 第一版已完成：5 个工具、stdio/Streamable HTTP，协议
   `initialize/tools/list` smoke 通过。
-- 三段质量基线已落地；当前先完成 Trace CLI 与 Web 恢复竞态的验证、提交和真实进程验收，再决定下一阶段。
-  Telegram Bot、Tavo MCP 互通和 Multi-Agent 仍不自动前移
+- 三段质量基线与 Coding Agent 基础闭环均已落地；当前停止新增模块，转入项目讲解、Agent 核心理论、
+  高频问答、简历/BOSS 投递和模拟面试。Telegram Bot、Tavo MCP 互通和 Multi-Agent 仍不自动前移
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
 - 运行态遗留：Cloudflare Cache Bypass 确认和手机实机 SSE、生图、TTS、ASR 验收；本轮已重启
   `leon-server`，授权 health 为 200，并确认实际提供最新 Vue 静态资源
@@ -269,8 +274,8 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 继续 ai-workbench。
 
 我是 Java 后端转 AI 应用/Agent。
-当前主线：07-coding-agent 面试用基础版收尾；Evaluation → RAG → Trace/Observability 已完成最小闭环。
-Planning 冻结在 MVP，Coding Agent 完成 3 个稳定 case 后停止扩功能。
+当前主线：Leon 与 07-coding-agent 基础闭环已完成，停止新增功能，转入面试准备。
+Evaluation → RAG → Trace/Observability 已完成最小闭环，Planning 冻结在 MVP。
 模型与全部 Leon 持久配置只走 %USERPROFILE%\.leon\config.toml，不跟随 CC Switch。
 
 请先快速确认：
@@ -284,9 +289,8 @@ Planning 冻结在 MVP，Coding Agent 完成 3 个稳定 case 后停止扩功能
 如果你已经想好下一步，直接更具体：
 
 ```text
-继续 ai-workbench 的 07-coding-agent。
-下一步：核对 3 个 provider-free 稳定 case、Trace 和最终 diff；不要扩成完整 Coding Agent 产品。
-先设计，再改代码。
+继续 ai-workbench，进入面试准备阶段。
+不要再扩 Leon 或 Coding Agent 功能；先整理项目讲解、Agent 核心理论和高频问答，再做模拟面试。
 ```
 
 ---
