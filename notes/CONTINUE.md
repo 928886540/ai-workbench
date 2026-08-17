@@ -12,18 +12,18 @@
 
 ## 当前主线（2026-08-17）
 
-- 当前集成分支：`feat/leon-model-switch`；Web/Gateway SSE 恢复基线为 `df7e92e`，
-  CLI 日用 TUI 基线为 `d520df9`，两条并行改造均已统一审查并推送
+- 当前集成分支：`feat/leon-ui-polish`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
+  页面恢复、图片任务补拉和全屏图片缩放平移
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
 - `02-leon-agent`：独立 `leon` CLI、SQLite、7 个生图工具和 `speak_text` 已完成
 - `02-leon-agent`：可选 File Search + 显式 FileWrite MVP 已接入 CLI/Gateway；配置 roots 后五个工具完整可用，读取正文和写入内容均不会进入 SSE/SQLite audit，详见 `projects/02-leon-agent/docs/file-search.md`
 - `02-leon-agent`：普通 Agent 已接入 per-turn Planning 状态机；复杂任务可显式跟踪 2～8 步，计划正文
   只进入当前 LLM transcript，审计只保留状态元数据，详见 `projects/02-leon-agent/docs/planning.md`
-- 当前推进主线已从“继续加工具”切换为 **Evaluation → RAG → Trace/Observability**：先做 20 个 eval
-  cases 建立行为 baseline，再扩到 50 个；然后把 File Search 演进到语义检索，最后统一
-  trace/turn/span 与脱敏 metrics。
-  Planning 暂停在 MVP，Multi-Agent、Telegram/Tavo 互通和更多 workflow 后置。
+- **Evaluation → RAG → Trace/Observability** 三段质量主线均已形成最小闭环：Evaluation 已扩到 50 个
+  case；`03-rag-lab` 已完成真实 embedding、retrieval、citation、faithfulness 与 reranker 对照；Trace 已统一
+  Core/SQLite/CLI/Web 的 trace/turn/span 与脱敏 metadata。Planning 暂停在 MVP，Multi-Agent、
+  Telegram/Tavo 互通和更多 workflow 继续后置。
 - 下方带日期 checkpoint 保留历史现场；其中旧“下一步”或“待提交”不覆盖本节当前主线。
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
 - CLI、Web 与 Leon MCP 的唯一持久配置源是 `%USERPROFILE%\.leon\config.toml`；`.codex` 和
@@ -99,24 +99,23 @@
 - ASR 已接入：`POST /api/agent/asr` 代理 OpenAI-compatible 转写服务，需配置 `LEON_ASR_*`；前端录音后只回填输入框。
 - `LeonToolService` 已抽出，Leon MCP Server 第一版已完成：5 个工具、stdio/Streamable HTTP，协议
   `initialize/tools/list` smoke 通过。
-- 后续质量优先级：Agent Evaluation -> `03-rag-lab` -> Trace/Observability；Telegram Bot、Tavo MCP 互通和
-  Multi-Agent 等质量基线后再排期
+- 三段质量基线已落地；当前先完成 Trace CLI 与 Web 恢复竞态的验证、提交和真实进程验收，再决定下一阶段。
+  Telegram Bot、Tavo MCP 互通和 Multi-Agent 仍不自动前移
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
-- 运行态遗留：Cloudflare Cache Bypass 确认和手机实机 SSE、生图、TTS、ASR 验收；这些不改变开发主线，
-  下一项推进工作仍是 Agent Evaluation
+- 运行态遗留：Cloudflare Cache Bypass 确认和手机实机 SSE、生图、TTS、ASR 验收；本轮已重启
+  `leon-server`，授权 health 为 200，并确认实际提供最新 Vue 静态资源
 
 ### 当前推进决策（2026-08-17）
 
 - **停止继续扩展 Planning**：现有 per-turn 顺序状态机已经足够展示 Agent runtime 设计；不做 DAG、并行、
   后台恢复、自动重试或第二套 executor。
-- **Evaluation 是下一棒**：建立 `projects/02-leon-agent/evals/`，先用 fake provider 做 20 个 case，
-  记录 Task Success、Tool Selection、Plan Adherence、Safety、Latency、Tool Calls 和 Tokens/Cost；每次改
-  system prompt、工具 schema、Memory 或 Planning 都重跑 baseline。
-- **RAG 第二棒**：在 `03-rag-lab` 复用 File Search 安全边界，按 chunk → embedding → retrieval → citation
-  演进；用 Recall@K、MRR、citation precision 和 faithfulness 验收，不把向量库直接塞进 Leon MVP。
-- **Trace 第三棒**：统一现有 AgentEvent/SSE/SQLite audit 为 trace_id、turn_id 和脱敏 spans，服务于 eval
-  失败解释；raw 文件、Memory、搜索 query 和 secret 继续禁止进入观测。
-- **面试表达**：`pytest` 证明代码契约，Evaluation 证明 Agent 行为；当前要补的是后者，不是继续堆功能名词。
+- **Evaluation 已完成第一版**：50 个 case 默认 fake provider，显式 `--live` 才访问真实 provider；指标覆盖
+  Task Success、Tool Selection、Plan Adherence、Safety、Latency、Tool Calls 和 Tokens/Cost。
+- **RAG 已完成最小闭环**：`03-rag-lab` 按 chunk → embedding → retrieval → citation 演进，已用 Recall@K、
+  MRR、citation precision 和 faithfulness 做 fake/真实对照，未塞入 Leon MVP。
+- **Trace MVP 已接通**：AgentRuntime、SQLite、CLI/Web 共用 trace_id、turn_id 和脱敏 spans；raw 文件、
+  Memory、搜索 query、tool payload 和 secret 禁止进入 Trace。
+- **面试表达**：`pytest` 证明代码契约，Evaluation 证明 Agent 行为质量，Trace 解释一次真实运行。
 - **Evaluation 第一版已落地**：`projects/02-leon-agent/evals/cases/` 共 50 个 case；
   `uv run leon-eval` 默认 fake provider，当前 baseline 为 **50/50 passed**。Runner 复用生产
   `LeonAgent`/tool schema，临时文件根、静态搜索和内存 SQLite 不触碰真实外部系统；显式 `--live` 才允许真实 provider。

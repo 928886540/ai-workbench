@@ -1,7 +1,7 @@
 # Leon Trace / Observability 设计
 
 - 日期：2026-08-17
-- 状态：进行中（Core 契约与 AgentRuntime spans 已完成，SQLite/入口接入待实现）
+- 状态：MVP 已实现（Core 契约、AgentRuntime spans、SQLite、CLI/Web 入口均已接入）
 - 前置：Agent Evaluation 与 `03-rag-lab` 最小闭环完成后进入实现
 - 范围：Leon CLI、Web Gateway、唯一 `AgentRuntime`、本地 SQLite
 
@@ -372,6 +372,18 @@ Trace projector 与现有 audit projector 分开：audit 允许为追责保留�
 - 补 CLI/Gateway provider-free 集成测试；重启 `leon-server` 后做本地真实 smoke。
 
 每个提交都应独立通过定向 pytest、Ruff 和 `git diff --check`，且不依赖真实 API key 或网络。
+
+### 实现结果（2026-08-17）
+
+- Core、SQLite、Gateway/Web 已落地；普通 CLI 请求现在显式传入 `TraceContext(entrypoint="cli")` 和
+  同库 `SQLiteTraceStore`，消息与 tool audit 分别写入 `turn_id`、`trace_id/span_id`。
+- `/nsfw` 直达链路使用 `entrypoint="direct"`，只手工记录绕过 `AgentRuntime` 的 root + Tool span；
+  Tool span 不复制描述、参数、结果或图片 URL。
+- `/trace` 只读取当前 session 最近一次 SQLite trace，显示安全摘要和 span 树，不调用 LLM、图片、搜索或网络。
+- CLI 失败与取消提示附 8 位短 `trace_id`；provider-free 测试覆盖普通请求、direct 请求、关联持久化、
+  本地只读查询和正文不进入 Trace。
+- 实现完成后已重启计划任务管理的 `leon-server`；授权 health 返回 200，运行进程提供最新 Vue 构建。
+- MVP 仍不引入 OpenTelemetry SDK、后台 writer、自动恢复、自动重试或第二套 executor。
 
 ## 11. 风险与取舍
 

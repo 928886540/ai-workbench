@@ -38,6 +38,8 @@
   `/nsfw` 直达生图和 Leon MCP 不注册 Planning，计划正文不进入 SSE/SQLite 审计
 - Agent Evaluation 第一版已接入：50 个可审查 case，默认 fake provider，显式 `--live` 才使用真实 provider；
   指标覆盖 Task Success、Tool Selection、Plan Adherence、Safety、Latency、Tool Calls 和 Tokens/Cost
+- 本地 Trace / Observability MVP 已接入：CLI/Web 统一 `trace_id + turn_id`，SQLite 仅保存脱敏 metadata；
+  root、iteration、LLM、Tool、Planning spans 共用唯一 `AgentRuntime`，CLI 可用 `/trace` 查看最近一次 span 树
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读
@@ -102,6 +104,7 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 - `/retry`：重试上一条请求，并追加一轮会话记录
 - `/last` / `/copy`：重新显示或复制上一条回答
 - `/tools` / `/status`：查看已注册工具或当前运行状态
+- `/trace`：只读查看当前 session 最近一次本地 Trace 摘要与 span 树
 - `/model`：显示当前模型与可选模型
 - `/model <序号或任意模型ID>`：切换当前 session 的模型
 - `/model default`：恢复用户配置快照中的默认模型

@@ -172,6 +172,7 @@ class FakeGateway:
         self.calls: list[dict[str, Any]] = []
         self.token_valid = True
         self.active_turn: dict[str, bool] | None = None
+        self.clear_active_turn_after_session_read = False
         self.cancel_post_405 = False
         self._next_message_id = 3
         self.session_messages: list[dict[str, Any]] = [
@@ -256,12 +257,16 @@ class FakeGateway:
 
         session_prefix = f"/api/agent/sessions/{FAKE_SESSION_ID}"
         if path == session_prefix and method == "GET":
+            active_turn = self.active_turn
+            if self.clear_active_turn_after_session_read:
+                self.clear_active_turn_after_session_read = False
+                self.active_turn = None
             _json_response(
                 route,
                 {
                     "session_id": FAKE_SESSION_ID,
                     "messages": self.session_messages,
-                    "active_turn": self.active_turn,
+                    "active_turn": active_turn,
                 },
             )
             return
@@ -1648,6 +1653,26 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 latest_tts_after == latest_tts_before
                 and latest_images_row.locator(".message-speak").count() == 0,
                 f"before={latest_tts_before}, after={latest_tts_after}",
+            )
+
+            gateway.append_session_message("assistant", "后台竞态最终回复")
+            gateway.active_turn = {"retry": False}
+            gateway.clear_active_turn_after_session_read = True
+            event_sources_before_active_race = page.evaluate(
+                "() => window.__leonEventUrls().length"
+            )
+            page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+            page.wait_for_function(
+                "count => window.__leonEventUrls().length > count",
+                arg=event_sources_before_active_race,
+            )
+            page.get_by_text("后台竞态最终回复").wait_for(state="visible")
+            page.wait_for_timeout(300)
+            check(
+                "恢复快照短暂残留 active turn 时不制造永久思考态",
+                page.get_by_text("后台竞态最终回复").count() == 1
+                and page.locator(".thinking").count() == 0
+                and page.get_by_role("button", name="发送消息").is_visible(),
             )
 
             background_image_url = f"{base_url}/api/fake-image-2?filename=background-resume.png"

@@ -21,7 +21,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
-from workbench_core.agent import AgentResult, ToolStep
+from workbench_core.agent import AgentResult, ToolStep, TraceRecorder
 from workbench_core.agent.runtime import (
     AgentCancelled,
     cancellation_scope,
@@ -30,17 +30,23 @@ from workbench_core.agent.runtime import (
 
 
 class FailingAgent:
-    def run(self, message, *, history):  # noqa: ANN001, ARG002
+    def run(  # noqa: ANN001, ARG002
+        self, message, *, history, trace_context=None, trace_sink=None
+    ):
         raise RuntimeError("upstream failed")
 
 
 class InterruptingAgent:
-    def run(self, message, *, history):  # noqa: ANN001, ARG002
+    def run(  # noqa: ANN001, ARG002
+        self, message, *, history, trace_context=None, trace_sink=None
+    ):
         raise KeyboardInterrupt
 
 
 class SuccessfulAgent:
-    def run(self, message, *, history):  # noqa: ANN001, ARG002
+    def run(  # noqa: ANN001, ARG002
+        self, message, *, history, trace_context=None, trace_sink=None
+    ):
         return AgentResult(answer="ok")
 
 
@@ -87,11 +93,39 @@ def test_failed_cli_turn_is_not_persisted(tmp_path) -> None:  # noqa: ANN001
     assert cli.store.load_messages(cli.session_id) == []
 
 
+def test_failed_cli_turn_prints_short_trace_id(tmp_path) -> None:  # noqa: ANN001
+    captured = {}
+
+    class CapturingFailingAgent:
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
+            captured["trace_context"] = trace_context
+            raise RuntimeError("sensitive-provider-message")
+
+    cli = _make_process_cli(tmp_path, CapturingFailingAgent())
+    output = StringIO()
+    cli.console = Console(
+        file=output,
+        force_terminal=False,
+        color_system=None,
+        width=120,
+    )
+
+    assert cli.process("这次会失败") is False
+
+    trace_context = captured["trace_context"]
+    rendered = output.getvalue()
+    assert f"trace {trace_context.trace_id[:8]}" in rendered
+
+
 def test_cli_normalises_win32_surrogate_pair_before_request_and_storage(tmp_path) -> None:
     calls = []
 
     class EmojiAgent:
-        def run(self, message, *, history):  # noqa: ANN001, ARG002
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
             calls.append(message)
             return AgentResult(answer="收到：\ud83d\ude02")
 
@@ -228,6 +262,37 @@ def test_nsfw_command_bypasses_llm_and_defaults_to_marika(tmp_path) -> None:  # 
             "content": "玛莉卡模式的图片生成好了。\n\n- https://images.example/nsfw.png",
         },
     ]
+    trace = cli.trace_store.list_traces(cli.session_id, limit=1)[0]
+    stored = cli.trace_store.get_trace(cli.session_id, trace.trace_id)
+    assert stored is not None
+    trace, spans = stored
+    assert trace.entrypoint == "direct"
+    assert trace.status == "ok"
+    assert trace.outcome == "direct_answer"
+    assert trace.tool_call_count == 1
+    assert [span.kind for span in spans] == ["agent", "tool"]
+    assert spans[1].tool_name == "generate_images"
+
+    with sqlite3.connect(cli.store.path) as connection:
+        message_turns = connection.execute(
+            "SELECT turn_id FROM messages WHERE session_id = ? ORDER BY id",
+            (cli.session_id,),
+        ).fetchall()
+        tool_correlation = connection.execute(
+            "SELECT trace_id, span_id FROM tool_calls WHERE session_id = ?",
+            (cli.session_id,),
+        ).fetchone()
+        trace_payload = connection.execute(
+            "SELECT * FROM traces WHERE trace_id = ?",
+            (trace.trace_id,),
+        ).fetchone()
+        span_payloads = connection.execute(
+            "SELECT * FROM trace_spans WHERE trace_id = ? ORDER BY sequence_no",
+            (trace.trace_id,),
+        ).fetchall()
+    assert message_turns == [(trace.turn_id,), (trace.turn_id,)]
+    assert tool_correlation == (trace.trace_id, spans[1].span_id)
+    assert "原样描述" not in repr((trace_payload, span_payloads))
 
 
 def test_cli_background_image_completion_persists_and_renders(tmp_path) -> None:  # noqa: ANN001
@@ -689,6 +754,117 @@ def _make_process_cli(tmp_path, agent):  # noqa: ANN001
     return cli
 
 
+def test_cli_turn_persists_trace_message_and_tool_correlations(tmp_path) -> None:
+    captured = {}
+
+    class TracedAgent:
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
+            captured["context"] = trace_context
+            captured["sink"] = trace_sink
+            trace = TraceRecorder(trace_context, trace_sink)
+            tool_span_id = trace.start_span(
+                "tool",
+                "tool.call",
+                tool_name="check_environment",
+            )
+            trace.finish_span(tool_span_id)
+            trace.finish_trace(status="ok", outcome="answered")
+            return AgentResult(
+                answer="done",
+                steps=[
+                    ToolStep(
+                        "check_environment",
+                        {},
+                        {"ok": True},
+                        trace_id=trace_context.trace_id,
+                        span_id=tool_span_id,
+                    )
+                ],
+                trace_id=trace_context.trace_id,
+                turn_id=trace_context.turn_id,
+            )
+
+    cli = _make_process_cli(tmp_path, TracedAgent())
+
+    assert cli.process("inspect") is True
+
+    context = captured["context"]
+    assert context.entrypoint == "cli"
+    assert context.session_id == cli.session_id
+    assert captured["sink"] is cli.trace_store
+    trace, spans = cli.trace_store.get_trace(cli.session_id, context.trace_id)
+    assert trace.status == "ok"
+    assert trace.outcome == "answered"
+    assert trace.tool_call_count == 1
+    assert [span.kind for span in spans] == ["agent", "tool"]
+
+    with sqlite3.connect(cli.store.path) as connection:
+        messages = connection.execute(
+            "SELECT role, turn_id FROM messages WHERE session_id = ? ORDER BY id",
+            (cli.session_id,),
+        ).fetchall()
+        tool_call = connection.execute(
+            "SELECT trace_id, span_id FROM tool_calls WHERE session_id = ?",
+            (cli.session_id,),
+        ).fetchone()
+    assert messages == [
+        ("user", context.turn_id),
+        ("assistant", context.turn_id),
+    ]
+    assert tool_call == (context.trace_id, spans[1].span_id)
+
+
+def test_trace_command_reads_latest_local_trace_without_calling_agent(tmp_path) -> None:
+    secret_marker = "prompt-and-tool-payload-must-stay-hidden"
+
+    class TracedAgent:
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
+            trace = TraceRecorder(trace_context, trace_sink)
+            tool_span_id = trace.start_span(
+                "tool",
+                "tool.call",
+                tool_name="read_file",
+            )
+            trace.finish_span(tool_span_id)
+            trace.finish_trace(status="ok", outcome="answered")
+            return AgentResult(
+                answer="ok",
+                trace_id=trace_context.trace_id,
+                turn_id=trace_context.turn_id,
+            )
+
+    cli = _make_process_cli(tmp_path, TracedAgent())
+    assert cli.process(secret_marker) is True
+    trace_id = cli.trace_store.list_traces(cli.session_id, limit=1)[0].trace_id
+
+    class MustNotRunAgent:
+        def run(self, *args, **kwargs):  # noqa: ANN002, ANN003, ARG002
+            raise AssertionError("/trace must not call the agent")
+
+    cli.agent = MustNotRunAgent()
+    output = StringIO()
+    cli.console = Console(
+        file=output,
+        force_terminal=False,
+        color_system=None,
+        width=120,
+    )
+    cli.ui = None
+
+    assert cli.handle_interactive_message("/trace") is True
+
+    rendered = output.getvalue()
+    assert trace_id[:8] in rendered
+    assert "agent:agent.run" in rendered
+    assert "tool:tool.call" in rendered
+    assert "tool=read_file" in rendered
+    assert secret_marker not in rendered
+
+
 def _make_composition_cli(monkeypatch, tmp_path, file_roots):  # noqa: ANN001
     captured = {}
 
@@ -830,7 +1006,9 @@ def test_cancelled_cli_turn_persists_only_safe_partial_tool_audit(tmp_path) -> N
     content_marker = "raw-file-content-must-not-persist"
 
     class PartiallyCompletedAgent:
-        def run(self, message, *, history):  # noqa: ANN001, ARG002
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
             partial = AgentResult(
                 answer=answer_marker,
                 messages=[{"role": "assistant", "content": content_marker}],
@@ -871,7 +1049,9 @@ def test_cli_cancel_after_agent_result_preserves_completed_tool_audit(tmp_path) 
     agent_returned = False
 
     class CompletedToolAgent:
-        def run(self, message, *, history):  # noqa: ANN001, ARG002
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
             nonlocal agent_returned
             agent_returned = True
             return AgentResult(
@@ -915,7 +1095,9 @@ def test_cancelled_late_cli_turn_is_not_persisted(tmp_path) -> None:  # noqa: AN
     release = threading.Event()
 
     class LateAgent:
-        def run(self, message, *, history):  # noqa: ANN001, ARG002
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
             started.set()
             release.wait(timeout=2)
             return AgentResult(answer="late")
@@ -948,7 +1130,9 @@ def test_next_cli_turn_succeeds_after_cancelled_turn(tmp_path) -> None:  # noqa:
         def __init__(self) -> None:
             self.calls = 0
 
-        def run(self, message, *, history):  # noqa: ANN001, ARG002
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
             self.calls += 1
             if self.calls == 1:
                 started.set()
@@ -985,7 +1169,9 @@ def test_retry_replays_last_prompt_and_appends_a_new_turn(tmp_path) -> None:  # 
         def __init__(self) -> None:
             self.calls = 0
 
-        def run(self, message, *, history):  # noqa: ANN001, ARG002
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
             self.calls += 1
             return AgentResult(answer=f"answer-{self.calls}")
 
@@ -1012,7 +1198,9 @@ def test_retry_reuses_cancelled_prompt_after_worker_returns(tmp_path) -> None:  
         def __init__(self) -> None:
             self.calls = 0
 
-        def run(self, message, *, history):  # noqa: ANN001, ARG002
+        def run(  # noqa: ANN001, ARG002
+            self, message, *, history, trace_context=None, trace_sink=None
+        ):
             self.calls += 1
             if self.calls == 1:
                 started.set()

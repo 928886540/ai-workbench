@@ -37,8 +37,8 @@ def test_vue_entry_is_the_only_web_client() -> None:
     assert '<link rel="icon" href="/icon.svg" type="image/svg+xml" />' in entry
     assert '<link rel="apple-touch-icon" href="/icon-512.png" />' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-25"' in main
-    assert "leon-vue-v25" in service_worker
+    assert 'register("/sw.js?v=vue-26"' in main
+    assert "leon-vue-v26" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:
@@ -133,6 +133,8 @@ def test_vue_chat_login_session_restore_and_error_dedup_contract() -> None:
     assert "const refreshed = await api.getSession(sessionId);" in chat
     assert "appendHistory(refreshed.messages, refreshed.voice_clips || []);" in chat
     assert "await loadImageState(true);" in chat
+    assert "if (shouldRecheckActiveTurn) void reconcileActiveTurn(sessionId);" in chat
+    assert "activeSendController?.abort();" in chat
     assert "const requestId = ++imageStateRequestId;" in chat
     assert "requestId !== imageStateRequestId" in chat
     assert "if (source !== eventSource || api.sessionId !== sessionId) return;" in chat

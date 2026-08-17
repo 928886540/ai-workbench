@@ -685,6 +685,7 @@ function handleOnline(): void {
 async function reconcileAfterResume(): Promise<void> {
   const sessionId = api.sessionId;
   if (!authenticated.value || !sessionId || document.visibilityState !== "visible") return;
+  let shouldRecheckActiveTurn = false;
 
   // Mobile browsers may keep a stale OPEN EventSource while the page is
   // suspended. Stop it, reconcile durable state, then replay from the cursor.
@@ -695,6 +696,7 @@ async function reconcileAfterResume(): Promise<void> {
     appendHistory(refreshed.messages, refreshed.voice_clips || []);
     if (refreshed.active_turn) {
       restoreActiveTurn(refreshed.active_turn);
+      shouldRecheckActiveTurn = true;
     } else {
       activeSendController?.abort();
       activeSendController = null;
@@ -714,6 +716,7 @@ async function reconcileAfterResume(): Promise<void> {
     document.visibilityState === "visible"
   ) {
     connectEvents();
+    if (shouldRecheckActiveTurn) void reconcileActiveTurn(sessionId);
   }
 }
 
@@ -1352,7 +1355,9 @@ async function reconcileActiveTurn(sessionId: string): Promise<void> {
       if (!pendingAssistant()) restoreActiveTurn(refreshed.active_turn);
       return;
     }
-    if (sending.value && !activeSendController) {
+    if (sending.value) {
+      activeSendController?.abort();
+      activeSendController = null;
       pendingAssistantId.value = null;
       sending.value = false;
       appendHistory(refreshed.messages, refreshed.voice_clips || []);

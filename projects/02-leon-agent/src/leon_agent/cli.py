@@ -25,7 +25,16 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
-from workbench_core.agent import AgentEvent, AgentResult, ToolStep
+from rich.tree import Tree
+from workbench_core.agent import (
+    AgentEvent,
+    AgentResult,
+    SpanRecord,
+    ToolStep,
+    TraceContext,
+    TraceRecord,
+    TraceRecorder,
+)
 from workbench_core.agent.runtime import (
     AgentCancelled,
     cancellation_scope,
@@ -48,6 +57,7 @@ from leon_agent.search import create_search_service
 from leon_agent.service import _wait_for_image_results
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
+from leon_agent.trace_store import SQLiteTraceStore
 
 if sys.platform == "win32":
     try:
@@ -118,6 +128,7 @@ _CLI_COMMAND_META = {
     "/copy": "复制上一条回答",
     "/open": "打开最近图片",
     "/tools": "查看已注册工具",
+    "/trace": "查看最近一次本地 Trace",
     "/status": "查看模型与运行状态",
     "/info": "查看模型与运行状态",
     "/model": "查看或切换模型",
@@ -1659,6 +1670,7 @@ class LeonConsole:
             updates["session_db"] = Path(args.db)
         self.config = config.model_copy(update=updates)
         self.store = SessionStore(self.config.session_db)
+        self.trace_store = SQLiteTraceStore(self.config.session_db)
         self.memory_store = MemoryStore(self.config.session_db)
         self.session_id = self._resolve_session(args)
         self._resumed_session = bool(getattr(args, "session", None) and not args.new)
@@ -1756,6 +1768,25 @@ class LeonConsole:
         lock = getattr(self, "_commit_lock", None)
         return lock if lock is not None else nullcontext()
 
+    def _get_trace_store(self) -> SQLiteTraceStore:
+        trace_store = getattr(self, "trace_store", None)
+        if trace_store is None:
+            trace_store = SQLiteTraceStore(self.store.path)
+            self.trace_store = trace_store
+        return trace_store
+
+    def _new_trace_context(self, *, entrypoint: str) -> TraceContext:
+        return TraceContext.create(
+            session_id=self.session_id,
+            entrypoint=entrypoint,  # type: ignore[arg-type]
+        )
+
+    @staticmethod
+    def _trace_hint(trace_context: TraceContext | None) -> str:
+        if trace_context is None:
+            return ""
+        return f" (trace {trace_context.trace_id[:8]})"
+
     def _check_active_turn(self) -> None:
         cancel_event = current_cancel_event()
         if cancel_event is not None and cancel_event.is_set():
@@ -1771,6 +1802,7 @@ class LeonConsole:
         self,
         exc: AgentCancelled,
         fallback_result: AgentResult | None = None,
+        trace_context: TraceContext | None = None,
     ) -> None:
         """Persist only completed, already-projected tool steps from a cancelled turn."""
         partial_result = getattr(exc, "partial_result", None)
@@ -1778,7 +1810,17 @@ class LeonConsole:
             partial_result = fallback_result
         if not isinstance(partial_result, AgentResult) or not partial_result.steps:
             return
-        audit_result = AgentResult(answer="", steps=list(partial_result.steps), messages=[])
+        audit_result = AgentResult(
+            answer="",
+            steps=list(partial_result.steps),
+            messages=[],
+            trace_id=partial_result.trace_id or (
+                trace_context.trace_id if trace_context is not None else None
+            ),
+            turn_id=partial_result.turn_id or (
+                trace_context.turn_id if trace_context is not None else None
+            ),
+        )
         with self._commit_context():
             self.store.record_result(self.session_id, audit_result)
 
@@ -2279,40 +2321,69 @@ class LeonConsole:
             return True
         self._last_user_message = message
         result: AgentResult | None = None
+        trace_context: TraceContext | None = None
         try:
             self._check_active_turn()
             if stripped.casefold() == "/nsfw" or stripped.casefold().startswith("/nsfw "):
-                return self._process_nsfw(stripped)
+                trace_context = self._new_trace_context(entrypoint="direct")
+                return self._process_nsfw(stripped, trace_context=trace_context)
             self._ensure_current_provider()
             self._check_active_turn()
             history = self.store.load_messages(self.session_id)
+            trace_context = self._new_trace_context(entrypoint="cli")
             self._start_llm_request()
-            result = self.agent.run(message, history=history)
+            result = self.agent.run(
+                message,
+                history=history,
+                trace_context=trace_context,
+                trace_sink=self._get_trace_store(),
+            )
+            result.trace_id = result.trace_id or trace_context.trace_id
+            result.turn_id = result.turn_id or trace_context.turn_id
             self._check_active_turn()
             result.answer = _normalise_unicode_text(result.answer)
             with self._commit_context():
                 self._check_active_turn()
-                self.store.add_message(self.session_id, "user", message)
+                self.store.add_message(
+                    self.session_id,
+                    "user",
+                    message,
+                    turn_id=result.turn_id,
+                )
                 self.store.record_result(self.session_id, result)
-                self.store.add_message(self.session_id, "assistant", result.answer)
+                self.store.add_message(
+                    self.session_id,
+                    "assistant",
+                    result.answer,
+                    turn_id=result.turn_id,
+                )
         except KeyboardInterrupt:
             self._stop_image_progress(ok=False)
-            self.print("[yellow]⚠ 本次请求已取消，Leon 仍在运行。[/yellow]")
+            hint = self._trace_hint(trace_context)
+            self.print(f"[yellow]⚠ 本次请求已取消，Leon 仍在运行。{hint}[/yellow]")
             return False
         except AgentCancelled as exc:
-            self._record_cancelled_tool_audit(exc, result)
+            self._record_cancelled_tool_audit(exc, result, trace_context)
             self._stop_image_progress(ok=None)
-            self.print("[yellow]⏹ 本次请求已取消，迟到结果已丢弃。[/yellow]")
+            hint = self._trace_hint(trace_context)
+            self.print(f"[yellow]⏹ 本次请求已取消，迟到结果已丢弃。{hint}[/yellow]")
             return False
         except Exception as exc:  # noqa: BLE001 - CLI should keep the session alive
             self._stop_image_progress(ok=False)
-            self.print(f"[red]{self._format_request_error(exc)}[/red]")
+            hint = self._trace_hint(trace_context)
+            self.print(f"[red]{self._format_request_error(exc)}{hint}[/red]")
             return False
         assert result is not None
         self._print_answer(result.answer)
         return True
 
-    def _process_nsfw(self, message: str) -> bool:
+    def _process_nsfw(
+        self,
+        message: str,
+        *,
+        trace_context: TraceContext,
+    ) -> bool:
+        trace = TraceRecorder(trace_context, self._get_trace_store())
         try:
             self._check_active_turn()
             mode_result = self.image_client.list_modes()
@@ -2320,13 +2391,20 @@ class LeonConsole:
             modes = mode_result.get("modes", [])
             command = parse_nsfw_command(message, modes)
         except AgentCancelled:
+            trace.finish_trace(status="cancelled", outcome="cancelled")
             raise
         except Exception as exc:  # noqa: BLE001 - invalid command should not exit the REPL
-            self.print(f"[red]{exc}[/red]")
+            trace.finish_trace(
+                status="error",
+                outcome="failed",
+                error_type=type(exc).__name__,
+            )
+            self.print(f"[red]{exc}{self._trace_hint(trace_context)}[/red]")
             if "modes" in locals():
                 self.print(Markdown(format_mode_catalog(modes)))
             return False
         if command is None:
+            trace.finish_trace(status="ok", outcome="direct_answer")
             self.print(Markdown(format_mode_catalog(modes)))
             return True
         arguments = {
@@ -2334,27 +2412,60 @@ class LeonConsole:
             "workflow_ids": [command.workflow_id],
             "batch_count": 1,
         }
+        tool_span_id = trace.start_span(
+            "tool",
+            "tool.call",
+            tool_name="generate_images",
+        )
         self._start_image_progress()
         try:
             self._check_active_turn()
             result = self.direct_tools.execute("generate_images", arguments)
-            self._check_active_turn()
         except KeyboardInterrupt:
+            trace.finish_span(tool_span_id, status="cancelled")
+            trace.finish_trace(status="cancelled", outcome="cancelled")
             self._stop_image_progress(ok=False)
-            self.print("[yellow]⚠ 本次生图已取消，Leon 仍在运行。[/yellow]")
+            self.print(
+                "[yellow]⚠ 本次生图已取消，Leon 仍在运行。"
+                f"{self._trace_hint(trace_context)}[/yellow]"
+            )
             return False
         except AgentCancelled:
+            trace.finish_span(tool_span_id, status="cancelled")
+            trace.finish_trace(status="cancelled", outcome="cancelled")
             self._stop_image_progress(ok=None)
             raise
         except Exception as exc:  # noqa: BLE001 - image failure should not exit the REPL
+            trace.finish_span(
+                tool_span_id,
+                status="error",
+                error_type=type(exc).__name__,
+            )
+            trace.finish_trace(
+                status="error",
+                outcome="failed",
+                error_type=type(exc).__name__,
+            )
             self._stop_image_progress(ok=False)
-            self.print(f"[red]直达生图失败：{type(exc).__name__}: {exc}[/red]")
+            self.print(
+                f"[red]直达生图失败：{type(exc).__name__}: {exc}"
+                f"{self._trace_hint(trace_context)}[/red]"
+            )
             return False
         ok = bool(result.get("ok"))
+        trace.finish_span(
+            tool_span_id,
+            status="ok" if ok else "error",
+            error_type=None if ok else "tool_error",
+        )
         background = result.get("waited_for_completion") is False
         self._stop_image_progress(ok=None if background else ok)
         if not ok:
-            self.print(f"[red]直达生图失败：{result.get('error') or '未知错误'}[/red]")
+            trace.finish_trace(status="ok", outcome="direct_answer")
+            self.print(
+                f"[red]直达生图失败：{result.get('error') or '未知错误'}"
+                f"{self._trace_hint(trace_context)}[/red]"
+            )
             return False
         images = [
             item.get("image_url")
@@ -2370,16 +2481,64 @@ class LeonConsole:
             answer = f"{command.mode_name}模式的图片生成好了。"
             if images:
                 answer += "\n\n" + "\n".join(f"- {url}" for url in images)
+        audit_arguments = getattr(self.direct_tools, "audit_arguments", None)
+        audit_result = getattr(self.direct_tools, "audit_result", None)
+        safe_arguments = (
+            audit_arguments("generate_images", arguments)
+            if callable(audit_arguments)
+            else arguments
+        )
+        safe_result = (
+            audit_result("generate_images", result)
+            if callable(audit_result)
+            else result
+        )
         agent_result = AgentResult(
             answer=answer,
-            steps=[ToolStep("generate_images", arguments, result)],
+            steps=[
+                ToolStep(
+                    "generate_images",
+                    safe_arguments,
+                    safe_result,
+                    trace_id=trace_context.trace_id,
+                    span_id=tool_span_id,
+                )
+            ],
+            trace_id=trace_context.trace_id,
+            turn_id=trace_context.turn_id,
         )
-        with self._commit_context():
+        try:
             self._check_active_turn()
-            self.store.add_message(self.session_id, "user", message)
-            self.store.record_result(self.session_id, agent_result)
-            self.store.add_message(self.session_id, "assistant", answer)
-        self._check_active_turn()
+            with self._commit_context():
+                self._check_active_turn()
+                self.store.add_message(
+                    self.session_id,
+                    "user",
+                    message,
+                    turn_id=trace_context.turn_id,
+                )
+                self.store.record_result(self.session_id, agent_result)
+                self.store.add_message(
+                    self.session_id,
+                    "assistant",
+                    answer,
+                    turn_id=trace_context.turn_id,
+                )
+        except AgentCancelled:
+            trace.finish_trace(status="cancelled", outcome="cancelled")
+            raise
+        except Exception as exc:  # noqa: BLE001 - keep the terminal app alive
+            trace.finish_trace(
+                status="error",
+                outcome="failed",
+                error_type=type(exc).__name__,
+            )
+            self.print(
+                f"[red]直达生图结果保存失败：{type(exc).__name__}"
+                f"{self._trace_hint(trace_context)}[/red]"
+            )
+            return False
+        trace.finish_trace(status="ok", outcome="direct_answer")
         self._print_answer(answer)
         return True
 
@@ -2511,6 +2670,116 @@ class LeonConsole:
             self.print("[yellow]当前 Agent 没有可展示的工具。[/yellow]")
             return
         self.print(table)
+
+    @staticmethod
+    def _trace_duration(duration_ms: float | None) -> str:
+        return "n/a" if duration_ms is None else f"{duration_ms:.1f} ms"
+
+    @classmethod
+    def _trace_span_label(cls, span: SpanRecord) -> Text:
+        shown_status = "incomplete" if span.status == "running" else span.status
+        style = {
+            "ok": "green",
+            "error": "red",
+            "cancelled": "yellow",
+            "incomplete": "yellow",
+        }.get(shown_status, "dim")
+        label = Text()
+        label.append(f"{span.kind}:{span.name}")
+        label.append(f"  {shown_status}", style=style)
+        label.append(f"  {cls._trace_duration(span.duration_ms)}", style="dim")
+        if span.tool_name:
+            label.append(f"  tool={span.tool_name}", style="cyan")
+        if span.model:
+            label.append(f"  model={span.model}", style="cyan")
+        if span.error_type:
+            label.append(f"  error={span.error_type}", style="red")
+        return label
+
+    @classmethod
+    def _trace_tree(cls, trace: TraceRecord, spans: list[SpanRecord]) -> Tree:
+        by_id = {span.span_id: span for span in spans}
+        children: dict[str | None, list[SpanRecord]] = {}
+        for span in spans:
+            children.setdefault(span.parent_span_id, []).append(span)
+        for group in children.values():
+            group.sort(key=lambda item: item.sequence_no)
+
+        root_span = by_id.get(trace.root_span_id)
+        root = Tree(
+            cls._trace_span_label(root_span)
+            if root_span is not None
+            else Text("agent:agent.run  incomplete", style="yellow")
+        )
+        visited = {trace.root_span_id}
+
+        def append_children(parent_id: str, branch: Tree) -> None:
+            for span in children.get(parent_id, []):
+                if span.span_id in visited:
+                    continue
+                visited.add(span.span_id)
+                child = branch.add(cls._trace_span_label(span))
+                append_children(span.span_id, child)
+
+        append_children(trace.root_span_id, root)
+        for span in sorted(spans, key=lambda item: item.sequence_no):
+            if span.span_id not in visited:
+                visited.add(span.span_id)
+                root.add(cls._trace_span_label(span))
+        return root
+
+    def show_trace(self) -> bool:
+        try:
+            traces = self._get_trace_store().list_traces(self.session_id, limit=1)
+            if not traces:
+                self.print("[yellow]当前会话还没有 Trace。[/yellow]")
+                return False
+            trace = traces[0]
+            stored = self._get_trace_store().get_trace(
+                self.session_id,
+                trace.trace_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - diagnostics must not exit the CLI
+            self.print(f"[red]读取 Trace 失败：{type(exc).__name__}[/red]")
+            return False
+        if stored is None:
+            self.print("[yellow]最近一次 Trace 已不存在。[/yellow]")
+            return False
+        trace, spans = stored
+        shown_status = "incomplete" if trace.status == "running" else trace.status
+        tokens = (
+            f"{trace.input_tokens}/{trace.output_tokens}"
+            if trace.input_tokens is not None and trace.output_tokens is not None
+            else "n/a"
+        )
+        summary = Table.grid(padding=(0, 2))
+        summary.add_row("Trace", trace.trace_id[:8], "Turn", trace.turn_id[:8])
+        summary.add_row(
+            "Status",
+            f"{shown_status} / {trace.outcome or 'n/a'}",
+            "Entry",
+            trace.entrypoint,
+        )
+        summary.add_row(
+            "Duration",
+            self._trace_duration(trace.duration_ms),
+            "Model",
+            trace.model or "n/a",
+        )
+        summary.add_row(
+            "Calls",
+            (
+                f"LLM {trace.llm_call_count} · Tool {trace.tool_call_count} · "
+                f"Planning {trace.planning_call_count}"
+            ),
+            "Tokens",
+            tokens,
+        )
+        if trace.error_type:
+            summary.add_row("Error", trace.error_type, "", "")
+        self.print(summary)
+        self.print(self._trace_tree(trace, spans))
+        return True
 
     def show_status(self) -> None:
         model = getattr(self, "llm_model", "-") or "-"
@@ -2657,6 +2926,10 @@ class LeonConsole:
             self.show_tools()
             self._check_active_turn()
             return True
+        if command_name == "/trace" and not command_argument:
+            self.show_trace()
+            self._check_active_turn()
+            return True
         if command_name in {"/status", "/info"} and not command_argument:
             self.show_status()
             self._check_active_turn()
@@ -2689,6 +2962,7 @@ class LeonConsole:
                     "[bold]/copy[/bold] 复制上一条回答到系统剪贴板\n"
                     "[bold]/open[/bold] 打开最近一张图片（无鼠标终端后备）\n"
                     "[bold]/tools[/bold] 查看当前 Agent 已注册工具\n"
+                    "[bold]/trace[/bold] 查看当前会话最近一次本地 Trace\n"
                     "[bold]/status[/bold] 当前模型、provider、会话状态（/info）\n"
                     "[bold]/model[/bold] 打开模型选择器（/models）\n"
                     "[bold]/model <序号或模型ID>[/bold] 直接切换模型\n"
