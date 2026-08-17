@@ -12,6 +12,8 @@ from leon_agent.file_tools import create_file_tools
 from leon_agent.leon_client import LeonImageClient
 from leon_agent.memory.service import MemoryService
 from leon_agent.memory.tools import create_memory_tools
+from leon_agent.planning.service import PlanningService
+from leon_agent.planning.tools import create_planning_tools
 from leon_agent.search.service import WebSearchService
 from leon_agent.service import LeonToolService
 
@@ -72,6 +74,7 @@ def create_leon_tools(
     file_service: FileSearchService | None = None,
     file_write_service: FileWriteService | None = None,
     memory_service: MemoryService | None = None,
+    planning_service: PlanningService | None = None,
 ) -> ToolRegistry:
     service = LeonToolService(
         client,
@@ -273,6 +276,9 @@ def create_leon_tools(
         )
     if memory_service is not None:
         for tool in create_memory_tools(memory_service):
+            registry.register(tool)
+    if planning_service is not None:
+        for tool in create_planning_tools(planning_service):
             registry.register(tool)
     if file_service is not None:
         for tool in create_file_tools(

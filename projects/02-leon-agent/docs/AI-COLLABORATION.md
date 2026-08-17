@@ -242,6 +242,20 @@ expand it into global search/delete APIs. Normalize every `final_image_url` into
   redacted, and the next turn rebuilds context from the resulting SQLite state. See `docs/memory.md` before
   extending scope, adding a management API, multi-user identities, encryption claims, or MCP exposure.
 
+## Planning Contract
+
+- Normal `LeonAgent` turns register `plan_create`, `plan_update`, and `plan_get`; direct `/nsfw` registries and
+  Leon MCP do not. Existing `AgentRuntime` remains the only execution loop.
+- Planning is optional for genuinely multi-step work and forbidden for ordinary chat or one domain-tool action.
+  One turn owns at most one ordered plan with 2..8 steps; every new turn resets the service.
+- The server enforces `pending -> in_progress -> completed|failed`, one active step, ordered starts, and terminal
+  immutability. Planning tools only track work and cannot authorize file writes, Memory changes, or other tools.
+- Raw step descriptions stay only in the current provider transcript. `AgentEvent`, SSE, `ToolStep`, and SQLite
+  retain only step count/index/status, aggregate counts, active step, and done state through audit projection.
+- Cancellation does not force synthetic plan completion. Completed business side effects keep their existing
+  audit behavior; the next turn starts with no plan. Read `docs/planning.md` before adding persistence, DAGs,
+  parallelism, automatic retries, Web management APIs, or MCP exposure.
+
 ## Voice Contract
 
 - Secrets stay server-side through `VOLINK_API_KEY`; the browser never calls Volink directly.

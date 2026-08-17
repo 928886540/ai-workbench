@@ -23,6 +23,7 @@
 | Tavo 插件贡献 Leon 模型工具 | 当前受限 | 非代码难度 | Tavo v1.0.0 文档明确：插件暂不能贡献模型工具 |
 | Codex 风格完整 TUI | 可行 | 高 | 基础 TUI 不难，成熟交互、流式、并发任务和恢复需要持续迭代 |
 | Leon 本地 File Search MVP | 高 | 中低 | **第一版已实现**：只读 roots、`list_files` / `file_search` / `read_file`、路径隔离和预算限制 |
+| Leon per-turn Planning | 高 | 中 | **第一版已实现**：三个 planning tools、顺序状态机、turn reset 和 metadata-only audit |
 
 ## 目标边界
 
@@ -99,6 +100,17 @@ CLI、Telegram 和 MCP 不能各复制一套生成逻辑。现有图片 handler 
   system prompt，也不能授权写入或其他工具调用。详细参数见 `projects/02-leon-agent/docs/file-search.md`。
 - **当前缺口**：尚未做 PDF/DOCX 解析、embedding/RAG、增量索引、文件写入或 File Search MCP 暴露；先用
   临时测试目录完成运行态验收，再决定是否进入 `03-rag-lab`。
+
+## Planning MVP Checkpoint（2026-08-17）
+
+- **执行边界**：继续复用唯一的 `AgentRuntime` tool-calling loop，不另建 planner executor；复杂任务由
+  `plan_create` / `plan_update` / `plan_get` 显式记录计划，普通聊天和单工具请求不规划。
+- **状态约束**：每 turn 最多一个 2..8 步顺序计划，只允许
+  `pending -> in_progress -> completed|failed`，同一时间最多一个活动步骤，下一 turn 自动清空。
+- **审计边界**：raw 步骤描述只给当前 LLM；Event、ToolStep、SSE 和 SQLite 只保存 count/index/status。
+  Planning 不授权文件/Memory 写入，不注册到 direct `/nsfw` 或 Leon MCP。
+- **后续缺口**：跨 turn 后台计划、恢复、DAG/并行、自动重试和管理 UI 仍未实现；先用真实多工具任务观察
+  provider 是否稳定遵循状态更新，再决定是否增加强制执行策略。
 
 ## Phase B：Telegram Bot
 

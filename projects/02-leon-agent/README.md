@@ -34,12 +34,15 @@
 - 可选 File Tools 已接入 CLI 与 Gateway/Web：通过配置的目录白名单查找、读取文件；用户用严格首行命令明确授权当前回合时，还可新建或整体替换受限文本文件
 - 显式长期 Memory 已接入 CLI 与 Gateway/Web：只保存用户明确要求记住的偏好/默认值，跨 session
   共享、支持硬删除，并以有预算的 untrusted context 注入后续 turn
+- per-turn Planning 状态机已接入普通 Agent：复杂请求可创建 2～8 步计划并按服务端规则推进；简单聊天、
+  `/nsfw` 直达生图和 Leon MCP 不注册 Planning，计划正文不进入 SSE/SQLite 审计
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读
 [AI 协作状态](docs/AI-COLLABORATION.md)，其中记录唯一源码路径、事件协议、模型选择契约和交接格式。
 联网搜索的目录边界、工具契约和中断接手步骤见 [联网搜索](docs/web-search.md)。
 本地文件检索的目录白名单、安全边界和工具契约见 [File Search](docs/file-search.md)。
+复杂任务规划的状态机、审计边界和非目标见 [Planning](docs/planning.md)。
 
 ## 运行边界
 

@@ -18,6 +18,8 @@
 - `02-code-agent`：已迁移到共享 Runtime
 - `02-leon-agent`：独立 `leon` CLI、SQLite、7 个生图工具和 `speak_text` 已完成
 - `02-leon-agent`：可选 File Search + 显式 FileWrite MVP 已接入 CLI/Gateway；配置 roots 后五个工具完整可用，读取正文和写入内容均不会进入 SSE/SQLite audit，详见 `projects/02-leon-agent/docs/file-search.md`
+- `02-leon-agent`：普通 Agent 已接入 per-turn Planning 状态机；复杂任务可显式跟踪 2～8 步，计划正文
+  只进入当前 LLM transcript，审计只保留状态元数据，详见 `projects/02-leon-agent/docs/planning.md`
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
 - CLI、Web 与 Leon MCP 的唯一持久配置源是 `%USERPROFILE%\.leon\config.toml`；`.codex` 和
   仓库 `.env` 只参与首次 `leon-config init`，CC Switch 后续操作与 Leon 无关

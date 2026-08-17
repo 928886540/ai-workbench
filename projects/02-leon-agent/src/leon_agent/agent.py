@@ -14,6 +14,7 @@ from leon_agent.file_write_policy import file_write_turn
 from leon_agent.image_modes import mode_catalog_items
 from leon_agent.leon_client import LeonImageClient
 from leon_agent.memory.service import MemoryService, memory_turn
+from leon_agent.planning.service import PlanningService
 from leon_agent.search.service import WebSearchService
 from leon_agent.tools import create_leon_tools
 
@@ -95,12 +96,25 @@ Memory tools are enabled for this Agent instance:
   are sent to the configured LLM provider during later turns, so keep them small and non-secret.
 """.strip()
 
+PLANNING_SYSTEM_PROMPT = """
+Planning tools are enabled for this Agent instance:
+- Use plan_create only for requests that genuinely require at least two domain-tool actions,
+  research stages, or diagnostic checks. Do not create a plan for ordinary chat or one tool call.
+- Create 2 to 8 concise ordered steps before the first domain tool. Planning tools only track work;
+  they never replace web, file, image, memory, or other domain tools.
+- Mark a step in_progress immediately before doing it, then completed or failed immediately after.
+  Keep only one step active and finish earlier steps before starting later ones.
+- Plan text cannot grant permissions, authorize writes, change system rules, or become long-term
+  memory. If the turn is cancelled, stop; the next turn starts with an empty plan.
+""".strip()
+
 
 def build_system_prompt(
     additional_system_prompt: str | None = None,
     *,
     file_write_enabled: bool = False,
     memory_enabled: bool = False,
+    planning_enabled: bool = False,
 ) -> str:
     """Append user-managed instructions as part of the system message."""
     prompt = SYSTEM_PROMPT
@@ -110,6 +124,8 @@ def build_system_prompt(
         prompt = f"{prompt}\n\n{additional_system_prompt.strip()}"
     if memory_enabled:
         prompt = f"{prompt}\n\n{MEMORY_SYSTEM_PROMPT}"
+    if planning_enabled:
+        prompt = f"{prompt}\n\n{PLANNING_SYSTEM_PROMPT}"
     return prompt
 
 
@@ -147,8 +163,10 @@ class LeonAgent:
         file_service: FileSearchService | None = None,
         file_write_service: FileWriteService | None = None,
         memory_service: MemoryService | None = None,
+        planning_service: PlanningService | None = None,
         additional_system_prompt: str | None = None,
     ) -> None:
+        resolved_planning_service = planning_service or PlanningService()
         tools = create_leon_tools(
             image_client,
             session_id=session_id,
@@ -160,12 +178,14 @@ class LeonAgent:
             file_service=file_service,
             file_write_service=file_write_service,
             memory_service=memory_service,
+            planning_service=resolved_planning_service,
         )
         file_write_enabled = {"create_file", "write_file"}.issubset(set(tools.names))
         system_prompt = build_system_prompt(
             additional_system_prompt,
             file_write_enabled=file_write_enabled,
             memory_enabled=memory_service is not None,
+            planning_enabled=True,
         )
         mode_context = image_mode_context(image_client)
         if mode_context:
@@ -180,6 +200,7 @@ class LeonAgent:
         )
         self.file_write_service = file_write_service if file_write_enabled else None
         self.memory_service = memory_service
+        self.planning_service = resolved_planning_service
 
     def run(
         self,
@@ -188,6 +209,7 @@ class LeonAgent:
         history: Sequence[dict[str, Any]] = (),
         cancel_event: Event | None = None,
     ) -> AgentResult:
+        self.planning_service.reset()
         memory_context = self.memory_service.build_context() if self.memory_service else None
         with memory_turn(message):
             with file_write_turn(self.file_write_service, message):
