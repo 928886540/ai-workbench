@@ -292,3 +292,4 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 - CLI FileWrite composition 已完成：`_create_agent()` 从同一 `config.file_roots` 创建 read/write service，并把同一 write service 传给 direct registry 与 `LeonAgent`；无 roots 时不注册文件工具，有 roots 时五项齐全，跨轮写预算会重置。
 - CLI 取消分支会持久化已完成且脱敏的 tool audit；取消回答、LLM transcript 和文件正文不进入 SQLite。Agent 返回后才收到取消的竞态也保留安全审计，不留下半条会话消息。
 - 当前验证：全仓 `410 passed`、Ruff 全绿、CLI `80 passed`、FileWrite Agent/policy/adapter `18 passed`、`py_compile` 与 `git diff --check` clean。接手者先读协作板和 `git status`，源码变更后重启实际 `leon`，用 `/tools` 验证五项文件工具，再按临时根做显式 create/write smoke；不要对个人密钥目录操作。
+- 版本 `7196ebb` 已推送 `feat/leon-model-switch` 并 fast-forward 到远端 `main`。真实 CLI 入口与临时根五工具 create/write/read-back smoke 均通过；Gateway 8233 health/detail 均 200；计划任务为隐藏、单实例、登录/开机可用并带 20 次每分钟重试。工作区唯一未提交项是另一条 Web emoji 微调 `projects/02-leon-agent/web/src/views/ChatView.vue`，不要覆盖或误 stage。
