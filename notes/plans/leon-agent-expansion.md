@@ -1,11 +1,11 @@
 # Leon Agent 扩展路线
 
 - 记录日期：2026-08-14
-- 状态：In Progress（Phase A 已完成）
+- 状态：Core Agent 基线已完成；当前主线为 **Evaluation → RAG → Trace/Observability**
 - 当前基线：独立 `leon` CLI、共享 Agent Runtime、7 个 Leon 生图工具、`speak_text`、SQLite 会话、
   `LeonToolService` 和第一版 MCP Server 已跑通
 
-## 新需求
+## 历史需求与候选扩展
 
 1. 做一个适合面试现场展示的 Leon MCP Server。
 2. 通过 Telegram Bot 直接聊天、发起生图并接收结果。
@@ -24,6 +24,23 @@
 | Codex 风格完整 TUI | 可行 | 高 | 基础 TUI 不难，成熟交互、流式、并发任务和恢复需要持续迭代 |
 | Leon 本地 File Search MVP | 高 | 中低 | **第一版已实现**：只读 roots、`list_files` / `file_search` / `read_file`、路径隔离和预算限制 |
 | Leon per-turn Planning | 高 | 中 | **第一版已实现**：三个 planning tools、顺序状态机、turn reset 和 metadata-only audit |
+
+## 路线调整（2026-08-17）
+
+Leon Agent 的功能面已经足够作为面试项目：Runtime、Tool Calling、Planning、Memory、File Safety、
+Cancellation、MCP、Streaming/SSE 和 Web/API 均有真实代码与回归。下一阶段不再以“增加更多工具”为目标，
+而是证明 Agent 是否真的工作得更好：
+
+```text
+Evaluation（先建立可重复基线）
+        ↓
+RAG（把 lexical File Search 扩展为 semantic retrieval）
+        ↓
+Trace / Observability（解释每一步为什么慢、为什么失败）
+```
+
+这条顺序比继续扩展 Planning 或立即拆 Multi-Agent 更重要。Planning 先冻结在 MVP，Multi-Agent 后置到
+质量三件套完成，并由 Evaluation 数据决定是否值得做，不用架构复杂度替代证据。
 
 ## 目标边界
 
@@ -44,7 +61,7 @@ Tavo Chat --外部 MCP--> Leon MCP Server
 CLI、Telegram 和 MCP 不能各复制一套生成逻辑。现有图片 handler 已收口为
 `LeonToolService`，入口只负责协议转换和展示；Telegram 后续沿用这一边界。
 
-## Phase A：面试 MCP（最高优先级）
+## Phase A：面试 MCP（已完成）
 
 在 `projects/04-mcp-lab/leon-mcp-server` 已实现独立 MCP Server，第一版开放：
 
@@ -98,8 +115,8 @@ CLI、Telegram 和 MCP 不能各复制一套生成逻辑。现有图片 handler 
   200 行/16,000 字符。
 - **结果契约**：只返回 root id、相对路径、行号、citation 和 `untrusted_content=true`；文件内容不能修改
   system prompt，也不能授权写入或其他工具调用。详细参数见 `projects/02-leon-agent/docs/file-search.md`。
-- **当前缺口**：尚未做 PDF/DOCX 解析、embedding/RAG、增量索引、文件写入或 File Search MCP 暴露；先用
-  临时测试目录完成运行态验收，再决定是否进入 `03-rag-lab`。
+- **当前缺口**：尚未做 PDF/DOCX 解析、embedding/RAG、增量索引、文件写入或 File Search MCP 暴露；
+  临时测试目录的运行态验收作为 MVP 遗留补齐，不改变 Evaluation 基线完成后进入 `03-rag-lab` 的顺序。
 
 ## Planning MVP Checkpoint（2026-08-17）
 
@@ -109,8 +126,84 @@ CLI、Telegram 和 MCP 不能各复制一套生成逻辑。现有图片 handler 
   `pending -> in_progress -> completed|failed`，同一时间最多一个活动步骤，下一 turn 自动清空。
 - **审计边界**：raw 步骤描述只给当前 LLM；Event、ToolStep、SSE 和 SQLite 只保存 count/index/status。
   Planning 不授权文件/Memory 写入，不注册到 direct `/nsfw` 或 Leon MCP。
-- **后续缺口**：跨 turn 后台计划、恢复、DAG/并行、自动重试和管理 UI 仍未实现；先用真实多工具任务观察
-  provider 是否稳定遵循状态更新，再决定是否增加强制执行策略。
+- **冻结边界**：不继续做跨 turn 后台恢复、DAG/并行 planner、自动重试、第二套 executor 或管理 UI；
+  后续只允许 Evaluation 数据驱动的最小遵循性修正。
+
+## Quality Phase 1：Agent Evaluation（当前优先级）
+
+目标不是再证明“代码能跑”，而是回答“Planning/Tool Calling 加进去以后是否真的更好”。
+
+### 最小数据集
+
+第一版建立 `projects/02-leon-agent/evals/`，先放 20 个可审查 case，再扩到 50 个。每个 case 至少包含：
+
+- `id`、用户原话、隔离 fixture/config 和是否允许真实 provider。
+- 必须调用的工具、禁止调用的工具、是否必须创建计划、计划最小/最大步骤数。
+- 最终答案断言：必须包含的结论/引用、不能出现的内部 ID 或敏感内容。
+- 取消、工具失败、无 roots、无搜索 Key 等负向场景。
+
+默认使用 fake LLM/provider，live eval 必须显式 opt-in，不能让测试消耗 Tavily、ComfyUI 或真实密钥。
+
+### 第一批指标
+
+```text
+Task Success            任务是否满足最终断言
+Tool Selection          必须/禁止工具是否符合约束
+Plan Adherence          计划创建、顺序推进、终态完成率
+Safety                  越权路径、敏感值、取消和审计是否合规
+Latency                 总耗时与 LLM 各轮耗时
+Tool Calls              工具调用数与无效调用数
+Tokens / Cost           input/output token 与估算成本（provider 有值才统计）
+Answer/Citation Quality 最终答案与证据是否足够
+```
+
+测试通过率仍然保留，但它和 eval score 分开报告：前者证明实现没有回归，后者证明 Agent 行为满足任务。
+每次修改 Planning、Memory、Tool schema 或 system prompt，都必须重跑 eval 并保存 baseline/diff。
+
+## Quality Phase 2：RAG（Evaluation 基线后）
+
+把现有 File Search 的 exact/lexical retrieval 演进为独立 `03-rag-lab` 能力，不把向量库直接塞进 Leon
+生产工具：
+
+```text
+Document → Chunker → Embedding → Vector Store → Retriever → Citation Context → Leon
+```
+
+落地顺序固定为 chunk → embedding → retrieval → citation。
+
+第一版先支持 Markdown/TXT/JSON，复用当前 roots 的安全边界与 citation 规则；再评估 Qdrant/本地向量库、
+增量索引、rerank 和 PDF/DOCX。RAG 必须有独立 retrieval eval：`Recall@K`、`MRR`、citation precision、
+answer faithfulness，不能只用“问起来像能答”验收。
+
+## Quality Phase 3：Trace / Observability（RAG 闭环后）
+
+在现有 `AgentEvent`、SSE 和 SQLite audit 之上统一：
+
+```text
+trace_id / turn_id
+  ├─ LLM span：model、latency、tokens、error
+  ├─ Tool span：tool_name、latency、success/error
+  ├─ Planning span：step_index、status
+  └─ Final：total_latency、total_tokens、tool_calls、outcome
+```
+
+Trace 只记录脱敏 metadata；文件正文、Memory raw value、搜索 query 和 provider secret 仍不能进入持久
+观测。先解决可查询、可聚合、可关联，再决定是否接 OpenTelemetry，不为接 SDK 而接 SDK。
+
+## 暂停清单与面试表达
+
+- **Planning**：冻结在顺序状态机 MVP；暂不做 DAG、并行 planner、自动重试、后台恢复、第二套 executor
+  或十层 workflow。
+- **Multi-Agent**：质量三件套完成前不做。等 Evaluation 数据证明 single-agent 的明确瓶颈，再用对照实验
+  说明拆分收益。
+- **更多业务工具 / Telegram / Tavo 互通**：作为渠道与集成候选，排在质量三件套之后，不阻塞当前主线。
+- **LangGraph**：不作为目标；先能解释自研 Runtime 与框架的边界和取舍。
+
+面试时要明确区分：`430 tests passed` 说明代码行为符合契约；Evaluation 才说明 Agent 在任务层面变好了。
+推荐用一句话概括当前架构：
+
+> 以唯一 AgentRuntime 驱动 LLM↔Tools，多轮 Planning 只是受约束的 state capability；现在用 Evaluation
+> 量化工具选择和任务完成，再用 RAG 和 Trace 把检索质量与运行原因补齐。
 
 ## Phase B：Telegram Bot
 
@@ -156,10 +249,11 @@ Telegram update
 
 ## 推荐顺序
 
-1. Telegram Bot：形成手机端真实使用闭环。
-2. Leon Agent 接入 Tavo MCP Server：展示 Agent 同时编排 Tavo 与 ComfyUI。
-3. 等 Tavo 外部 MCP Client 能力正式可用，再做 Tavo -> Leon MCP。
-4. 流式输出、完成通知和 TUI 体验持续增强，但不阻塞协议主线。
+1. Agent Evaluation：20 → 50 个 case，建立 baseline、指标和回归报告。
+2. RAG：在 `03-rag-lab` 做 chunk/embedding/retrieval/citation，并用独立指标验收。
+3. Trace / Observability：统一 trace/turn/span 与脱敏 metrics，解释延迟、失败和成本。
+4. Telegram Bot / Leon Agent → Tavo MCP：作为渠道和集成层接入，不复制 Agent/Tool schema。
+5. Multi-Agent：质量三件套完成，且 Evaluation 证明单 Agent 有明确瓶颈后再做对照实验。
 
 ## 不做的捷径
 
