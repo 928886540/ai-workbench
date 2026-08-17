@@ -281,3 +281,13 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 - 本机冷启动证据：授权 `/api/health` 与 `/api/health/detail` 均返回 200；无 token 返回 401；Gateway 子进程命令为仓库 `.venv\\Scripts\\leon-server.exe`，日志在 `%USERPROFILE%\\.leon\\logs`。
 - `64343` 的真实入口是 `D:\\cloudflared\\idea-mcp-auth-proxy.mjs`，固定上游 `127.0.0.1:64342` 当前没有监听；代理端口能启动，但不能宣称 IDEA MCP 后端已恢复。下一位接手者先定位/恢复 64342，再做 MCP `initialize/tools/list` 验收。
 - 下一步顺序：跑完整 Python/Ruff + Vue build/smoke，检查公网 Tunnel health；按文件范围单独 stage/commit/push，随后继续 File Search 真实运行态验收。
+
+## Leon FileWrite / 静默 Gateway 最新交接（2026-08-17）
+
+- 已推送 commits：`8f81e96 feat(leon): 增加显式授权文件写入`、`4c267e5 fix(leon): 收口取消审计与静默网关守护`；远端与本地 `feat/leon-model-switch` 已同步。
+- FileWrite 已在 Web/Gateway 实际可用：`list_files`、`file_search`、`read_file`、`create_file`、`write_file` 五项；首行 `!file create|write root:path` 授权、单轮单写、opaque root binding、SQLite/SSE audit 脱敏均已验证。真实 Gateway 临时 smoke 的 create/write/read-back 均为 200，测试目录已删除。
+- `AgentCancelled.partial_result` 会先保留已完成且脱敏的 tool audit；`LLM_TIMEOUT_SECONDS=0` 表示响应读取不限时，但取消主动关闭 transport。相关测试已并入 `4c267e5`。
+- Windows Gateway wrapper 位于 `scripts/windows/run-leon-autostart-service.ps1`：`pythonw.exe -m leon_agent.gateway.server`、隐藏窗口、端口占用只监测不抢占；同进程 supervisor 在子进程退出后默认 60 秒重试、20 次预算，稳定 300 秒后重置。隔离端口 18233 的 worker 崩溃/重启 smoke 已通过，PS5.1 parser 无错误。
+- 当前运行态：`Leon Agent` 任务为 `Running`，wrapper 监测另一个会话占用的 8233 PID `11308`；`/api/health` 与 `/api/health/detail` 为 200；IDEA `64342=15332`、代理 `64343=7596` 未受影响。若要让最新 shared LLM/cancel 代码加载到 8233，等该 direct 进程释放后让 wrapper 接管，或由其 owner 协调重启，勿盲杀并行进程。
+- 当前唯一产品缺口：CLI 锁定的 `projects/02-leon-agent/src/leon_agent/cli.py` 和 `tests/test_cli.py` 仍只有三项读文件工具；CLI-TUI-Codex 需在 `_create_agent()` 接入 per-turn `create_file_write_service`，补五工具回归并追加 `RELEASED`。当前未提交 CLI/TUI、图片 `service.py/tools.py` 改动，不要 reset/checkout。
+- 接手顺序：先读 `projects/02-leon-agent/docs/TUI-REDESIGN-COLLABORATION.md` 最新消息板；运行 `git status --short`；等待/确认 CLI Owner 释放后再接线；然后跑 `uv run pytest -q`、`uv run ruff check .`、真实 `/api/health/detail` 与五工具 smoke，再按文件范围提交。
