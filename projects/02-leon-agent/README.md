@@ -32,6 +32,8 @@
 - ASR 语音输入已接入 OpenAI-compatible `/audio/transcriptions`，录音转写后只回填输入框，不自动发送
 - 可选 Tavily `web_search` 已接入 CLI 与 Web：只在后端配置 Key 后注册，并返回可引用的结构化实时搜索结果
 - 可选 File Tools 已接入 CLI 与 Gateway/Web：通过配置的目录白名单查找、读取文件；用户用严格首行命令明确授权当前回合时，还可新建或整体替换受限文本文件
+- 显式长期 Memory 已接入 CLI 与 Gateway/Web：只保存用户明确要求记住的偏好/默认值，跨 session
+  共享、支持硬删除，并以有预算的 untrusted context 注入后续 turn
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读

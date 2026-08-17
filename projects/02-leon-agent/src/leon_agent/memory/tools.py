@@ -11,7 +11,11 @@ from typing import Any
 
 from workbench_core.agent import AgentTool
 
-from leon_agent.memory.service import MemoryService
+from leon_agent.memory.service import (
+    MemoryService,
+    claim_memory_write,
+    current_memory_user_message,
+)
 
 _KEY_PATTERN = r"^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$"
 _PREFIX_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,79}$"
@@ -132,15 +136,6 @@ def _scope_property(scopes: list[str], *, default: str) -> dict[str, Any]:
     }
 
 
-def _current_context(
-    user_message_provider: UserMessageProvider | None,
-    writes_used_provider: WriteCountProvider | None,
-) -> tuple[str | None, int]:
-    user_message = user_message_provider() if user_message_provider is not None else None
-    writes_used = writes_used_provider() if writes_used_provider is not None else 0
-    return user_message, writes_used
-
-
 def create_memory_tools(
     service: MemoryService,
     *,
@@ -169,29 +164,45 @@ def create_memory_tools(
         value: Mapping[str, Any],
         scope: str = "user",
     ) -> dict[str, Any]:
-        user_message, writes_used = _current_context(
-            user_message_provider,
-            writes_used_provider,
+        user_message = (
+            user_message_provider()
+            if user_message_provider is not None
+            else current_memory_user_message()
         )
-        return service.upsert(
+        claimed_writes = claim_memory_write()
+        writes_used = (
+            max(writes_used_provider(), claimed_writes)
+            if writes_used_provider is not None
+            else claimed_writes
+        )
+        result = service.upsert(
             key,
             value,
             scope,
             user_message=user_message,
             writes_used=writes_used,
         )
+        return result
 
     def memory_delete(*, key: str, scope: str = "user") -> dict[str, Any]:
-        user_message, writes_used = _current_context(
-            user_message_provider,
-            writes_used_provider,
+        user_message = (
+            user_message_provider()
+            if user_message_provider is not None
+            else current_memory_user_message()
         )
-        return service.delete(
+        claimed_writes = claim_memory_write()
+        writes_used = (
+            max(writes_used_provider(), claimed_writes)
+            if writes_used_provider is not None
+            else claimed_writes
+        )
+        result = service.delete(
             key,
             scope,
             user_message=user_message,
             writes_used=writes_used,
         )
+        return result
 
     return [
         AgentTool(

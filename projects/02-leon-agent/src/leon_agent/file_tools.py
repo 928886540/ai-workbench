@@ -35,6 +35,35 @@ _STABLE_WRITE_ERROR_CODES = frozenset(
         "write_limit_reached",
     }
 )
+_STABLE_READ_ERROR_CODES = frozenset(
+    {
+        "binary_file",
+        "blocked_path",
+        "file_too_large",
+        "invalid_argument",
+        "invalid_path",
+        "io_error",
+        "not_directory",
+        "not_file",
+        "not_found",
+        "path_changed",
+        "path_outside_root",
+        "scan_budget",
+        "sensitive_content",
+        "unknown_root",
+        "unsupported_encoding",
+        "unsupported_file_type",
+    }
+)
+_STABLE_SEARCH_TRUNCATION_REASONS = frozenset(
+    {
+        "byte_budget",
+        "directory_budget",
+        "entry_budget",
+        "file_budget",
+        "result_limit",
+    }
+)
 _ROOT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 _AUDIT_PATH_LIMIT = 500
 
@@ -62,6 +91,258 @@ def _safe_relative_path(value: Any) -> str | None:
     ):
         return None
     return portable
+
+
+def _safe_result_path(value: Any) -> str | None:
+    """Validate a root-relative result path, including the directory ``.``."""
+
+    if value == ".":
+        return "."
+    return _safe_relative_path(value)
+
+
+def _audit_read_failure(result: Mapping[str, Any]) -> dict[str, Any] | None:
+    if result.get("ok") is True:
+        return None
+    error_code = result.get("error_code")
+    return {
+        "ok": False,
+        "error_code": (
+            error_code
+            if isinstance(error_code, str) and error_code in _STABLE_READ_ERROR_CODES
+            else "tool_failed"
+        ),
+    }
+
+
+def _audit_integer(
+    value: Any,
+    *,
+    minimum: int = 0,
+) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        return None
+    return value
+
+
+def _audit_read_arguments(
+    arguments: dict[str, Any],
+    *,
+    allowed_root_ids: frozenset[str],
+    numeric_keys: tuple[str, ...],
+    require_path: bool = False,
+) -> dict[str, Any]:
+    """Keep only safe routing/limit metadata; never persist a search query."""
+
+    projected: dict[str, Any] = {}
+    root_id = arguments.get("root_id")
+    if root_id is not None:
+        safe_root_id = _safe_root_id(root_id, allowed_root_ids)
+        if safe_root_id is None:
+            return {"audit_error": "unsafe_path"}
+        projected["root_id"] = safe_root_id
+    elif require_path:
+        return {"audit_error": "unsafe_path"}
+
+    relative_path = arguments.get("relative_path")
+    if relative_path is not None:
+        safe_path = _safe_result_path(relative_path)
+        if safe_path is None:
+            return {"audit_error": "unsafe_path"}
+        projected["relative_path"] = safe_path
+    elif require_path:
+        return {"audit_error": "unsafe_path"}
+
+    for key in numeric_keys:
+        if key not in arguments:
+            continue
+        value = _audit_integer(arguments[key], minimum=1)
+        if value is None:
+            return {"audit_error": "invalid_argument"}
+        projected[key] = value
+    return projected
+
+
+def _audit_list_result(
+    result: dict[str, Any],
+    *,
+    allowed_root_ids: frozenset[str],
+) -> dict[str, Any]:
+    failure = _audit_read_failure(result)
+    if failure is not None:
+        return failure
+
+    projected: dict[str, Any] = {"ok": True, "untrusted_content": True}
+    root_id = result.get("root_id")
+    if root_id is None:
+        raw_root_ids = result.get("root_ids")
+        if not isinstance(raw_root_ids, list):
+            return {"audit_error": "invalid_result"}
+        root_ids: list[str] = []
+        for item in raw_root_ids:
+            safe_root_id = _safe_root_id(item, allowed_root_ids)
+            if safe_root_id is None:
+                return {"audit_error": "invalid_result"}
+            root_ids.append(safe_root_id)
+        projected["root_ids"] = root_ids
+        projected["path"] = "."
+        projected["citation"] = [f"{item}:" for item in root_ids]
+    else:
+        safe_root_id = _safe_root_id(root_id, allowed_root_ids)
+        safe_path = _safe_result_path(result.get("path"))
+        if safe_root_id is None or safe_path is None:
+            return {"audit_error": "invalid_result"}
+        projected.update(
+            {
+                "root_id": safe_root_id,
+                "path": safe_path,
+                "citation": f"{safe_root_id}:{safe_path}",
+            }
+        )
+
+    for key in ("returned_entries", "skipped_entries", "max_entries"):
+        value = _audit_integer(result.get(key))
+        if value is not None:
+            projected[key] = value
+    if isinstance(result.get("truncated"), bool):
+        projected["truncated"] = result["truncated"]
+    return projected
+
+
+def _audit_search_result(
+    result: dict[str, Any],
+    *,
+    allowed_root_ids: frozenset[str],
+) -> dict[str, Any]:
+    failure = _audit_read_failure(result)
+    if failure is not None:
+        return failure
+
+    raw_root_ids = result.get("root_ids")
+    raw_matches = result.get("matches")
+    safe_relative_path = _safe_result_path(result.get("relative_path"))
+    if not isinstance(raw_root_ids, list) or not isinstance(raw_matches, list):
+        return {"audit_error": "invalid_result"}
+    root_ids: list[str] = []
+    for item in raw_root_ids:
+        safe_root_id = _safe_root_id(item, allowed_root_ids)
+        if safe_root_id is None:
+            return {"audit_error": "invalid_result"}
+        root_ids.append(safe_root_id)
+    if safe_relative_path is None:
+        return {"audit_error": "invalid_result"}
+
+    safe_matches: list[dict[str, Any]] = []
+    citations: list[str] = []
+    for item in raw_matches:
+        if not isinstance(item, Mapping):
+            return {"audit_error": "invalid_result"}
+        safe_root_id = _safe_root_id(item.get("root_id"), allowed_root_ids)
+        safe_path = _safe_result_path(item.get("path"))
+        match_type = item.get("match_type")
+        line = item.get("line")
+        if (
+            safe_root_id is None
+            or safe_path is None
+            or match_type not in {"filename", "content"}
+            or (line is not None and _audit_integer(line, minimum=1) is None)
+        ):
+            return {"audit_error": "invalid_result"}
+        citation = f"{safe_root_id}:{safe_path}"
+        if line is not None:
+            citation = f"{citation}:{line}"
+        safe_match: dict[str, Any] = {
+            "root_id": safe_root_id,
+            "path": safe_path,
+            "match_type": match_type,
+            "line": line,
+            "citation": citation,
+        }
+        safe_matches.append(safe_match)
+        if citation not in citations:
+            citations.append(citation)
+
+    projected: dict[str, Any] = {
+        "ok": True,
+        "untrusted_content": True,
+        "root_ids": root_ids,
+        "relative_path": safe_relative_path,
+        "citation": citations,
+        "matches": safe_matches,
+    }
+    for key in (
+        "returned_results",
+        "considered_files",
+        "scanned_files",
+        "scanned_bytes",
+        "skipped_files",
+    ):
+        value = _audit_integer(result.get(key))
+        if value is not None:
+            projected[key] = value
+    if isinstance(result.get("truncated"), bool):
+        projected["truncated"] = result["truncated"]
+    truncation_reason = result.get("truncation_reason")
+    if truncation_reason in _STABLE_SEARCH_TRUNCATION_REASONS:
+        projected["truncation_reason"] = truncation_reason
+    return projected
+
+
+def _audit_read_result(
+    result: dict[str, Any],
+    *,
+    allowed_root_ids: frozenset[str],
+) -> dict[str, Any]:
+    failure = _audit_read_failure(result)
+    if failure is not None:
+        return failure
+
+    safe_root_id = _safe_root_id(result.get("root_id"), allowed_root_ids)
+    safe_path = _safe_result_path(result.get("path"))
+    start_line = _audit_integer(result.get("start_line"), minimum=1)
+    end_line = _audit_integer(result.get("end_line"), minimum=0)
+    returned_lines = _audit_integer(result.get("returned_lines"))
+    total_lines = _audit_integer(result.get("total_lines"))
+    if (
+        safe_root_id is None
+        or safe_path is None
+        or start_line is None
+        or end_line is None
+        or returned_lines is None
+        or total_lines is None
+        or (returned_lines > 0 and end_line < start_line)
+    ):
+        return {"audit_error": "invalid_result"}
+    citation = f"{safe_root_id}:{safe_path}"
+    if returned_lines:
+        citation = f"{citation}:{start_line}-{end_line}"
+    projected: dict[str, Any] = {
+        "ok": True,
+        "untrusted_content": True,
+        "root_id": safe_root_id,
+        "path": safe_path,
+        "citation": citation,
+        "start_line": start_line,
+        "end_line": end_line,
+        "returned_lines": returned_lines,
+        "total_lines": total_lines,
+    }
+    for key in ("chars", "bytes"):
+        value = _audit_integer(result.get(key))
+        if value is not None:
+            projected[key] = value
+    if isinstance(result.get("truncated"), bool):
+        projected["truncated"] = result["truncated"]
+    truncation = result.get("truncation")
+    if isinstance(truncation, Mapping):
+        safe_truncation = {
+            key: truncation[key]
+            for key in ("line_limit", "response_char_limit")
+            if isinstance(truncation.get(key), bool)
+        }
+        if safe_truncation:
+            projected["truncation"] = safe_truncation
+    return projected
 
 
 def _audit_write_arguments(
@@ -143,6 +424,41 @@ def create_file_tools(
         "maxLength": 500,
         "description": "Path relative to the selected root. Never pass an absolute path.",
     }
+    allowed_root_ids = frozenset(root_ids)
+
+    def audit_read_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+        # Keep routing and bounded-window metadata only. In particular, a search
+        # query is deliberately excluded because it may contain user-provided
+        # secrets or arbitrary untrusted text.
+        return _audit_read_arguments(
+            arguments,
+            allowed_root_ids=allowed_root_ids,
+            numeric_keys=("max_entries",),
+        )
+
+    def audit_search_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+        return _audit_read_arguments(
+            arguments,
+            allowed_root_ids=allowed_root_ids,
+            numeric_keys=("max_results",),
+        )
+
+    def audit_file_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+        return _audit_read_arguments(
+            arguments,
+            allowed_root_ids=allowed_root_ids,
+            numeric_keys=("start_line", "max_lines"),
+            require_path=True,
+        )
+
+    def audit_list_result(result: dict[str, Any]) -> dict[str, Any]:
+        return _audit_list_result(result, allowed_root_ids=allowed_root_ids)
+
+    def audit_search_result(result: dict[str, Any]) -> dict[str, Any]:
+        return _audit_search_result(result, allowed_root_ids=allowed_root_ids)
+
+    def audit_file_result(result: dict[str, Any]) -> dict[str, Any]:
+        return _audit_read_result(result, allowed_root_ids=allowed_root_ids)
 
     tools = [
         AgentTool(
@@ -170,6 +486,8 @@ def create_file_tools(
                 "additionalProperties": False,
             },
             handler=service.list_files,
+            audit_arguments=audit_read_arguments,
+            audit_result=audit_list_result,
         ),
         AgentTool(
             name="file_search",
@@ -202,6 +520,8 @@ def create_file_tools(
                 "additionalProperties": False,
             },
             handler=service.search,
+            audit_arguments=audit_search_arguments,
+            audit_result=audit_search_result,
         ),
         AgentTool(
             name="read_file",
@@ -231,6 +551,8 @@ def create_file_tools(
                 "additionalProperties": False,
             },
             handler=service.read_file,
+            audit_arguments=audit_file_arguments,
+            audit_result=audit_file_result,
         ),
     ]
 
@@ -270,7 +592,6 @@ def create_file_tools(
         "required": ["root_id", "relative_path", "content"],
         "additionalProperties": False,
     }
-    allowed_root_ids = frozenset(root_ids)
 
     def audit_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
         return _audit_write_arguments(arguments, allowed_root_ids=allowed_root_ids)

@@ -20,6 +20,7 @@ from workbench_core.agent import AgentCancelled, AgentResult, ToolStep
 _FILE_TOOL_NAMES = frozenset(
     {"list_files", "file_search", "read_file", "create_file", "write_file"}
 )
+_MEMORY_TOOL_NAMES = frozenset({"memory_get", "memory_upsert", "memory_delete"})
 
 
 @pytest.fixture()
@@ -56,18 +57,22 @@ def _install_gateway_agent_capture(
         def __init__(self, **kwargs):  # noqa: ANN003
             file_service = kwargs.get("file_service")
             file_write_service = kwargs.get("file_write_service")
+            memory_service = kwargs.get("memory_service")
             registry = build_leon_tools(
                 kwargs["image_client"],
                 session_id=kwargs["session_id"],
                 default_mode_ids=kwargs["default_mode_ids"],
                 file_service=file_service,
                 file_write_service=file_write_service,
+                memory_service=memory_service,
             )
             captures.append(
                 {
                     "file_service": file_service,
                     "file_write_service": file_write_service,
                     "file_tools": sorted(_FILE_TOOL_NAMES.intersection(registry.names)),
+                    "memory_service": memory_service,
+                    "memory_tools": sorted(_MEMORY_TOOL_NAMES.intersection(registry.names)),
                 }
             )
 
@@ -377,6 +382,31 @@ def test_send_message_without_file_roots_injects_no_file_registry(
     assert captures[0]["file_service"] is None
     assert captures[0]["file_write_service"] is None
     assert captures[0]["file_tools"] == []
+
+
+def test_send_message_injects_memory_service_on_shared_database(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captures: list[dict[str, Any]] = []
+    _install_gateway_agent_capture(monkeypatch, captures)
+    session_id = client.post("/api/agent/sessions").json()["session_id"]
+
+    for content in ("first", "second"):
+        response = client.post(
+            f"/api/agent/sessions/{session_id}/messages",
+            json={"content": content},
+        )
+        assert response.status_code == 200
+
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    assert len(captures) == 2
+    assert captures[0]["memory_tools"] == sorted(_MEMORY_TOOL_NAMES)
+    assert captures[1]["memory_tools"] == sorted(_MEMORY_TOOL_NAMES)
+    assert captures[0]["memory_service"] is not captures[1]["memory_service"]
+    assert captures[0]["memory_service"].store is gateway_app.get_memory_store()
+    assert captures[1]["memory_service"].store is gateway_app.get_memory_store()
+    assert captures[0]["memory_service"].session_id == session_id
 
 
 def test_send_message_builds_isolated_file_write_services_for_agent_and_direct_tools(

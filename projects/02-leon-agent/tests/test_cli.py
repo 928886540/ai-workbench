@@ -588,6 +588,7 @@ def _make_composition_cli(monkeypatch, tmp_path, file_roots):  # noqa: ANN001
     cli = LeonConsole.__new__(LeonConsole)
     cli.session_id = "composition-session"
     cli.model_selection = None
+    cli.memory_store = cli_module.MemoryStore(tmp_path / "leon.db")
     cli.config = SimpleNamespace(
         backend_url="http://backend.example",
         active_plugin_dir=tmp_path,
@@ -599,6 +600,7 @@ def _make_composition_cli(monkeypatch, tmp_path, file_roots):  # noqa: ANN001
         tavily_timeout_seconds=1.0,
         tavily_max_results=5,
         file_roots=file_roots,
+        session_db=tmp_path / "leon.db",
         default_mode_ids=["k2_tifa_plus"],
         read_additional_system_prompt=lambda: None,
     )
@@ -630,6 +632,25 @@ def test_cli_file_write_composition_reuses_matching_service(monkeypatch, tmp_pat
     assert cli.file_service.root_bindings == cli.file_write_service.root_bindings
     assert captured["agent_kwargs"]["file_service"] is cli.file_service
     assert captured["agent_kwargs"]["file_write_service"] is cli.file_write_service
+
+
+def test_cli_memory_composition_uses_shared_db_and_current_session(monkeypatch, tmp_path) -> None:
+    cli, captured = _make_composition_cli(monkeypatch, tmp_path, {})
+
+    first_service = cli.memory_service
+    assert first_service is captured["agent_kwargs"]["memory_service"]
+    assert first_service.store.path == (tmp_path / "leon.db").resolve()
+    assert first_service.session_id == "composition-session"
+    assert {"memory_get", "memory_upsert", "memory_delete"}.isdisjoint(
+        cli.direct_tools.names
+    )
+
+    cli.session_id = "resumed-session"
+    cli._create_agent()
+
+    assert cli.memory_service is not first_service
+    assert cli.memory_service.store is cli.memory_store
+    assert cli.memory_service.session_id == "resumed-session"
 
 
 def test_cli_file_write_budget_resets_between_turns(monkeypatch, tmp_path) -> None:

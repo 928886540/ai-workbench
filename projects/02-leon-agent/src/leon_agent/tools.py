@@ -10,6 +10,8 @@ from workbench_core.files import FileSearchService, FileWriteService
 
 from leon_agent.file_tools import create_file_tools
 from leon_agent.leon_client import LeonImageClient
+from leon_agent.memory.service import MemoryService
+from leon_agent.memory.tools import create_memory_tools
 from leon_agent.search.service import WebSearchService
 from leon_agent.service import LeonToolService
 
@@ -69,6 +71,7 @@ def create_leon_tools(
     search_service: WebSearchService | None = None,
     file_service: FileSearchService | None = None,
     file_write_service: FileWriteService | None = None,
+    memory_service: MemoryService | None = None,
 ) -> ToolRegistry:
     service = LeonToolService(
         client,
@@ -268,6 +271,9 @@ def create_leon_tools(
                 handler=search_service.search,
             )
         )
+    if memory_service is not None:
+        for tool in create_memory_tools(memory_service):
+            registry.register(tool)
     if file_service is not None:
         for tool in create_file_tools(
             file_service,

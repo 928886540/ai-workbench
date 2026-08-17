@@ -50,6 +50,8 @@ from leon_agent.image_modes import (
     parse_nsfw_command,
 )
 from leon_agent.leon_client import LeonImageClient
+from leon_agent.memory.service import MemoryService
+from leon_agent.memory.store import MemoryStore
 from leon_agent.models import model_provider_scope
 from leon_agent.search import create_search_service
 from leon_agent.session import SessionStore
@@ -79,6 +81,7 @@ class ActiveTurnState:
 
 _config: LeonSettings | None = None
 _store: SessionStore | None = None
+_memory_store: MemoryStore | None = None
 _bus_registry: EventBusRegistry = EventBusRegistry()
 _llm_snapshots: dict[str, SessionLLMSnapshot] = {}
 _active_turns: dict[str, ActiveTurnState] = {}
@@ -105,12 +108,13 @@ _WEB_DIR: Path = _resolve_web_dir()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _config, _store, _bus_registry, _llm_snapshots, _active_turns
+    global _config, _store, _memory_store, _bus_registry, _llm_snapshots, _active_turns
     apply_config_file()
     reset_settings_cache()
     _config = LeonSettings()
     _config.read_additional_system_prompt()
     _store = SessionStore(_config.session_db)
+    _memory_store = MemoryStore(_config.session_db)
     _bus_registry = EventBusRegistry()
     _llm_snapshots = {}
     _active_turns = {}
@@ -119,6 +123,7 @@ async def lifespan(app: FastAPI):
     finally:
         _config = None
         _store = None
+        _memory_store = None
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +178,12 @@ def get_store() -> SessionStore:
     if _store is None:  # pragma: no cover
         raise RuntimeError("Store not initialised")
     return _store
+
+
+def get_memory_store() -> MemoryStore:
+    if _memory_store is None:  # pragma: no cover
+        raise RuntimeError("Memory store not initialised")
+    return _memory_store
 
 
 def get_config() -> LeonSettings:
@@ -546,6 +557,7 @@ async def health_detail(config: LeonSettings = Depends(get_config)):
     results["image_tool"] = "ready" if config.active_plugin_dir else "not_configured"
     results["search_tool"] = "ready" if config.search_enabled else "not_configured"
     results["file_tool"] = "ready" if config.file_search_enabled else "not_configured"
+    results["memory_tool"] = "ready" if _memory_store is not None else "degraded"
     results["llm"] = "unknown"
     return {"ok": True, "services": results}
 
@@ -781,6 +793,7 @@ async def send_message(
     session_id: str,
     body: MessageRequest,
     store: SessionStore = Depends(get_store),
+    memory_store: MemoryStore = Depends(get_memory_store),
     config: LeonSettings = Depends(get_config),
 ):
     if not store.has_session(session_id):
@@ -871,6 +884,7 @@ async def send_message(
         )
         file_service = create_file_search_service(config.file_roots)
         file_write_service = create_file_write_service(config.file_roots)
+        memory_service = MemoryService(memory_store, session_id=session_id)
 
         def on_generation_submitted(submission: dict[str, Any]) -> None:
             workflow_ids = [
@@ -1035,6 +1049,7 @@ async def send_message(
             search_service=search_service,
             file_service=file_service,
             file_write_service=file_write_service,
+            memory_service=memory_service,
             additional_system_prompt=config.read_additional_system_prompt(),
         )
 

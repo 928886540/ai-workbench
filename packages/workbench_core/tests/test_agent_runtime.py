@@ -1,5 +1,6 @@
 import json
 import threading
+from copy import deepcopy
 
 import pytest
 from workbench_core.agent import (
@@ -130,6 +131,45 @@ def test_agent_runtime_executes_registered_tool() -> None:
     assert result.steps[0].arguments == {"value": "hello"}
     assert result.steps[0].result == {"ok": True, "value": "hello"}
     assert registry.names == ["echo"]
+
+
+def test_agent_runtime_injects_one_turn_system_context_without_staling() -> None:
+    class ContextClient:
+        def __init__(self) -> None:
+            self.requests: list[list[dict[str, object]]] = []
+
+        def chat_turn(self, messages, tools=None, temperature=0.2):  # noqa: ANN001, ARG002
+            self.requests.append(deepcopy(messages))
+            return ChatTurn(
+                content="ok",
+                raw_message={"role": "assistant", "content": "ok"},
+            )
+
+    client = ContextClient()
+    runtime = AgentRuntime(
+        client=client,  # type: ignore[arg-type]
+        tools=ToolRegistry(),
+        system_prompt="base rules",
+    )
+
+    runtime.run(
+        "first",
+        history=[{"role": "user", "content": "old"}],
+        system_context='<leon_memory_context untrusted_data="true">memory</leon_memory_context>',
+    )
+    runtime.run("second")
+
+    assert [message["role"] for message in client.requests[0]] == [
+        "system",
+        "system",
+        "user",
+        "user",
+    ]
+    assert client.requests[0][1]["content"].startswith("<leon_memory_context")
+    assert all(
+        message.get("content") != client.requests[0][1]["content"]
+        for message in client.requests[1]
+    )
 
 
 def test_agent_runtime_keeps_legacy_tool_executor_compatible() -> None:

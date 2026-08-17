@@ -17,7 +17,7 @@
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
 - `02-leon-agent`：独立 `leon` CLI、SQLite、7 个生图工具和 `speak_text` 已完成
-- `02-leon-agent`：可选 File Search + 显式 FileWrite MVP 已接入 Agent/Gateway，默认关闭；CLI 仍等 TUI Owner 完成最小 composition 接线，详见 `projects/02-leon-agent/docs/file-search.md`
+- `02-leon-agent`：可选 File Search + 显式 FileWrite MVP 已接入 CLI/Gateway；配置 roots 后五个工具完整可用，读取正文和写入内容均不会进入 SSE/SQLite audit，详见 `projects/02-leon-agent/docs/file-search.md`
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
 - CLI、Web 与 Leon MCP 的唯一持久配置源是 `%USERPROFILE%\.leon\config.toml`；`.codex` 和
   仓库 `.env` 只参与首次 `leon-config init`，CC Switch 后续操作与 Leon 无关
@@ -293,3 +293,4 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 - CLI 取消分支会持久化已完成且脱敏的 tool audit；取消回答、LLM transcript 和文件正文不进入 SQLite。Agent 返回后才收到取消的竞态也保留安全审计，不留下半条会话消息。
 - 当前验证：全仓 `410 passed`、Ruff 全绿、CLI `80 passed`、FileWrite Agent/policy/adapter `18 passed`、`py_compile` 与 `git diff --check` clean。接手者先读协作板和 `git status`，源码变更后重启实际 `leon`，用 `/tools` 验证五项文件工具，再按临时根做显式 create/write smoke；不要对个人密钥目录操作。
 - 版本 `7196ebb` 已推送 `feat/leon-model-switch` 并 fast-forward 到远端 `main`。真实 CLI 入口与临时根五工具 create/write/read-back smoke 均通过；Gateway 8233 health/detail 均 200；计划任务为隐藏、单实例、登录/开机可用并带 20 次每分钟重试。工作区唯一未提交项是另一条 Web emoji 微调 `projects/02-leon-agent/web/src/views/ChatView.vue`，不要覆盖或误 stage。
+- 2026-08-17 Memory/File audit checkpoint：Memory Phase 2→4 已接入生产 `LeonAgent`、CLI、Gateway；同一 `LEON_SESSION_DB` 独立 `memories` 表、固定 `local-owner`、三项 memory tools、每轮 untrusted context（12 条/2400 字符/单值 512）、显式 consent 与单轮一次写入额度均已验证。raw memory/file 内容只进入当前 LLM transcript，AgentEvent/SSE/ToolStep/SQLite 只保留 metadata projection；取消不回滚已完成副作用，下一轮读取新状态。全仓 `420 passed`，Ruff、compile、diff-check 全绿；真实重启 `Leon Agent` 后 `/api/health/detail` 已返回 `memory_tool=ready`。本轮待提交范围：shared AgentRuntime、Leon Memory/Agent/tools/CLI/Gateway、File Search audit projection、对应测试与项目文档/协作板；不要 stage `README.md`、`notes/career/*`、`web/src/views/ChatView.vue` 等并行未提交改动。提交后继续做公网/手机 smoke，Memory 不接 MCP/Web 管理 API。

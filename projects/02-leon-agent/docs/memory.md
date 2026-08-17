@@ -1,6 +1,22 @@
-# Leon Agent Memory MVP 设计
+# Leon Agent Memory MVP
 
-状态：Design only（本文件只冻结方案，不代表生产代码已经接入）。
+状态：Phase 1～4 已接入生产 `LeonAgent`、CLI 与 Gateway；Memory 不暴露给 MCP，也没有 Web
+专用管理 API。
+
+## 当前实现
+
+- `MemoryStore` 与 `SessionStore` 复用 `LEON_SESSION_DB`，但只维护独立 `memories` 表；当前单用户
+  principal 固定为 `local-owner`，不把会轮换的 Gateway token 当身份。
+- 正常 Agent 注册 `memory_get`、`memory_upsert`、`memory_delete`；CLI 的 `/nsfw` 与 Gateway 直达
+  生图不注册 Memory，避免绕过 per-turn gate。
+- 每轮从 SQLite 重新构造最多 12 条、2,400 字符的独立 untrusted system context；user 记录优先，
+  同 key 覆盖 global，单条 value 自动注入最多 512 字符，超长值只提示按 key 调 `memory_get`。
+- 只有当前用户原话明确包含“记住/保存/以后默认”或“忘掉/删除”时才允许写；每轮第一次写入
+  尝试即消费额度，第二次稳定返回 `write_limit_reached`，下一轮重置。
+- raw value 只进入当前 LLM transcript 与动态 context；`AgentEvent`、SSE、`ToolStep` 和 SQLite
+  `tool_calls` 只保存 metadata projection。删除硬删主记录，不会抹掉用户自己发送过的聊天文本。
+- Memory 写入与文件写入一样是已完成的副作用：若工具完成后用户取消本轮，写入不会回滚，但只
+  持久化脱敏 audit；upsert/delete 后的动态 context 从下一轮重新读取并生效。
 
 ## 目标
 
@@ -18,7 +34,7 @@ Memory 要解决的是“跨 session 的少量、可解释、可删除的长期�
 默认规则：普通聊天不会偷偷抽取记忆；文件、网页、图片任务和模型自己的推测都不能
 自动成为长期记忆。
 
-## 当前基线
+## 设计基线（实现前审计）
 
 实现前先固定现有边界，避免把 Memory 做成隐式重构：
 
@@ -277,31 +293,31 @@ projects/02-leon-agent/src/leon_agent/memory/
 
 ## 分阶段实现
 
-### Phase 0：契约冻结
+### Phase 0：契约冻结（已完成）
 
 - 评审本文件的 scope、principal、敏感拒绝和删除边界。
 - 选定是否把 `local-owner` 写入 `.leon/config.toml`；默认建议先由 composition root 固定，避免
   为一个单用户 MVP 扩大配置 allowlist。
 
-### Phase 1：Store 与纯策略
+### Phase 1：Store 与纯策略（已完成）
 
 - 实现 `MemoryStore`、规范化 key/value、scope merge、硬删除和容量限制。
 - 实现敏感扫描与 `MemoryIntentGate`，只做纯函数/SQLite 单元测试。
 - 不注册工具、不改变 Agent loop。
 
-### Phase 2：工具与审计投影
+### Phase 2：工具与审计投影（已完成）
 
 - 添加三个 `AgentTool`，所有 handler 再校验参数。
 - 扩展 `ToolRegistry`/`AgentRuntime` 的 redacted audit view。
 - 先用 fake LLM 验证 raw 结果只到 LLM、事件/`ToolStep`/SQLite 不含 raw value。
 
-### Phase 3：动态注入
+### Phase 3：动态注入（已完成）
 
 - 为 `LeonAgent.run()` 加 per-turn memory context；保持原有 history 列表只含 user/assistant。
 - 增加 system prompt 规则和 2,400 字符预算测试。
 - 验证 CLI 长生命周期和 Gateway 每请求生命周期都能看到刚刚 upsert 的记忆。
 
-### Phase 4：双入口验收
+### Phase 4：双入口验收（代码与 provider-free 回归已完成）
 
 - CLI 与 Web 使用同一 `LEON_SESSION_DB`、principal 和工具 schema。
 - 不新增 Web 专用 Memory API；先通过自然语言工具闭环，后续再评估设置页/确认弹窗。

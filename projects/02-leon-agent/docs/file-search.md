@@ -6,7 +6,8 @@ Prompt、角色设定、LoRA、Workflow 和项目文档，并在用户明确要�
 
 ## 当前状态
 
-状态：File Search MVP 与显式 FileWrite MVP 已完成；Gateway/Web 真实运行态已验收，CLI 写工具仍等待 TUI Owner 的 composition 接线。
+状态：File Search 与显式 FileWrite MVP 已完成；CLI、Gateway/Web 均已接入五个文件工具并完成
+真实运行态验收。
 
 ```text
 用户问题
@@ -200,8 +201,11 @@ roots 的 root id 和 opaque canonical binding 完全一致时注册。模型参
 
 ```powershell
 uv run pytest packages/workbench_core/tests/test_file_search.py -q
+uv run pytest packages/workbench_core/tests/test_file_write.py -q
 uv run pytest projects/02-code-agent/tests/test_workspace_tools.py -q
 uv run pytest projects/02-leon-agent/tests/test_leon_file_search.py -q
+uv run pytest projects/02-leon-agent/tests/test_leon_file_write.py projects/02-leon-agent/tests/test_file_write_agent.py -q
+uv run pytest projects/02-leon-agent/tests/test_cli.py projects/02-leon-agent/tests/test_gateway.py -q
 uv run ruff check packages/workbench_core projects/02-code-agent projects/02-leon-agent
 uv run leon --help
 ```
@@ -217,6 +221,8 @@ uv run leon --help
 - 文件中的“忽略之前指令”只作为文本返回，不改变 Agent system prompt。
 - 写工具未注入时 schema 不出现；未明确授权、路径越界、目标已存在/缺失和单轮第二次写入均稳定拒绝。
 - 写入成功后审计事件、ToolStep、SSE 和 SQLite 均不包含原始 `content` 或绝对路径。
+- 三个读取工具的 raw 正文/搜索词只进入当前 LLM transcript；事件、ToolStep、SSE 和 SQLite
+  只保留 root-relative citation、行号、计数与截断元数据。
 
 实际入口验收时使用专门的临时文档目录，不把个人密钥目录加入 roots。修改 `src/` 后重启
 `leon-server`，检查 `/api/health/detail` 和真实工具事件；单元测试通过不代表旧进程已经加载新代码。

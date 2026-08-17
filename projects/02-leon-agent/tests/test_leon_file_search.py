@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from leon_agent.agent import build_system_prompt
 from leon_agent.config import LeonSettings
-from leon_agent.file_tools import create_file_search_service
+from leon_agent.file_tools import create_file_search_service, create_file_tools
 from leon_agent.gateway import app as gateway_module
+from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
-from workbench_core.agent import AgentResult
+from workbench_core.agent import AgentEvent, AgentResult, AgentRuntime, ToolRegistry
+from workbench_core.llm import ChatTurn, ToolCall
 
 
 class FakeImageClient:
@@ -35,6 +38,51 @@ class FakeImageClient:
 
     def cancel_image_task(self, *, job_id: str) -> dict[str, Any]:
         return {"ok": True, "job_id": job_id, "status": "cancelled"}
+
+
+class FileSearchFlowClient:
+    def __init__(self, marker: str) -> None:
+        self.marker = marker
+        self.calls = 0
+
+    def chat_turn(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.2,
+    ) -> ChatTurn:
+        del messages, tools, temperature
+        self.calls += 1
+        if self.calls == 1:
+            arguments = json.dumps({"root_id": "docs", "query": self.marker})
+            return ChatTurn(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="file-search-call",
+                        name="file_search",
+                        arguments=arguments,
+                    )
+                ],
+                raw_message={
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "file-search-call",
+                            "type": "function",
+                            "function": {
+                                "name": "file_search",
+                                "arguments": arguments,
+                            },
+                        }
+                    ],
+                },
+            )
+        return ChatTurn(
+            content="已找到文件。",
+            raw_message={"role": "assistant", "content": "已找到文件。"},
+        )
 
 
 def test_file_roots_parse_from_json_environment(monkeypatch: Any, tmp_path: Path) -> None:
@@ -126,6 +174,211 @@ def test_file_tool_schemas_are_bounded_and_read_only(tmp_path: Path) -> None:
     assert schemas["read_file"]["parameters"]["properties"]["max_lines"][
         "maximum"
     ] == 200
+
+
+def test_read_tool_audit_projections_drop_file_content_and_match_text(
+    tmp_path: Path,
+) -> None:
+    marker = "raw-file-content-must-not-enter-audit"
+    (tmp_path / "character.md").write_text(
+        f"A line containing {marker}.\n",
+        encoding="utf-8",
+    )
+    service = create_file_search_service({"docs": tmp_path})
+    assert service is not None
+    registry = ToolRegistry(create_file_tools(service))
+
+    raw_list = registry.execute(
+        "list_files",
+        {"root_id": "docs", "relative_path": "."},
+    )
+    raw_search = registry.execute(
+        "file_search",
+        {"root_id": "docs", "query": marker},
+    )
+    raw_read = registry.execute(
+        "read_file",
+        {"root_id": "docs", "relative_path": "character.md"},
+    )
+
+    assert marker in repr(raw_search)
+    assert marker in repr(raw_read)
+    audited_list = registry.audit_result("list_files", raw_list)
+    audited_search = registry.audit_result("file_search", raw_search)
+    audited_read = registry.audit_result("read_file", raw_read)
+
+    assert audited_list["ok"] is True
+    assert "entries" not in audited_list
+    assert audited_search["ok"] is True
+    assert audited_search["matches"]
+    assert all("text" not in match for match in audited_search["matches"])
+    assert audited_search["citation"] == ["docs:character.md:1"]
+    assert audited_read["ok"] is True
+    assert "content" not in audited_read
+    assert audited_read["citation"] == "docs:character.md:1-1"
+    assert marker not in repr((audited_list, audited_search, audited_read))
+
+
+def test_read_tool_audit_arguments_keep_paths_but_drop_query_and_unknown_values(
+    tmp_path: Path,
+) -> None:
+    service = create_file_search_service({"docs": tmp_path})
+    assert service is not None
+    registry = ToolRegistry(create_file_tools(service))
+    marker = "query-secret-must-not-enter-audit"
+
+    assert registry.audit_arguments(
+        "list_files",
+        {
+            "root_id": "docs",
+            "relative_path": ".",
+            "max_entries": 10,
+            "unknown": marker,
+        },
+    ) == {
+        "root_id": "docs",
+        "relative_path": ".",
+        "max_entries": 10,
+    }
+    assert registry.audit_arguments(
+        "file_search",
+        {
+            "root_id": "docs",
+            "relative_path": ".",
+            "query": marker,
+            "max_results": 5,
+            "unknown": marker,
+        },
+    ) == {
+        "root_id": "docs",
+        "relative_path": ".",
+        "max_results": 5,
+    }
+    assert registry.audit_arguments(
+        "read_file",
+        {
+            "root_id": "docs",
+            "relative_path": "character.md",
+            "start_line": 2,
+            "max_lines": 3,
+            "unknown": marker,
+        },
+    ) == {
+        "root_id": "docs",
+        "relative_path": "character.md",
+        "start_line": 2,
+        "max_lines": 3,
+    }
+    assert marker not in repr(
+        registry.audit_arguments(
+            "file_search",
+            {"root_id": "docs", "query": marker},
+        )
+    )
+
+
+def test_read_tool_audit_projection_fails_closed_for_errors_and_forged_paths(
+    tmp_path: Path,
+) -> None:
+    service = create_file_search_service({"docs": tmp_path})
+    assert service is not None
+    registry = ToolRegistry(create_file_tools(service))
+    marker = "raw-error-must-not-enter-audit"
+
+    assert registry.audit_result(
+        "read_file",
+        {"ok": False, "error_code": "not_found", "error": marker, "content": marker},
+    ) == {"ok": False, "error_code": "not_found"}
+    assert registry.audit_result(
+        "file_search",
+        {"ok": False, "error_code": marker, "error": marker},
+    ) == {"ok": False, "error_code": "tool_failed"}
+    assert registry.audit_result(
+        "read_file",
+        {
+            "ok": True,
+            "root_id": "docs",
+            "path": str(tmp_path / "character.md"),
+            "content": marker,
+            "start_line": 1,
+            "end_line": 1,
+            "returned_lines": 1,
+            "total_lines": 1,
+        },
+    ) == {"audit_error": "invalid_result"}
+    assert registry.audit_arguments(
+        "read_file",
+        {"root_id": "docs", "relative_path": str(tmp_path / "character.md")},
+    ) == {"audit_error": "unsafe_path"}
+    assert marker not in repr(
+        registry.audit_result(
+            "file_search",
+            {
+                "ok": True,
+                "root_ids": ["docs"],
+                "relative_path": ".",
+                "matches": [],
+                "truncation_reason": marker,
+            },
+        )
+    )
+
+
+def test_file_search_raw_match_stays_in_llm_transcript_not_sqlite_audit(
+    tmp_path: Path,
+) -> None:
+    marker = "raw-search-match-must-not-enter-sqlite"
+    (tmp_path / "character.md").write_text(
+        f"Tifa preference: {marker}\n",
+        encoding="utf-8",
+    )
+    service = create_file_search_service({"docs": tmp_path})
+    assert service is not None
+    events: list[AgentEvent] = []
+    runtime = AgentRuntime(
+        client=FileSearchFlowClient(marker),  # type: ignore[arg-type]
+        tools=ToolRegistry(create_file_tools(service)),
+        system_prompt="Use file search when asked.",
+        on_event=events.append,
+    )
+
+    result = runtime.run("查一下本地文档")
+
+    tool_messages = [
+        message for message in result.messages if message.get("role") == "tool"
+    ]
+    assert any(marker in str(message.get("content")) for message in tool_messages)
+    assert marker not in repr(events)
+    assert marker not in repr(result.steps)
+    assert result.steps[0].arguments == {"root_id": "docs"}
+    assert result.steps[0].result["matches"] == [
+        {
+            "root_id": "docs",
+            "path": "character.md",
+            "match_type": "content",
+            "line": 1,
+            "citation": "docs:character.md:1",
+        }
+    ]
+
+    db_path = tmp_path / "session.db"
+    session_store = SessionStore(db_path)
+    session_id = session_store.create_session()
+    session_store.record_result(session_id, result)
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT arguments_json, result_json
+            FROM tool_calls
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+
+    assert row is not None
+    assert marker not in f"{row[0]}{row[1]}"
+    assert json.loads(row[0]) == result.steps[0].arguments
+    assert json.loads(row[1]) == result.steps[0].result
 
 
 def test_system_prompt_treats_file_content_as_untrusted_and_writes_as_explicit() -> None:

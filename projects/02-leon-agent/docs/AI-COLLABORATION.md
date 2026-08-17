@@ -221,7 +221,26 @@ expand it into global search/delete APIs. Normalize every `final_image_url` into
   execution, PDF/DOCX parser, embedding index, RAG layer, and File Search MCP exposure remain out of scope.
 - After changing `LEON_FILE_ROOTS` or any `src/`/shared-core code, restart `leon-server` and verify the new
   process. The focused checks are `packages/workbench_core/tests/test_file_search.py` and
-  `tests/test_leon_file_search.py`; use temporary test roots only.
+  `test_file_write.py` plus `tests/test_leon_file_search.py`, `test_leon_file_write.py`, `test_cli.py`, and
+  `test_gateway.py`; use temporary test roots only.
+
+## Memory Contract
+
+- CLI and Gateway create `MemoryService` from the same `LEON_SESSION_DB` as `SessionStore`; the MVP principal
+  is the fixed local identity `local-owner`, never the API token. Normal Agent turns register
+  `memory_get`/`memory_upsert`/`memory_delete`; direct `/nsfw` and Leon MCP do not.
+- A write/delete is authorized only by the exact current user message and consumes the turn's single attempt.
+  Ordinary preferences are not harvested automatically, file/web content cannot authorize Memory, and a second
+  write attempt returns `write_limit_reached`.
+- Every turn rebuilds a separate untrusted system context: user overrides global, at most 12 complete records,
+  2,400 characters total, and 512 characters per automatically injected value. Oversized values remain available
+  only through an explicit `memory_get`.
+- Raw values may enter the configured LLM provider's current in-memory transcript. They must never enter
+  `AgentEvent`, SSE, `ToolStep`, or SQLite `tool_calls`; those surfaces use the Memory tools' metadata-only audit
+  projection. `memory_delete` hard-deletes the primary row but does not erase historical user messages.
+- A completed Memory write is not rolled back if the user cancels later in the same turn. The audit remains
+  redacted, and the next turn rebuilds context from the resulting SQLite state. See `docs/memory.md` before
+  extending scope, adding a management API, multi-user identities, encryption claims, or MCP exposure.
 
 ## Voice Contract
 

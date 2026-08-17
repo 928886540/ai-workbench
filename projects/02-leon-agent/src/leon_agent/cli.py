@@ -40,6 +40,8 @@ from leon_agent.file_tools import create_file_search_service
 from leon_agent.file_write_policy import create_file_write_service
 from leon_agent.image_modes import format_mode_catalog, parse_nsfw_command
 from leon_agent.leon_client import LeonImageClient
+from leon_agent.memory.service import MemoryService
+from leon_agent.memory.store import MemoryStore
 from leon_agent.models import model_provider_scope, resolve_model_id
 from leon_agent.search import create_search_service
 from leon_agent.session import SessionStore
@@ -1424,6 +1426,7 @@ class LeonConsole:
             updates["session_db"] = Path(args.db)
         self.config = config.model_copy(update=updates)
         self.store = SessionStore(self.config.session_db)
+        self.memory_store = MemoryStore(self.config.session_db)
         self.session_id = self._resolve_session(args)
         self._resumed_session = bool(getattr(args, "session", None) and not args.new)
         self.model_selection = self.store.get_model_selection(self.session_id)
@@ -1568,6 +1571,10 @@ class LeonConsole:
         )
         self.file_service = create_file_search_service(self.config.file_roots)
         self.file_write_service = create_file_write_service(self.config.file_roots)
+        self.memory_service = MemoryService(
+            self.memory_store,
+            session_id=self.session_id,
+        )
         self.direct_tools = create_leon_tools(
             self.image_client,
             session_id=self.session_id,
@@ -1585,6 +1592,7 @@ class LeonConsole:
             search_service=self.search_service,
             file_service=self.file_service,
             file_write_service=self.file_write_service,
+            memory_service=self.memory_service,
             additional_system_prompt=self.config.read_additional_system_prompt(),
         )
 

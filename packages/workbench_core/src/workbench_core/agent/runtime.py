@@ -247,6 +247,7 @@ class AgentRuntime:
         *,
         history: Sequence[dict[str, Any]] = (),
         cancel_event: Event | None = None,
+        system_context: str | None = None,
     ) -> AgentResult:
         resolved_cancel_event = (
             cancel_event if cancel_event is not None else current_cancel_event()
@@ -256,6 +257,7 @@ class AgentRuntime:
                 user_message,
                 history=history,
                 cancel_event=resolved_cancel_event,
+                system_context=system_context,
             )
 
     def _run(
@@ -264,9 +266,16 @@ class AgentRuntime:
         *,
         history: Sequence[dict[str, Any]],
         cancel_event: Event | None,
+        system_context: str | None,
     ) -> AgentResult:
+        context_message = (
+            {"role": "system", "content": system_context.strip()}
+            if isinstance(system_context, str) and system_context.strip()
+            else None
+        )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
+            *([context_message] if context_message is not None else []),
             *[dict(message) for message in history],
             {"role": "user", "content": user_message},
         ]

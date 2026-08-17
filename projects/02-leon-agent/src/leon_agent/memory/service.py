@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import re
+import sqlite3
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +17,8 @@ from leon_agent.memory.store import (
     EFFECTIVE_SCOPE,
     GLOBAL_OWNER,
     GLOBAL_SCOPE,
+    MAX_GLOBAL_MEMORIES,
+    MAX_USER_MEMORIES,
     SQLITE_INTEGER_MAX,
     SQLITE_INTEGER_MIN,
     USER_SCOPE,
@@ -26,6 +32,54 @@ from leon_agent.memory.store import (
 
 SOURCE_EXPLICIT_USER = "explicit_user_request"
 MAX_GET_LIMIT = 20
+MAX_CONTEXT_RECORDS = 12
+MAX_CONTEXT_CHARS = 2_400
+MAX_CONTEXT_VALUE_CHARS = 512
+
+
+@dataclass
+class _MemoryTurnState:
+    user_message: str
+    writes_used: int = 0
+
+
+_CURRENT_TURN: ContextVar[_MemoryTurnState | None] = ContextVar(
+    "leon_memory_turn",
+    default=None,
+)
+
+
+@contextmanager
+def memory_turn(user_message: str) -> Iterator[None]:
+    """Bind explicit consent and the single-write budget to one Agent turn."""
+
+    state = _MemoryTurnState(user_message=user_message)
+    token = _CURRENT_TURN.set(state)
+    try:
+        yield
+    finally:
+        _CURRENT_TURN.reset(token)
+
+
+def current_memory_user_message() -> str | None:
+    state = _CURRENT_TURN.get()
+    return state.user_message if state is not None else None
+
+
+def current_memory_writes_used() -> int:
+    state = _CURRENT_TURN.get()
+    return state.writes_used if state is not None else 0
+
+
+def claim_memory_write() -> int:
+    """Consume the current turn's one-write budget and return its prior count."""
+
+    state = _CURRENT_TURN.get()
+    if state is None:
+        return 0
+    writes_used = state.writes_used
+    state.writes_used += 1
+    return writes_used
 
 
 class MemoryPolicyError(ValueError):
@@ -365,6 +419,71 @@ class MemoryService:
             }
         except MemoryStoreError as exc:
             return _safe_error(exc)
+
+    def build_context(self) -> str:
+        """Render a bounded, explicitly untrusted context for the current turn.
+
+        Values that do not fit the per-record budget are represented by metadata
+        only; the complete value remains available through ``memory_get``.
+        Storage failures fail closed so ordinary chat keeps working.
+        """
+
+        try:
+            global_records = self.store.list(
+                GLOBAL_SCOPE,
+                GLOBAL_OWNER,
+                limit=MAX_GLOBAL_MEMORIES,
+            )
+            user_records = self.store.list(
+                USER_SCOPE,
+                self.principal,
+                limit=MAX_USER_MEMORIES,
+            )
+        except (MemoryStoreError, sqlite3.Error):
+            return ""
+
+        effective = {record.key: record for record in global_records}
+        effective.update({record.key: record for record in user_records})
+        records = sorted(
+            effective.values(),
+            key=lambda record: (
+                0 if record.scope == USER_SCOPE else 1,
+                -record.updated_at,
+                record.key,
+            ),
+        )
+
+        opening = '<leon_memory_context untrusted_data="true">'
+        closing = "</leon_memory_context>"
+        lines: list[str] = []
+        for record in records[:MAX_CONTEXT_RECORDS]:
+            value_json = json.dumps(
+                record.value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if len(value_json) > MAX_CONTEXT_VALUE_CHARS:
+                line = (
+                    f"- scope={record.scope} key={record.key} "
+                    "value_omitted=true; call memory_get for the full value"
+                )
+            else:
+                # Keep untrusted data from closing the surrounding marker or
+                # being interpreted as markup by the provider.
+                escaped = (
+                    value_json.replace("&", r"\u0026")
+                    .replace("<", r"\u003c")
+                    .replace(">", r"\u003e")
+                )
+                line = f"- scope={record.scope} key={record.key} value={escaped}"
+            candidate = "\n".join([opening, *lines, line, closing])
+            if len(candidate) > MAX_CONTEXT_CHARS:
+                break
+            lines.append(line)
+        if not lines:
+            return ""
+        return "\n".join([opening, *lines, closing])
 
     def delete(
         self,
