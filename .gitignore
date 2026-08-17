@@ -36,6 +36,9 @@ data/*.db
 .tmp/
 .temp/
 
+# Private career materials
+notes/career/boss-zhipin-ai-agent-resume.md
+
 # Model / vector store artifacts
 **/*.faiss
 **/*.index

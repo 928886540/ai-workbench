@@ -1368,7 +1368,7 @@ onBeforeUnmount(() => {
               <h1 id="login-title">Leon</h1>
               <span>AGENT</span>
             </div>
-            <p>聊天 语音 生图  Have Fun 👿</p>
+            <p>聊天 语音 生图  Have Fun 😈</p>
           </div>
         </div>
         <form class="login-form" @submit.prevent="login">
