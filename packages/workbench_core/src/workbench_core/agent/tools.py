@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import CancelledError
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 ToolHandler = Callable[..., dict[str, Any]]
 DirectAnswerFormatter = Callable[[dict[str, Any], dict[str, Any]], str | None]
@@ -23,6 +23,7 @@ class AgentTool:
     answer_formatter: DirectAnswerFormatter | None = None
     audit_arguments: AuditProjection | None = None
     audit_result: AuditProjection | None = None
+    span_kind: Literal["tool", "planning"] = "tool"
 
     @property
     def schema(self) -> dict[str, Any]:
@@ -61,6 +62,12 @@ class ToolRegistry:
         """Return a persistable name without echoing an unknown model-supplied value."""
 
         return name if name in self._tools else "unknown_tool"
+
+    def span_kind(self, name: str) -> Literal["tool", "planning"]:
+        """Return a stable trace kind without trusting a model-supplied tool name."""
+
+        tool = self._tools.get(name)
+        return tool.span_kind if tool is not None else "tool"
 
     def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         tool = self._tools.get(name)

@@ -13,6 +13,8 @@ class ToolStep:
     name: str
     arguments: dict[str, Any]
     result: dict[str, Any]
+    trace_id: str | None = None
+    span_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,10 @@ class AgentEvent:
     arguments: dict[str, Any] = field(default_factory=dict)
     result: dict[str, Any] | None = None
     content: str | None = None
+    trace_id: str | None = None
+    turn_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
 
 
 @dataclass
@@ -35,3 +41,5 @@ class AgentResult:
     messages: list[dict[str, Any]] = field(default_factory=list)
     model: str | None = None
     usage: dict[str, int] | None = None
+    trace_id: str | None = None
+    turn_id: str | None = None

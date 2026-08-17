@@ -9,6 +9,15 @@ from workbench_core.agent.runtime import (
     parse_tool_arguments,
 )
 from workbench_core.agent.tools import AgentTool, ToolRegistry
+from workbench_core.agent.tracing import (
+    InMemoryTraceSink,
+    NoOpTraceSink,
+    SpanRecord,
+    TraceContext,
+    TraceRecord,
+    TraceRecorder,
+    TraceSink,
+)
 
 __all__ = [
     "AgentEvent",
@@ -16,6 +25,13 @@ __all__ = [
     "AgentResult",
     "AgentRuntime",
     "AgentTool",
+    "InMemoryTraceSink",
+    "NoOpTraceSink",
+    "SpanRecord",
+    "TraceContext",
+    "TraceRecord",
+    "TraceRecorder",
+    "TraceSink",
     "ToolRegistry",
     "ToolStep",
     "cancellation_scope",
