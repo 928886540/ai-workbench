@@ -149,6 +149,7 @@ CLI 是 Client，手机 Web 是 Client，未来 iOS App 也只是 Client。三�
 POST   /api/agent/sessions                    创建新会话
 GET    /api/agent/sessions                    列出会话
 GET    /api/agent/sessions/{session_id}       获取会话详情
+PUT    /api/agent/sessions/{session_id}/pin   置顶或取消置顶
 ```
 
 ### 消息

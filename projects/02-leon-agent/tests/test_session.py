@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 from leon_agent.session import SessionStore
@@ -32,6 +33,76 @@ def test_session_store_persists_messages_and_job_ids(tmp_path: Path) -> None:
         {"role": "assistant", "content": "已提交"},
     ]
     assert store.list_sessions()[0]["message_count"] == 2
+
+
+def test_session_store_lists_pinned_sessions_first_with_topic(tmp_path: Path) -> None:
+    db_path = tmp_path / "history.db"
+    store = SessionStore(db_path)
+    first_session = store.create_session()
+    second_session = store.create_session()
+    store.add_message(first_session, "user", "  第一段\n会话主题  ")
+    store.add_message(first_session, "assistant", "第一段回复")
+    store.add_message(second_session, "user", "最近的会话")
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?", (100, first_session)
+        )
+        connection.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?", (200, second_session)
+        )
+
+    assert store.set_session_pinned(first_session, True) is True
+    assert store.set_session_pinned("missing", True) is False
+    reopened = SessionStore(db_path)
+    sessions = reopened.list_sessions()
+
+    assert [item["id"] for item in sessions] == [first_session, second_session]
+    assert sessions[0]["pinned"] is True
+    assert sessions[0]["title"] == "第一段 会话主题"
+    assert sessions[0]["message_count"] == 2
+    assert sessions[1]["pinned"] is False
+
+    assert reopened.set_session_pinned(first_session, False) is True
+    assert [item["id"] for item in reopened.list_sessions()] == [
+        second_session,
+        first_session,
+    ]
+
+
+def test_session_store_migrates_legacy_database_for_pinning(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                llm_provider TEXT,
+                llm_model TEXT,
+                llm_base_url TEXT
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)",
+            ("legacy-session", 1, 2),
+        )
+
+    store = SessionStore(db_path)
+    assert store.list_sessions() == [
+        {
+            "id": "legacy-session",
+            "created_at": 1,
+            "updated_at": 2,
+            "message_count": 0,
+            "title": "新会话",
+            "pinned": False,
+        }
+    ]
+    assert store.set_session_pinned("legacy-session", True) is True
+    assert SessionStore(db_path).list_sessions()[0]["pinned"] is True
 
 
 def test_session_store_persists_voice_attachments_across_reopen(tmp_path: Path) -> None:

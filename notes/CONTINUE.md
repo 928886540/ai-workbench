@@ -10,7 +10,7 @@
 2. **开场一句话** = 快速对齐
 3. **Codex session 续接** = 加分项，有就用，没有也能继续
 
-## 当前主线（2026-08-17）
+## 当前主线（2026-08-18）
 
 - 当前集成分支：`feat/leon-ui-polish`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
   页面恢复、图片任务补拉、全屏图片缩放平移，以及按 `assistant.delta` 分段合成和按 revision 重试的流式 TTS
@@ -29,10 +29,11 @@
   最终 Git diff，并用 3 个 provider-free 稳定 case 覆盖 bug、小功能和 failing-test repair。
 - `manual_vue_web_check.py` 已改为只结束本次测试创建的完整进程树；Windows 使用精确 PID + `/T`，
   正常和故意失败路径均验证 4173/4178 回到 0，不会全局结束 `node.exe`，`--base-url` 外部服务不归它管理。
-- 旧的“后台图片等待超时”未稳定复现：图片与 `/api/**` 均由本地 FakeGateway 接管，不涉及外部 provider；
-  后续 Vite/FastAPI 入口各 **87/87**。另一次超时发生在更早的最近图片加载，疑似测试持有旧 DOM handle，
-  证据不足，因此没有调大超时、降低断言或改业务语义；测试退出后 4173/4178/4187/4188 均无监听残留。
-- 最终收口验证：全仓 `pytest` **628 passed**，Coding Agent 三个 demo case **3 passed**；Ruff、compileall、
+- Web smoke 的历史列表与最近图片等待竞态已收口：测试现在等待排序后的列表真正落 DOM，并要求两张图片均完成加载且布局尺寸非零；
+  没有调大总超时、降低断言或改变业务语义，Vite/FastAPI 两种入口各 **93/93**，退出后无 Preview 端口或子进程残留。
+- CLI 启动和执行流统一为最大 66 列的 LEON 控制台：新会话显示双网格，恢复会话与窄屏自动降级；
+  `YOU ❯`、`LEON ╱>`、`◈ THINK/TOOL`、`◆ DONE`、`◇ ERROR` 分离角色，回答分割线继续铺满终端可用宽度。
+- 最终收口验证：全仓 `pytest` **635 passed**，Coding Agent 三个 demo case **3 passed**；Ruff、compileall、
   `uv lock --check`、Vue typecheck/build、`git diff --check`、UTF-8/BOM 与 secret 扫描均通过。
 - 下方带日期 checkpoint 保留历史现场；其中旧“下一步”或“待提交”不覆盖本节当前主线。
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
@@ -62,7 +63,7 @@
   `data/system-prompts/双人成行预设.txt`，CLI 与 Web Gateway 都已接入
 - Web 修复（2026-08-16）：旧 session 聊天记录恢复渲染、任务/图库按 `created_at` 最新优先；
   编辑改为独立弹窗，完成任务显示缩略图，退出登录二次确认；站点 favicon 已改为 CLI 同款金色 `✦`，Vue SW 当前为 v21
-- CLI 已升级为日用 inline TUI：上方可滚动聊天记录，底部 1～6 行动态输入框以 `»` 标记首行、续行不缩进；外层终端接管
+- CLI 已升级为日用 inline TUI：上方可滚动聊天记录，底部 1～6 行动态输入框以 `YOU ❯` 标记首行、续行不缩进；助手回答使用 `LEON ╱>`；外层终端接管
   鼠标滚轮回看和拖选复制，同时支持 PageUp/PageDown 翻页与显式闪烁竖线光标；resume 会按顺序重放最近 240 条消息；Enter 发送，
   Shift+Enter 换行，并为不兼容终端保留 Ctrl+Enter / Esc+Enter。非 TTY 继续使用 Rich fallback。
 - CLI 历史回答 `•` 为绿色、最新回答保持正文色，工具状态按青/绿/红/粉/黄区分；每轮结束显示唯一一条

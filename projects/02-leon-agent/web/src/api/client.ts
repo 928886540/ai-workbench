@@ -34,6 +34,24 @@ export interface CreateSessionResponse {
   created_at: number;
 }
 
+export interface SessionSummary {
+  id: string;
+  created_at: number;
+  updated_at: number;
+  message_count: number;
+  title: string;
+  pinned: boolean;
+}
+
+export interface SessionListResponse {
+  sessions: SessionSummary[];
+}
+
+export interface SessionPinResponse {
+  session_id: string;
+  pinned: boolean;
+}
+
 export interface MessageResponse {
   session_id: string;
   answer: string;
@@ -155,6 +173,17 @@ export class LeonApi {
 
   async createSession(): Promise<CreateSessionResponse> {
     return this.request<CreateSessionResponse>("/api/agent/sessions", { method: "POST" });
+  }
+
+  async listSessions(): Promise<SessionListResponse> {
+    return this.request<SessionListResponse>("/api/agent/sessions");
+  }
+
+  async setSessionPinned(sessionId: string, pinned: boolean): Promise<SessionPinResponse> {
+    return this.request<SessionPinResponse>(`/api/agent/sessions/${sessionId}/pin`, {
+      method: "PUT",
+      body: JSON.stringify({ pinned }),
+    });
   }
 
   async sendMessage(

@@ -1,4 +1,4 @@
-const CACHE = 'leon-vue-v26';
+const CACHE = 'leon-vue-v27';
 const STATIC = ['/', '/index.html', '/manifest.json', '/icon.svg', '/icon-512.png'];
 self.addEventListener('install', e =>
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(STATIC)).then(() => self.skipWaiting()))

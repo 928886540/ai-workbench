@@ -37,8 +37,8 @@ def test_vue_entry_is_the_only_web_client() -> None:
     assert '<link rel="icon" href="/icon.svg" type="image/svg+xml" />' in entry
     assert '<link rel="apple-touch-icon" href="/icon-512.png" />' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-26"' in main
-    assert "leon-vue-v26" in service_worker
+    assert 'register("/sw.js?v=vue-27"' in main
+    assert "leon-vue-v27" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:
@@ -152,6 +152,54 @@ def test_vue_chat_login_session_restore_and_error_dedup_contract() -> None:
     images = _read("web/src/stores/images.ts")
     assert "const TERMINAL_IMAGE_STATUSES" in images
     assert "keepTerminalState" in images
+
+
+def test_vue_session_history_switch_contract() -> None:
+    client = _read("web/src/api/client.ts")
+    chat = _read("web/src/views/ChatView.vue")
+    history = _read("web/src/components/SessionHistoryPanel.vue")
+
+    for fragment in (
+        "export interface SessionSummary",
+        "async listSessions(",
+        "async setSessionPinned(",
+        "`/api/agent/sessions/${sessionId}/pin`",
+    ):
+        assert fragment in client, fragment
+
+    for fragment in (
+        "async function switchSession(sessionId: string)",
+        "api.setSession(session.session_id)",
+        "appendHistory(session.messages, session.voice_clips || [])",
+        "clearImageState();",
+        "void loadImageState(true);",
+        "connectEvents();",
+        "activeView.value = \"chat\";",
+        "async function createNewSession()",
+        "async function toggleSessionPinned(sessionId: string, pinned: boolean)",
+        "<SessionHistoryPanel",
+        ':active-session-id="api.sessionId"',
+    ):
+        assert fragment in chat, fragment
+
+    switch_body = chat.split("async function switchSession(sessionId: string)", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+    assert "ensureVoiceCatalog" not in switch_body
+    assert "getModelSettings" not in switch_body
+
+    for fragment in (
+        'id="session-history-panel"',
+        'aria-label="历史会话"',
+        'aria-label="新建会话"',
+        "sessions",
+        "session.pinned",
+        'select: [sessionId: string]',
+        '"toggle-pin": [sessionId: string, pinned: boolean]',
+        'emit("select", sessionId)',
+        'emit("toggle-pin", sessionId, pinned)',
+    ):
+        assert fragment in history, fragment
 
 
 def test_vue_message_bubble_copy_edit_retry_contract() -> None:

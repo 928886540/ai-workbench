@@ -33,6 +33,7 @@ class SessionStore:
                     id TEXT PRIMARY KEY,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL,
+                    is_pinned INTEGER NOT NULL DEFAULT 0,
                     llm_provider TEXT,
                     llm_model TEXT
                 );
@@ -99,6 +100,10 @@ class SessionStore:
                 connection.execute("ALTER TABLE sessions ADD COLUMN llm_model TEXT")
             if "llm_base_url" not in session_columns:
                 connection.execute("ALTER TABLE sessions ADD COLUMN llm_base_url TEXT")
+            if "is_pinned" not in session_columns:
+                connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0"
+                )
             message_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(messages)")
             }
@@ -129,6 +134,14 @@ class SessionStore:
                 (session_id,),
             ).fetchone()
         return row is not None
+
+    def set_session_pinned(self, session_id: str, pinned: bool) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE sessions SET is_pinned = ? WHERE id = ?",
+                (int(pinned), session_id),
+            )
+        return cursor.rowcount > 0
 
     def get_provider_pin(self, session_id: str) -> tuple[str, str] | None:
         """Return the persisted (provider scope, base URL) pin for a session."""
@@ -538,13 +551,34 @@ class SessionStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT s.id, s.created_at, s.updated_at, COUNT(m.id) AS message_count
+                SELECT
+                    s.id,
+                    s.created_at,
+                    s.updated_at,
+                    s.is_pinned,
+                    (
+                        SELECT COUNT(*)
+                        FROM messages AS counted
+                        WHERE counted.session_id = s.id
+                    ) AS message_count,
+                    (
+                        SELECT topic.content
+                        FROM messages AS topic
+                        WHERE topic.session_id = s.id AND topic.role = 'user'
+                        ORDER BY topic.id ASC
+                        LIMIT 1
+                    ) AS topic
                 FROM sessions AS s
-                LEFT JOIN messages AS m ON m.session_id = s.id
-                GROUP BY s.id
-                ORDER BY s.updated_at DESC
+                ORDER BY s.is_pinned DESC, s.updated_at DESC, s.created_at DESC
                 LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        sessions = []
+        for row in rows:
+            item = dict(row)
+            topic = " ".join(str(item.pop("topic") or "").split())
+            item["title"] = topic[:80] or "新会话"
+            item["pinned"] = bool(item.pop("is_pinned"))
+            sessions.append(item)
+        return sessions

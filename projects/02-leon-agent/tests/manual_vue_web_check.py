@@ -35,6 +35,7 @@ PROJECT_ROOT = ROOT / "projects" / "02-leon-agent"
 WEB_ROOT = PROJECT_ROOT / "web"
 DEFAULT_PORT = 4173
 FAKE_SESSION_ID = "vue-e2e-session"
+FAKE_OTHER_SESSION_ID = "vue-e2e-session-other"
 FAKE_TOKEN = "vue-e2e-token"
 FAKE_VOICE_ID = "689334e84d3396ad1d28ee9e"
 JOK_VOICE_ID = "jok-voice-unused"
@@ -176,6 +177,10 @@ class FakeGateway:
         self.active_turn: dict[str, bool] | None = None
         self.clear_active_turn_after_session_read = False
         self.cancel_post_405 = False
+        self.session_pinned = {
+            FAKE_SESSION_ID: False,
+            FAKE_OTHER_SESSION_ID: True,
+        }
         self._next_message_id = 3
         self.session_messages: list[dict[str, Any]] = [
             {"id": 1, "role": "user", "content": "历史消息一", "created_at": 1_000},
@@ -220,6 +225,40 @@ class FakeGateway:
                 "created_at": 2,
             },
         ]
+        self.other_session_messages: list[dict[str, Any]] = [
+            {
+                "id": 101,
+                "role": "user",
+                "content": "第二个会话主题",
+                "created_at": 2_000_000,
+            },
+            {
+                "id": 102,
+                "role": "assistant",
+                "content": "第二个会话回复",
+                "created_at": 2_001_000,
+                "revisions": [],
+            },
+        ]
+        self.other_image_tasks: list[dict[str, Any]] = [
+            {
+                "job_id": "other-image-job",
+                "status": "completed",
+                "progress": 100,
+                "mode_name": "第二会话模式",
+                "source_text": "第二会话任务",
+                "image_url": "/api/fake-image-2",
+                "created_at": 3,
+            }
+        ]
+        self.other_image_records: list[dict[str, Any]] = [
+            {
+                "job_id": "other-image-job",
+                "image_url": "/api/fake-image-2",
+                "source_text": "第二会话图片",
+                "created_at": 3,
+            }
+        ]
 
     def append_session_message(self, role: str, content: str) -> dict[str, Any]:
         message: dict[str, Any] = {
@@ -253,11 +292,65 @@ class FakeGateway:
                 _json_response(route, {"ok": True, "service": "fake-vue-gateway"})
             return
 
+        if path == "/api/agent/sessions" and method == "GET":
+            sessions = [
+                {
+                    "id": FAKE_SESSION_ID,
+                    "created_at": 1,
+                    "updated_at": 1_000_000,
+                    "message_count": len(self.session_messages),
+                    "title": "历史消息一",
+                    "pinned": self.session_pinned[FAKE_SESSION_ID],
+                },
+                {
+                    "id": FAKE_OTHER_SESSION_ID,
+                    "created_at": 2,
+                    "updated_at": 2_000_000,
+                    "message_count": len(self.other_session_messages),
+                    "title": "第二个会话主题",
+                    "pinned": self.session_pinned[FAKE_OTHER_SESSION_ID],
+                },
+            ]
+            sessions.sort(
+                key=lambda item: (bool(item["pinned"]), int(item["updated_at"])),
+                reverse=True,
+            )
+            _json_response(route, {"sessions": sessions})
+            return
+
         if path == "/api/agent/sessions" and method == "POST":
             _json_response(route, {"session_id": FAKE_SESSION_ID, "created_at": 1})
             return
 
         session_prefix = f"/api/agent/sessions/{FAKE_SESSION_ID}"
+        other_session_prefix = f"/api/agent/sessions/{FAKE_OTHER_SESSION_ID}"
+        if path in {f"{session_prefix}/pin", f"{other_session_prefix}/pin"} and method == "PUT":
+            session_id = path.removeprefix("/api/agent/sessions/").removesuffix("/pin")
+            pinned = bool(body.get("pinned"))
+            self.session_pinned[session_id] = pinned
+            _json_response(route, {"session_id": session_id, "pinned": pinned})
+            return
+        if path == other_session_prefix and method == "GET":
+            _json_response(
+                route,
+                {
+                    "session_id": FAKE_OTHER_SESSION_ID,
+                    "messages": self.other_session_messages,
+                    "voice_clips": [],
+                    "active_turn": None,
+                },
+            )
+            return
+        if path == f"{other_session_prefix}/image-state" and method == "GET":
+            _json_response(
+                route,
+                {
+                    "tasks": self.other_image_tasks,
+                    "images": self.other_image_records,
+                    "errors": {},
+                },
+            )
+            return
         if path == session_prefix and method == "GET":
             active_turn = self.active_turn
             if self.clear_active_turn_after_session_read:
@@ -718,6 +811,69 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             check(
                 "健康检查经历未授权与 token 两条路径",
                 sum(call["path"] == "/api/health" for call in gateway.calls) >= 2,
+            )
+
+            page.wait_for_timeout(100)
+            voice_catalog_calls_before_switch = sum(
+                call["path"] == "/api/voice/catalog" for call in gateway.calls
+            )
+            model_calls_before_switch = sum(
+                call["path"].endswith("/model") for call in gateway.calls
+            )
+            page.get_by_role("button", name="历史会话").click()
+            session_panel = page.locator("#session-history-panel")
+            session_panel.wait_for(state="visible")
+            session_entries = session_panel.locator(".session-history-entry")
+            session_entries.first.get_by_text("第二个会话主题").wait_for(state="visible")
+            check(
+                "历史会话置顶优先并与 Timeline 独立",
+                session_entries.count() == 2
+                and "第二个会话主题" in session_entries.first.inner_text()
+                and not page.locator("#timeline-panel").is_visible(),
+            )
+            other_entry = session_entries.filter(has_text="第二个会话主题")
+            other_entry.get_by_role("button", name="取消置顶").click()
+            page.wait_for_timeout(50)
+            check(
+                "历史会话支持取消置顶",
+                any(
+                    call["method"] == "PUT"
+                    and call["path"]
+                    == f"/api/agent/sessions/{FAKE_OTHER_SESSION_ID}/pin"
+                    and call["body"].get("pinned") is False
+                    for call in gateway.calls
+                ),
+            )
+            other_entry.locator(".session-history-entry__select").click()
+            page.locator(".message-row", has_text="第二个会话回复").wait_for(
+                state="visible"
+            )
+            check(
+                "点击历史会话会切换聊天记录与本地会话身份",
+                page.locator(".message-row", has_text="历史回复一").count() == 0
+                and page.evaluate("() => localStorage.getItem('leon_session')")
+                == FAKE_OTHER_SESSION_ID,
+            )
+            page.get_by_role("button", name="任务").click()
+            page.locator(".task-card", has_text="第二会话任务").wait_for(state="visible")
+            check("切换会话会恢复对应生图任务", True)
+            page.get_by_role("button", name="图库").click()
+            page.locator(".gallery-card", has_text="第二会话图片").wait_for(state="visible")
+            check("切换会话会恢复对应图库", True)
+
+            page.get_by_role("button", name="历史会话").click()
+            session_panel.wait_for(state="visible")
+            session_panel.locator(".session-history-entry", has_text="历史消息一").locator(
+                ".session-history-entry__select"
+            ).click()
+            page.locator(".message-row", has_text="历史回复一").wait_for(state="visible")
+            page.wait_for_timeout(100)
+            check(
+                "会话切换不刷新模型和语音配置",
+                sum(call["path"] == "/api/voice/catalog" for call in gateway.calls)
+                == voice_catalog_calls_before_switch
+                and sum(call["path"].endswith("/model") for call in gateway.calls)
+                == model_calls_before_switch,
             )
 
             page.evaluate(
@@ -1709,8 +1865,14 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             ).last
             latest_images_row.wait_for(state="visible")
             page.wait_for_function(
-                "element => element.naturalHeight > 0 && element.clientHeight > 0",
-                arg=latest_images_row.locator(".markdown-image").first.element_handle(),
+                """element => {
+                    const images = [...element.querySelectorAll('.markdown-image')];
+                    return images.length === 2 && images.every((image) =>
+                        image.complete && image.naturalWidth > 0 && image.naturalHeight > 0 &&
+                        image.clientWidth > 0 && image.clientHeight > 0
+                    );
+                }""",
+                arg=latest_images_row.element_handle(),
             )
             latest_image_count = latest_images_row.locator(".markdown-image").count()
             latest_image_sources = latest_images_row.locator(".markdown-image").evaluate_all(
@@ -1720,6 +1882,16 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 "node => ({ naturalWidth: node.naturalWidth, naturalHeight: node.naturalHeight, "
                 "clientWidth: node.clientWidth, clientHeight: node.clientHeight, "
                 "objectFit: getComputedStyle(node).objectFit })"
+            )
+            image_ratio_matches = (
+                latest_image_metrics["clientHeight"] > 0
+                and latest_image_metrics["naturalHeight"] > 0
+                and abs(
+                    latest_image_metrics["clientWidth"] / latest_image_metrics["clientHeight"]
+                    - latest_image_metrics["naturalWidth"]
+                    / latest_image_metrics["naturalHeight"]
+                )
+                < 0.02
             )
             check(
                 "查询最近图片直接渲染图片而不是查看链接列表",
@@ -1735,11 +1907,7 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 and latest_image_metrics["naturalHeight"] == 2500
                 and latest_image_metrics["naturalWidth"] > 0
                 and latest_image_metrics["naturalHeight"] > 0
-                and abs(
-                    latest_image_metrics["clientWidth"] / latest_image_metrics["clientHeight"]
-                    - latest_image_metrics["naturalWidth"] / latest_image_metrics["naturalHeight"]
-                )
-                < 0.02
+                and image_ratio_matches
                 and latest_image_metrics["objectFit"] == "contain",
                 f"sources={latest_image_sources}, metrics={latest_image_metrics}",
             )

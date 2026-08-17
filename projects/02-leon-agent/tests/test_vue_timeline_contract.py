@@ -75,9 +75,10 @@ def test_timeline_resets_for_new_session_logout_and_unmount() -> None:
 def test_timeline_panel_is_compact_and_mobile_friendly() -> None:
     styles = _read("web/src/styles.css")
 
-    for selector in (".timeline-panel", ".timeline-list", ".timeline-entry__detail"):
+    assert ".timeline-panel,\n.session-history-panel {" in styles
+    for selector in (".timeline-list", ".timeline-entry__detail"):
         assert f"{selector} {{" in styles, selector
-    panel_start = styles.index(".timeline-panel {")
+    panel_start = styles.index(".timeline-panel,")
     panel = styles[panel_start : styles.index("}", panel_start) + 1]
     assert "position: absolute;" in panel
     assert "overflow-y: auto;" in panel

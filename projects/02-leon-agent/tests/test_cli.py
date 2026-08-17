@@ -727,6 +727,32 @@ def test_status_reports_unlimited_llm_response_wait() -> None:
     rendered = output.getvalue()
     assert "response=unlimited" in rendered
     assert "timeout=0s" not in rendered
+    assert "test-session" in rendered
+    assert "IMAGE configured · SEARCH off" in rendered
+    assert "当前运行状态" in rendered
+
+
+def test_status_stays_compact_with_long_runtime_values() -> None:
+    output = StringIO()
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.console = Console(file=output, width=42, force_terminal=False)
+    cli.ui = None
+    cli.llm_model = "model-" + "x" * 80
+    cli.llm_provider_name = "provider-" + "y" * 80
+    cli.session_id = "session-1234567890-very-long"
+    cli.llm_timeout_seconds = 30.0
+    cli.llm_max_retries = 2
+    cli.config = SimpleNamespace(backend_url="https://backend.example/very/long/url")
+    cli.search_service = object()
+
+    cli.show_status()
+
+    lines = output.getvalue().splitlines()
+    assert len(lines) == 6
+    assert all(len(line) <= 42 for line in lines)
+    assert "SESSION session-1234" in lines[2]
+    assert "backend.example" not in output.getvalue()
+    assert "IMAGE configured" in lines[4]
 
 
 def test_timeout_error_does_not_describe_unlimited_reads_as_zero_seconds() -> None:
@@ -1728,7 +1754,7 @@ def test_terminal_ui_uses_inline_scrollback_native_selection_and_blinking_cursor
     assert application_kwargs["cursor"] == cli_module.CursorShape.BLINKING_BEAM
     assert application_kwargs["refresh_interval"] is None
     prompt_processor = ui.input.control.input_processors[2]
-    assert prompt_processor.text == [("class:composer.prompt", "» ")]
+    assert prompt_processor.text == [("class:composer.prompt", "YOU ❯ ")]
     assert ui.input.window.always_hide_cursor() is False
     ui._cursor_visible = False
     assert ui.input.window.always_hide_cursor() is True
@@ -2180,11 +2206,10 @@ def test_terminal_ui_uses_two_unframed_composer_lines_and_delays_user_render(
 
     ui.write_user_message("已经发送")
 
-    assert ui.blocks[-1] == "» 已经发送"
-    assert "你" not in ui.blocks[-1]
+    assert ui.blocks[-1] == "YOU ❯ 已经发送"
 
 
-def test_terminal_ui_answer_uses_bullet_without_leon_and_indents_following_lines(
+def test_terminal_ui_answer_uses_leon_prefix_and_indents_following_lines(
     monkeypatch,
 ) -> None:  # noqa: ANN001
     class FakeOwner:
@@ -2205,10 +2230,9 @@ def test_terminal_ui_answer_uses_bullet_without_leon_and_indents_following_lines
     ui.write_answer("第一行\n\n第二行")
 
     lines = ui.blocks[-1].splitlines()
-    assert lines[0].rstrip() == "• 第一行"
-    assert lines[-1] == "  第二行"
-    assert all("Leon" not in line for line in lines)
-    assert all(line.startswith("  ") for line in lines[1:])
+    assert lines[0].rstrip() == "LEON ╱> 第一行"
+    assert lines[-1] == "        第二行"
+    assert all(line.startswith("        ") for line in lines[1:])
 
 
 def test_terminal_ui_turn_separator_retires_old_timing_and_colors_markers(
@@ -2228,7 +2252,7 @@ def test_terminal_ui_turn_separator_retires_old_timing_and_colors_markers(
 
     monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
     ui = TerminalChatUI(FakeOwner())
-    monkeypatch.setattr(ui, "_render_width", lambda: 48)
+    monkeypatch.setattr(ui, "_separator_width", lambda: 48)
 
     ui.write_answer("旧回答")
     ui.write_turn_separator(174.9)
@@ -2245,7 +2269,7 @@ def test_terminal_ui_turn_separator_retires_old_timing_and_colors_markers(
     ui.write_plain("✗ tool 失败")
     fragments = ui._output_fragments()
 
-    marker_styles = [style for style, text, *_ in fragments if text == "• "]
+    marker_styles = [style for style, text, *_ in fragments if text == "LEON ╱> "]
     assert marker_styles == ["class:message.marker.old", "class:message.marker"]
     assert any(
         style == "class:status.success" and text == "✓ tool 完成"
@@ -2275,7 +2299,7 @@ def test_terminal_ui_answer_list_does_not_leave_a_lonely_outer_bullet(monkeypatc
     ui.write_answer("- 第一项\n- 第二项")
 
     lines = ui.blocks[-1].splitlines()
-    assert lines[0] == "• 第一项"
+    assert lines[0] == "LEON ╱> 第一项"
     assert lines[1].lstrip() == "• 第二项"
     assert all(not line.endswith(" ") for line in lines)
 
@@ -2295,7 +2319,7 @@ def test_terminal_ui_continuation_lines_keep_assistant_palette(monkeypatch) -> N
 
     monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
     ui = TerminalChatUI(FakeOwner())
-    ui.write_plain("• 第一行\n  第二行")
+    ui.write_plain("LEON ╱> 第一行\n        第二行")
 
     assert any(
         fragment[0] == "class:message.assistant" and "第二行" in fragment[1]
@@ -2311,19 +2335,18 @@ def test_startup_uses_compact_unframed_summary_on_narrow_terminal() -> None:
     cli.llm_model = "very-long-model-name"
     cli.llm_provider_name = "very-long-provider-name"
     cli.llm_profile = "fallback-profile"
-    cli.session_id = "session-1234567890"
+    cli.session_id = "01234567-1234-5678"
 
     cli._print_startup()
 
     rendered = output.getvalue()
     assert "╭" not in rendered
-    assert "✦ LEON" in rendered
-    assert "/help /model" not in rendered
-    assert "Commands:" not in rendered
-    assert len(rendered.splitlines()) <= 5
+    assert "LEON AGENT" in rendered
+    assert "┌" not in rendered
+    assert len(rendered.splitlines()) == 2
 
 
-def test_startup_hides_command_catalog_in_normal_width() -> None:
+def test_new_session_startup_uses_fixed_66_column_boot_grid() -> None:
     output = StringIO()
     cli = LeonConsole.__new__(LeonConsole)
     cli.console = Console(file=output, width=80, force_terminal=False)
@@ -2331,20 +2354,49 @@ def test_startup_hides_command_catalog_in_normal_width() -> None:
     cli.llm_model = "gpt-5.6-sol"
     cli.llm_provider_name = "custom"
     cli.llm_profile = "custom"
-    cli.session_id = "session-1234567890"
+    cli.session_id = "01234567-1234-5678"
+    cli._resumed_session = False
 
     cli._print_startup()
 
     rendered = output.getvalue()
-    assert "Tip:" not in rendered
-    assert "Commands:" not in rendered
-    assert "/model 选择" not in rendered
-    assert "Model" in rendered
-    assert "Provider" in rendered
-    assert "Endpoint" in rendered
-    assert "Session" in rendered
-    assert "/model" in rendered
-    assert "/tools" in rendered
+    framed_lines = [line for line in rendered.splitlines() if line[:1] in {"┌", "│", "└"}]
+    logo_rows = (
+        "    ██       ████████ ████████ ███    ██",
+        "    ██       ██       ██    ██ ████   ██      A G E N T",
+        "    ██       ██████   ██    ██ ██ ██  ██",
+        "    ██       ██       ██    ██ ██  ██ ██",
+        "    ████████ ████████ ████████ ██   ████",
+    )
+    for row in logo_rows:
+        assert f"│{row.ljust(64)}│" in framed_lines
+    assert "A G E N T" in rendered
+    assert "Your workspace, augmented." in rendered
+    assert "MODEL      gpt-5.6-sol" in rendered
+    assert "SESSION  new" in rendered
+    assert "◈ Plan    ⌕ Search    ▤ Create    ◉ Remember" in rendered
+    assert rendered.count("┌") == 2
+    assert all(len(line) == 66 for line in framed_lines)
+
+
+def test_resumed_session_uses_compact_header_without_large_logo() -> None:
+    output = StringIO()
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.console = Console(file=output, width=80, force_terminal=False)
+    cli.ui = None
+    cli.llm_model = "gpt-5.6-sol"
+    cli.llm_provider_name = "custom"
+    cli.llm_profile = "custom"
+    cli.session_id = "01234567-1234-5678"
+    cli._resumed_session = True
+
+    cli._print_startup()
+
+    rendered = output.getvalue()
+    assert "LEON AGENT" in rendered
+    assert "session    01234567" in rendered
+    assert "████████" not in rendered
+    assert all(len(line) <= 66 for line in rendered.splitlines())
 
 
 def test_legacy_answer_and_feedback_match_compact_tui_contract() -> None:
@@ -2359,11 +2411,11 @@ def test_legacy_answer_and_feedback_match_compact_tui_contract() -> None:
     rendered = output.getvalue()
     assert "正在思考中" in rendered
     assert "…" not in rendered
-    assert "Leon" not in rendered
-    assert "• 回答内容" in rendered
+    assert "◈ THINK" in rendered
+    assert "LEON ╱> 回答内容" in rendered
 
 
-def test_terminal_ui_uses_aurora_drift_palette(monkeypatch) -> None:
+def test_terminal_ui_uses_leon_console_palette(monkeypatch) -> None:
     class FakeOwner:
         llm_model = "fake-model"
         llm_provider_name = "fake-provider"
@@ -2380,19 +2432,20 @@ def test_terminal_ui_uses_aurora_drift_palette(monkeypatch) -> None:
     ui = TerminalChatUI(FakeOwner())
     palette = dict(ui.app.style.style_rules)
 
-    assert palette["message.assistant"] == "#DCEEFF"
-    assert palette["message.marker.old"] == "#65E7B8"
-    assert palette["message.tool"] == "#71869A"
-    assert palette["message.separator"] == "#516579"
+    assert palette["message.assistant"] == "#FFFFFF"
+    assert palette["message.marker"] == "bold #00E5FF"
+    assert palette["message.marker.old"] == "#666666"
+    assert palette["message.tool"] == "#666666"
+    assert palette["message.separator"] == "#666666"
     assert palette["message.link"] == "underline #73B8FF"
-    assert palette["status.running"] == "#59D7E7"
-    assert palette["status.success"] == "#65E7B8"
-    assert palette["status.error"] == "#FF8FB1"
+    assert palette["status.running"] == "#666666"
+    assert palette["status.success"] == "#00FF00"
+    assert palette["status.error"] == "#FF66CC"
     assert palette["status.warning"] == "#F5C26B"
     assert palette["status.cancel"] == "#FF8FB1"
     assert palette["status.background"] == "#73B8FF"
-    assert palette["composer.line"] == "#15304A"
-    assert palette["composer.prompt"] == "bold #F5C26B"
+    assert palette["composer.line"] == "#006C78"
+    assert palette["composer.prompt"] == "bold #00E5FF"
 
 
 def test_terminal_ui_render_width_tracks_very_narrow_terminal(monkeypatch) -> None:
@@ -2417,6 +2470,33 @@ def test_terminal_ui_render_width_tracks_very_narrow_terminal(monkeypatch) -> No
     ui = TerminalChatUI(FakeOwner())
 
     assert ui._render_width() == 16
+
+
+def test_terminal_ui_separator_fills_wide_terminal(monkeypatch) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    monkeypatch.setattr(
+        cli_module.shutil,
+        "get_terminal_size",
+        lambda fallback: SimpleNamespace(columns=140),
+    )
+    ui = TerminalChatUI(FakeOwner())
+
+    ui.write_turn_separator()
+
+    assert ui._render_width() == 100
+    assert ui.blocks[-1] == "─" * 140
 
 
 def test_terminal_ui_delivers_native_hyperlink_with_open_fallback(monkeypatch) -> None:
@@ -2575,15 +2655,15 @@ def test_terminal_ui_thinking_status_pulses_without_moving_ellipsis(monkeypatch)
     second_line = ui._status_line()
     second_fragments = ui._status_fragments()
 
-    assert first_line == "◦ 正在思考中 (1m 12s • esc 取消)"
+    assert first_line == "◈ THINK  正在思考中 (1m 12s • esc 取消)"
     assert second_line == first_line
     assert "正在请求模型" not in first_line
     assert "..." not in first_line
     assert "".join(fragment[1] for fragment in first_fragments) == (
-        "◦ 正在思考中 (1m 12s • esc 取消)"
+        "◈ THINK  正在思考中 (1m 12s • esc 取消)"
     )
     assert "".join(fragment[1] for fragment in second_fragments) == (
-        "◦ 正在思考中 (1m 12s • esc 取消)"
+        "◈ THINK  正在思考中 (1m 12s • esc 取消)"
     )
     first_classes = [
         fragment[0]
@@ -2672,10 +2752,10 @@ def test_legacy_open_last_image_does_not_report_false_success(monkeypatch) -> No
 
 def test_legacy_prompt_uses_ascii_marker_for_non_unicode_console() -> None:
     assert _legacy_prompt_markup(SimpleNamespace(encoding="gbk")) == (
-        "\n[bold yellow]>[/bold yellow]"
+        "\n[bold #00E5FF]YOU >[/bold #00E5FF]"
     )
     assert _legacy_prompt_markup(SimpleNamespace(encoding="utf-8")) == (
-        "\n[bold yellow]»[/bold yellow]"
+        "\n[bold #00E5FF]YOU ❯[/bold #00E5FF]"
     )
 
 

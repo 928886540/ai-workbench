@@ -5,6 +5,7 @@
 ## 当前能力
 
 - `leon` 日用 inline TUI：无可见滚动条的聊天记录、1～6 行动态输入框、运行中消息队列、后台生图通知、SQLite 输入历史和 Rich 非 TTY fallback
+- CLI 新会话使用最大 66 列的 LEON 双网格启动界面，恢复会话和窄屏自动降级；`YOU ❯`、`LEON ╱>` 与执行状态前缀明确区分用户、助手和工具流
 - `leon-server`：FastAPI Gateway + SSE + 手机 PWA Web Client
 - 普通问题直接聊天，不调用工具
 - 明确生图请求优先路由工具，用户原话作为 `source_text` 透传，不由 Agent 扩写 Prompt
@@ -26,6 +27,7 @@
 - 助手气泡支持复制、重试、编辑和朗读；编辑后的文字会成为后续朗读内容
 - iOS 有声播放使用单例播放器 + 用户手势解锁，被拦截时保留待播音频并显示开启按钮
 - Vue 3 + Vite 迁移已覆盖聊天、任务、图库和设置视图；聊天输入支持 `/nsfw --model` 模式名称补全，按名称、ID 和别名过滤
+- Web 右上角提供独立历史会话面板：置顶优先、最近更新倒序；切换会话会同步恢复聊天、图库与生图任务，不重复刷新模型和音色目录
 - Agent Timeline 可查看最近 100 条 SSE 决策事件，并过滤高频 `assistant.delta` 字符增量
 - SSE 事件带进程内 `id`；Gateway 按 `Last-Event-ID` 补发最近 100 条断线事件，连接标记不推进游标
 - LLM 回复使用真实流式输出；最终事件携带实际模型、耗时和 provider 可用时的 token usage
@@ -117,7 +119,7 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 - `/exit`：退出
 
 全屏 TUI 中 Enter 发送，Shift+Enter 换行；终端不支持修饰键时可用 Ctrl+Enter 或 Esc+Enter。
-输入框首行使用 `»` 提示符，续行、运行状态和底栏不做额外缩进；光标使用显式显隐节拍保证 Windows Terminal 下闪烁。CLI 使用 inline 模式，
+输入框首行使用 `YOU ❯` 提示符，续行、运行状态和底栏不做额外缩进；助手回答使用 `LEON ╱>`，避免用户与系统共用同一身份。光标使用显式显隐节拍保证 Windows Terminal 下闪烁。CLI 使用 inline 模式，
 鼠标滚轮滚动外层会话记录，拖选归宿主终端处理，选中后可用 Ctrl+Shift+C 复制；
 聊天记录也可用 PageUp/PageDown 翻页。图片使用不依赖应用鼠标捕获的 OSC 8 原生超链接，`/open` 是后备；
 输出区与输入区保留一行呼吸空间。历史回答标记为绿色，最新回答保持正文色；
@@ -259,6 +261,8 @@ Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 jo
 采用同样的“提交即释放输入区”语义，并在终端后台跟踪结果。图片完成后 Gateway 会主动持久化并推送一条带图片的助手消息，Web
 聊天气泡直接显示图片，不需要再次询问 LLM。Web 设置页可为当前 session 选择模型，或恢复用户 `.leon`
 配置快照中的默认模型；选择会与 CLI 共用同一份 SQLite 会话状态。
+右上角的历史会话与 Agent Timeline 是两个独立入口；会话标题取首条用户消息，置顶状态持久化到 SQLite。
+点击历史项会重连该 session 的 SSE，并恢复对应消息、语音气泡、图库和生图任务；模型与音色目录保持客户端缓存。
 
 任务页默认显示中文模式名、用户原始描述和中文状态；完成任务显示可点击缩略图，内部
 `job_id` / `generation_plan_id` 不在界面暴露。TTS 的 `502` 代表 Volink 上游失败，不是本项目的文本长度限制；网关会记录
@@ -278,7 +282,7 @@ Vue 客户端是唯一 Web 实现，源码位于 `web/src/`，构建产物位于
 [Web 客户端演进评估](docs/web-client-evolution.md)。
 
 Vue 3 + Vite 迁移基座位于 `web/`，当前已覆盖聊天、任务、图库、设置视图和 Agent Timeline。provider-free
-Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **87/87**；
+Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **93/93**；
 它拦截所有 `/api/**`，不会触发真实 LLM、Volink 或图片 provider。本机与公网 Gateway/SSE 已完成只读验收；
 Cloudflare 控制台 Cache Bypass 规则和手机实机验收仍待做。旧单文件 Web 客户端及其浏览器脚本已删除，
 Gateway 不再提供前端选择开关。

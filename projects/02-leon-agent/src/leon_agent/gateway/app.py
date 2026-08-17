@@ -220,6 +220,15 @@ class CreateSessionResponse(BaseModel):
     created_at: int
 
 
+class SessionPinRequest(BaseModel):
+    pinned: bool
+
+
+class SessionPinResponse(BaseModel):
+    session_id: str
+    pinned: bool
+
+
 class MessageRequest(BaseModel):
     content: str
     retry: bool = False
@@ -618,7 +627,23 @@ async def create_session(store: SessionStore = Depends(get_store)):
 
 @app.get("/api/agent/sessions", tags=["sessions"], dependencies=[Depends(verify_token)])
 async def list_sessions(store: SessionStore = Depends(get_store)):
-    return {"sessions": store.list_sessions(limit=20)}
+    return {"sessions": store.list_sessions(limit=100)}
+
+
+@app.put(
+    "/api/agent/sessions/{session_id}/pin",
+    response_model=SessionPinResponse,
+    tags=["sessions"],
+    dependencies=[Depends(verify_token)],
+)
+async def set_session_pin(
+    session_id: str,
+    request: SessionPinRequest,
+    store: SessionStore = Depends(get_store),
+):
+    if not store.set_session_pinned(session_id, request.pinned):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionPinResponse(session_id=session_id, pinned=request.pinned)
 
 
 @app.get(

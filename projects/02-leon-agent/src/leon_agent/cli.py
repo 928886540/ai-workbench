@@ -14,16 +14,18 @@ from collections import deque
 from collections.abc import Sequence
 from contextlib import nullcontext
 from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from rich import box
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Prompt
-from rich.table import Table
+from rich.table import Column, Table
 from rich.text import Text
 from rich.tree import Tree
 from workbench_core.agent import (
@@ -148,6 +150,24 @@ _NEWLINE_ENTER_DATA = {
 }
 
 _WIN32_SHIFT_PRESSED = 0x0010
+
+_USER_PROMPT = "YOU ❯ "
+_ASSISTANT_PROMPT = "LEON ╱> "
+
+
+@dataclass(frozen=True)
+class RuntimeStatus:
+    model: str
+    provider: str
+    session: str
+    workspace: str
+    tool_count: int
+    memory_enabled: bool
+    planning_enabled: bool
+    trace_enabled: bool
+    image_enabled: bool
+    search_enabled: bool
+    request_policy: str
 _WIN32_CTRL_PRESSED = 0x000C
 _WIN32_ALT_PRESSED = 0x0003
 
@@ -207,10 +227,8 @@ def _launch_external_url(url: str) -> bool:
 def _legacy_prompt_markup(console: Console) -> str:
     """Use the styled arrow in Unicode consoles and an ASCII prompt otherwise."""
 
-    marker = "»"
-    if not _console_supports(console, marker):
-        marker = ">"
-    return f"\n[bold yellow]{marker}[/bold yellow]"
+    marker = "YOU ❯" if _console_supports(console, "❯") else "YOU >"
+    return f"\n[bold #00E5FF]{marker}[/bold #00E5FF]"
 
 
 def _console_supports(console: Console, text: str) -> bool:
@@ -469,7 +487,7 @@ class TerminalChatUI:
             "multiline": True,
             "accept_handler": self._accept,
             "style": "class:composer.input",
-            "prompt": [("class:composer.prompt", "» ")],
+            "prompt": [("class:composer.prompt", _USER_PROMPT)],
         }
         if InMemoryHistory is not None:
             input_kwargs["history"] = self._build_input_history()
@@ -634,17 +652,17 @@ class TerminalChatUI:
         )
         tui_style = Style.from_dict(
             {
-                "message.user": "#DCEEFF",
-                "message.assistant": "#DCEEFF",
-                "message.marker": "#DCEEFF",
-                "message.marker.old": "#65E7B8",
-                "message.tool": "#71869A",
-                "message.separator": "#516579",
+                "message.user": "#FFFFFF",
+                "message.assistant": "#FFFFFF",
+                "message.marker": "bold #00E5FF",
+                "message.marker.old": "#666666",
+                "message.tool": "#666666",
+                "message.separator": "#666666",
                 "message.link": "underline #73B8FF",
                 "status": "#71869A",
-                "status.running": "#59D7E7",
-                "status.success": "#65E7B8",
-                "status.error": "#FF8FB1",
+                "status.running": "#666666",
+                "status.success": "#00FF00",
+                "status.error": "#FF66CC",
                 "status.warning": "#F5C26B",
                 "status.background": "#73B8FF",
                 "status.pulse.hot": "bold #FFFFFF",
@@ -653,8 +671,8 @@ class TerminalChatUI:
                 "status.pulse.soft": "#899EAF",
                 "status.pulse.dim": "#516579",
                 "status.cancel": "#FF8FB1",
-                "composer.line": "#15304A",
-                "composer.prompt": "bold #F5C26B",
+                "composer.line": "#006C78",
+                "composer.prompt": "bold #00E5FF",
                 "composer.input": "#DCEEFF",
                 "composer.hint": "#71869A",
                 "bottom": "#5F7488",
@@ -923,7 +941,7 @@ class TerminalChatUI:
                     ("class:status.cancel", f"◦ {status}"),
                     ("class:status", f" ({elapsed})"),
                 ]
-            fragments = [("class:status.running", "◦ ")]
+            fragments = [("class:status.running", "◈ THINK  ")]
             animation_origin = (
                 animation_started_at
                 if animation_started_at is not None
@@ -985,7 +1003,7 @@ class TerminalChatUI:
         if busy and started_at is not None:
             elapsed = self._format_elapsed(monotonic() - started_at)
             suffix = "" if status.startswith("⏹") else " • esc 取消"
-            return f"◦ {status} ({elapsed}{suffix})"
+            return f"◈ THINK  {status} ({elapsed}{suffix})"
         if model_picker is not None:
             return "◦ 选择模型：输入序号或完整 ID · esc 取消"
         if background_count:
@@ -1073,7 +1091,7 @@ class TerminalChatUI:
         assistant_lines = [
             index
             for index, line in enumerate(rendered_lines)
-            if line.rstrip("\n").startswith("• ")
+            if line.rstrip("\n").startswith(_ASSISTANT_PROMPT)
         ]
         latest_assistant_line = assistant_lines[-1] if assistant_lines else -1
         for line_index, line in enumerate(rendered_lines):
@@ -1085,14 +1103,14 @@ class TerminalChatUI:
             elif line_without_newline.startswith("─"):
                 base_style = "class:message.separator"
                 continuation_style = ""
-            elif line_without_newline.startswith("» "):
+            elif line_without_newline.startswith(_USER_PROMPT):
                 base_style = "class:message.user"
                 continuation_style = base_style
                 fragments.append(
-                    ("class:composer.prompt", "» ", self._observe_output_mouse)
+                    ("class:composer.prompt", _USER_PROMPT, self._observe_output_mouse)
                 )
-                cursor = 2
-            elif line_without_newline.startswith("• "):
+                cursor = len(_USER_PROMPT)
+            elif line_without_newline.startswith(_ASSISTANT_PROMPT):
                 base_style = "class:message.assistant"
                 continuation_style = base_style
                 marker_style = (
@@ -1101,16 +1119,19 @@ class TerminalChatUI:
                     else "class:message.marker.old"
                 )
                 fragments.append(
-                    (marker_style, "• ", self._observe_output_mouse)
+                    (marker_style, _ASSISTANT_PROMPT, self._observe_output_mouse)
                 )
-                cursor = 2
+                cursor = len(_ASSISTANT_PROMPT)
             elif line_without_newline.startswith(("● ", "◦ ")):
                 base_style = "class:status.running"
                 continuation_style = base_style
-            elif line_without_newline.startswith(("✓ ", "✅ ")):
+            elif line_without_newline.startswith(("◈ TOOL", "· TRACE")):
+                base_style = "class:message.tool"
+                continuation_style = base_style
+            elif line_without_newline.startswith(("◆ DONE", "✓ ", "✅ ")):
                 base_style = "class:status.success"
                 continuation_style = base_style
-            elif line_without_newline.startswith(("✗ ", "❌ ", "💥 ")):
+            elif line_without_newline.startswith(("◇ ERROR", "✗ ", "❌ ", "💥 ")):
                 base_style = "class:status.error"
                 continuation_style = base_style
             elif line_without_newline.startswith("⏹ "):
@@ -1235,6 +1256,13 @@ class TerminalChatUI:
             width = shutil.get_terminal_size(fallback=(100, 24)).columns
         return min(100, max(1, width - 2))
 
+    def _separator_width(self) -> int:
+        render_info = getattr(self.output, "render_info", None)
+        width = getattr(render_info, "window_width", 0)
+        if not width:
+            width = shutil.get_terminal_size(fallback=(100, 24)).columns
+        return max(1, int(width))
+
     def write_answer(self, answer: str) -> None:
         lines, urls = _render_answer_lines(answer, self._render_width())
         lines = _normalise_answer_lines(lines)
@@ -1245,7 +1273,7 @@ class TerminalChatUI:
         if not lines:
             lines = ["（空回答）"]
         parts = [
-            ("• " if index == 0 else "  ") + line
+            (_ASSISTANT_PROMPT if index == 0 else " " * len(_ASSISTANT_PROMPT)) + line
             for index, line in enumerate(lines)
         ]
         if urls:
@@ -1267,7 +1295,7 @@ class TerminalChatUI:
         self.app.invalidate()
 
     def write_turn_separator(self, elapsed_seconds: float | None = None) -> None:
-        width = self._render_width()
+        width = self._separator_width()
         if elapsed_seconds is None:
             separator = "─" * width
         else:
@@ -1279,7 +1307,7 @@ class TerminalChatUI:
         with self.lock:
             for index in range(len(self.blocks) - 1, -1, -1):
                 if self.blocks[index].startswith(self._WORKED_SEPARATOR_PREFIX):
-                    self.blocks[index] = "─" * self._render_width()
+                    self.blocks[index] = "─" * self._separator_width()
                     self._follow_output = True
                     break
             else:
@@ -1295,7 +1323,10 @@ class TerminalChatUI:
 
     def write_user_message(self, message: str) -> None:
         lines = message.splitlines() or [""]
-        body = "\n".join(("» " if index == 0 else "  ") + line for index, line in enumerate(lines))
+        body = "\n".join(
+            (_USER_PROMPT if index == 0 else " " * len(_USER_PROMPT)) + line
+            for index, line in enumerate(lines)
+        )
         self.write_plain(body)
 
     def open_latest_image(self) -> None:
@@ -1741,7 +1772,7 @@ class LeonConsole:
                 if ui is not None:
                     ui.write_user_message(content)
                 else:
-                    self.print(Text(f"» {content}", style="#DCEEFF"))
+                    self.print(Text(f"{_USER_PROMPT}{content}", style="#FFFFFF"))
             elif ui is not None:
                 ui.write_answer(content)
                 ui.write_turn_separator()
@@ -2064,71 +2095,158 @@ class LeonConsole:
         width = getattr(getattr(self, "console", None), "width", 0)
         if not width:
             width = shutil.get_terminal_size(fallback=(100, 24)).columns
-        return max(1, int(width) - 2)
+        return max(1, int(width))
+
+    def _runtime_status(self) -> RuntimeStatus:
+        runtime = getattr(getattr(self, "agent", None), "runtime", None)
+        registry = getattr(runtime, "tools", None)
+        tool_names = getattr(registry, "names", ())
+        timeout = float(getattr(self, "llm_timeout_seconds", 0.0) or 0.0)
+        timeout_label = "unlimited" if timeout <= 0 else f"{timeout:g}s"
+        retries = int(getattr(self, "llm_max_retries", 0) or 0)
+        return RuntimeStatus(
+            model=getattr(self, "llm_model", "-") or "-",
+            provider=(
+                getattr(self, "llm_provider_name", "")
+                or getattr(self, "llm_profile", "-")
+                or "-"
+            ),
+            session=str(getattr(self, "session_id", "-") or "-"),
+            workspace=str(Path.cwd()),
+            tool_count=len(tool_names),
+            memory_enabled=getattr(self, "memory_service", None) is not None,
+            planning_enabled=getattr(getattr(self, "agent", None), "planning_service", None)
+            is not None,
+            trace_enabled=getattr(self, "trace_store", None) is not None,
+            image_enabled=bool(getattr(getattr(self, "config", None), "backend_url", "")),
+            search_enabled=getattr(self, "search_service", None) is not None,
+            request_policy=f"response={timeout_label} · retry={retries}",
+        )
+
+    @staticmethod
+    def _status_field(label: str, value: str, *, width: int) -> Text:
+        field = Text()
+        field.append(label, style="#666666")
+        field.append(LeonConsole._clip_startup(value, max(1, width - len(label))), style="#FFFFFF")
+        return field
+
+    def _telemetry_table(self, status: RuntimeStatus, *, session_label: str) -> Table:
+        table = Table(
+            Column(width=40, no_wrap=True, overflow="ellipsis"),
+            Column(width=19, no_wrap=True, overflow="ellipsis"),
+            box=box.SQUARE,
+            border_style="#666666",
+            show_header=False,
+            show_footer=False,
+            padding=(0, 1),
+            width=66,
+        )
+        table.add_row(
+            self._status_field("MODEL      ", status.model, width=40),
+            self._status_field("SESSION  ", session_label, width=19),
+        )
+        table.add_row(
+            self._status_field("WORKSPACE  ", status.workspace, width=40),
+            self._status_field("TOOLS    ", f"{status.tool_count} active", width=19),
+        )
+        table.add_row(
+            "",
+            self._status_field(
+                "MEMORY   ", "online" if status.memory_enabled else "offline", width=19
+            ),
+        )
+        table.add_row(
+            self._status_field("SYSTEM     ", "Plan · Search · Create · Sync", width=40),
+            self._status_field(
+                "TRACE    ", "enabled" if status.trace_enabled else "disabled", width=19
+            ),
+        )
+        return table
+
+    @staticmethod
+    def _brand_panel() -> Panel:
+        inner_width = 64
+        logo = Text()
+        logo.append(" " * inner_width + "\n")
+        for line in (
+            "    ██       ████████ ████████ ███    ██",
+            "    ██       ██       ██    ██ ████   ██      A G E N T",
+            "    ██       ██████   ██    ██ ██ ██  ██",
+            "    ██       ██       ██    ██ ██  ██ ██",
+            "    ████████ ████████ ████████ ██   ████",
+        ):
+            logo.append(f"{line.ljust(inner_width)}\n", style="bold #00E5FF")
+        logo.append(" " * inner_width + "\n")
+        logo.append("Your workspace, augmented.".center(inner_width), style="#FFFFFF")
+        return Panel(
+            logo,
+            box=box.SQUARE,
+            border_style="#00E5FF",
+            padding=(0, 0),
+            width=66,
+        )
+
+    @staticmethod
+    def _capability_strip() -> Text:
+        strip = Text("\n  ")
+        for index, (icon, label) in enumerate(
+            (("◈", "Plan"), ("⌕", "Search"), ("▤", "Create"), ("◉", "Remember"))
+        ):
+            if index:
+                strip.append("    ")
+            strip.append(f"{icon} ", style="#00E5FF")
+            strip.append(label, style="#666666")
+        return strip
+
+    def _compact_startup(self, status: RuntimeStatus, width: int) -> None:
+        session_label = status.session[:8] if getattr(self, "_resumed_session", False) else "new"
+        lines = Text()
+        lines.append("Plan · Search · Create · Remember\n", style="#666666")
+        lines.append("model      ", style="#666666")
+        lines.append(f"{self._clip_startup(status.model, max(1, width - 14))}\n", style="#FFFFFF")
+        lines.append("session    ", style="#666666")
+        lines.append(f"{session_label}\n", style="#FFFFFF")
+        lines.append("tools      ", style="#666666")
+        lines.append(f"{status.tool_count} active", style="#FFFFFF")
+        self.print(
+            Panel(
+                lines,
+                title="LEON AGENT",
+                title_align="left",
+                box=box.SQUARE,
+                border_style="#00E5FF",
+                padding=(0, 1),
+                width=width,
+            )
+        )
+
+    def _minimal_startup(self, status: RuntimeStatus, width: int) -> None:
+        session_label = status.session[:8] if getattr(self, "_resumed_session", False) else "new"
+        summary = self._clip_startup(
+            f"{status.model} · {session_label} · {status.tool_count} tools",
+            width,
+        )
+        title = Text("LEON AGENT\n", style="bold #00E5FF")
+        title.append(summary, style="#666666")
+        self.print(title)
 
     def _print_startup(self) -> None:
         width = self._startup_width()
-        model = self.llm_model or "-"
-        provider = self.llm_provider_name or self.llm_profile or "-"
-        if width < 40:
-            value_width = max(1, width - 2)
-            compact = Text()
-            compact.append("✦ LEON\n", style="bold #73B8FF")
-            compact.append(f"m {self._clip_startup(model, value_width)}\n", style="#DCEEFF")
-            compact.append(
-                f"p {self._clip_startup(provider, value_width)}\n",
-                style="#DCEEFF",
+        status = self._runtime_status()
+        resumed = bool(getattr(self, "_resumed_session", False))
+        if width >= 66 and not resumed:
+            self.print(
+                Group(
+                    self._brand_panel(),
+                    self._telemetry_table(status, session_label="new"),
+                    self._capability_strip(),
+                )
             )
-            compact.append(
-                f"s {self._clip_startup(self.session_id[:8], value_width)}\n",
-                style="#AFC4D6",
-            )
-            self.print(compact)
             return
-
-        panel_width = min(width, 88)
-        title = Text("✦ LEON AGENT", style="bold #73B8FF")
-        title.append("  /  terminal", style="#71869A")
-        body = Text()
-        inner_width = max(1, panel_width - 4)
-        value_width = max(4, inner_width - 12)
-        model = self._clip_startup(model, value_width)
-        provider = self._clip_startup(provider, value_width)
-        endpoint = self._clip_startup(
-            getattr(self, "llm_base_url", "-") or "-",
-            value_width,
-        )
-        body.append("Model      ", style="#71869A")
-        body.append(model, style="#DCEEFF")
-        body.append("\n", style="#DCEEFF")
-        body.append("Provider   ", style="#71869A")
-        body.append(f"{provider}\n", style="#DCEEFF")
-        body.append("Endpoint   ", style="#71869A")
-        body.append(f"{endpoint}\n", style="#AFC4D6")
-        body.append("Session    ", style="#71869A")
-        body.append(self.session_id[:16], style="#AFC4D6")
-        body.append("\n\n", style="#71869A")
-        body.append("/model", style="#73B8FF")
-        body.append(" 模型  ·  ", style="#71869A")
-        body.append("/tools", style="#73B8FF")
-        body.append(" 工具  ·  ", style="#71869A")
-        body.append("/history", style="#73B8FF")
-        body.append(" 会话  ·  ", style="#71869A")
-        body.append("/help", style="#73B8FF")
-        body.append(" 帮助", style="#71869A")
-
-        self.print(
-            Group(
-                Panel(
-                    body,
-                    title=title,
-                    border_style="#15304A",
-                    padding=(0, 1),
-                    expand=False,
-                    width=panel_width,
-                ),
-            )
-        )
+        if width >= 40:
+            self._compact_startup(status, min(66, width))
+            return
+        self._minimal_startup(status, width)
 
     def _resolve_llm_settings(self) -> Settings:
         # LLM base_url/auth always follows the currently active provider in
@@ -2179,7 +2297,7 @@ class LeonConsole:
         self._image_progress_active = False
         if ui is not None:
             if ok is not None:
-                ui.write_plain("✅ 图片生成完成" if ok else "❌ 图片生成失败")
+                ui.write_plain("◆ DONE   图片生成完成" if ok else "◇ ERROR  图片生成失败")
             return
         if self._progress is None:
             return
@@ -2215,9 +2333,7 @@ class LeonConsole:
             if event.tool_name == "generate_images":
                 self._start_image_progress()
                 return
-            self.print(
-                f"[cyan]●[/cyan] [bold]调用工具[/bold] [cyan]{event.tool_name}[/cyan]"
-            )
+            self.print(f"[grey50]◈ TOOL   [/grey50][white]{event.tool_name}[/white]")
         elif event.kind == "tool_finished":
             ok = bool(event.result and event.result.get("ok"))
             if event.tool_name == "generate_images":
@@ -2227,12 +2343,12 @@ class LeonConsole:
                 )
                 self._stop_image_progress(ok=None if background else ok)
                 if background:
-                    self.print("[green]✓[/green] [dim]generate_images 已提交[/dim]")
+                    self.print("[green]◆ DONE   [/green][grey50]generate_images 已提交[/grey50]")
                     return
             if ok:
-                self.print(f"[green]✓[/green] [dim]{event.tool_name} 完成[/dim]")
+                self.print(f"[green]◆ DONE   [/green][grey50]{event.tool_name} 完成[/grey50]")
             else:
-                self.print(f"[red]✗[/red] [dim]{event.tool_name} 失败[/dim]")
+                self.print(f"[#FF66CC]◇ ERROR  [/#FF66CC][grey50]{event.tool_name} 失败[/grey50]")
 
     def _print_answer(self, answer: str) -> None:
         answer = _normalise_unicode_text(answer)
@@ -2247,21 +2363,22 @@ class LeonConsole:
         width = max(1, min(100, int(getattr(self.console, "width", 100)) - 2))
         lines, urls = _render_answer_lines(answer, width)
         lines = _normalise_answer_lines(lines)
-        marker = "•" if _console_supports(self.console, "•") else "*"
+        marker = _ASSISTANT_PROMPT if _console_supports(self.console, "╱") else "LEON > "
         link_label = "↗ 打开图片" if _console_supports(self.console, "↗") else "打开图片"
         output = Text()
         for index, line in enumerate(lines):
             if index:
-                output.append("\n  ")
+                output.append("\n" + " " * len(marker))
             else:
-                output.append(f"{marker} ")
+                output.append(marker, style="bold #00E5FF")
             output.append(line)
         for index, url in enumerate(urls, start=1):
-            output.append("\n  ")
+            output.append("\n" + " " * len(marker))
             output.append(link_label, style=f"underline #73B8FF link {url}")
             output.append(_image_link_suffix(index, len(urls)), style="dim")
         if not lines and not urls:
-            output.append(f"{marker} （空回答）")
+            output.append(marker, style="bold #00E5FF")
+            output.append("（空回答）")
         # Let the terminal perform any visual wrapping. Rich must not inject a
         # newline into the hidden OSC 8 target carried by the short link.
         self.print(output, soft_wrap=True)
@@ -2289,8 +2406,8 @@ class LeonConsole:
         if ui is not None:
             ui._set_status("正在思考中", animate=True)
             return
-        marker = "✦" if _console_supports(self.console, "✦") else ">"
-        self.print(f"[cyan]{marker}[/cyan] 正在思考中")
+        marker = "◈ THINK  " if _console_supports(self.console, "◈") else "THINK  "
+        self.print(f"[grey50]{marker}[/grey50]正在思考中")
 
     def _format_request_error(self, exc: Exception) -> str:
         error_type = type(exc).__name__
@@ -2782,29 +2899,45 @@ class LeonConsole:
         return True
 
     def show_status(self) -> None:
-        model = getattr(self, "llm_model", "-") or "-"
-        provider = getattr(self, "llm_provider_name", "") or getattr(
-            self, "llm_profile", "-"
+        status = self._runtime_status()
+        width = min(66, self._startup_width())
+        available = max(1, width - 4)
+        first_line = self._clip_startup(
+            f"MODEL {status.model} · PROVIDER {status.provider}", available
+        )
+        second_line = self._clip_startup(
+            f"SESSION {status.session[:12]} · {status.request_policy}", available
+        )
+        third_line = self._clip_startup(
+            "TOOLS "
+            f"{status.tool_count} · MEMORY {'on' if status.memory_enabled else 'off'} · "
+            f"PLAN {'on' if status.planning_enabled else 'off'} · "
+            f"TRACE {'on' if status.trace_enabled else 'off'}",
+            available,
+        )
+        fourth_line = self._clip_startup(
+            f"IMAGE {'configured' if status.image_enabled else 'off'} · "
+            f"SEARCH {'configured' if status.search_enabled else 'off'}",
+            available,
         )
         body = Text()
-        body.append("模型       ", style="bold cyan")
-        body.append(f"{model}\n")
-        body.append("Provider   ", style="bold cyan")
-        body.append(f"{provider or '-'}\n")
-        body.append("会话       ", style="bold cyan")
-        body.append(f"{self.session_id}\n")
-        body.append("请求策略   ", style="bold cyan")
-        timeout = float(getattr(self, "llm_timeout_seconds", 0.0) or 0.0)
-        timeout_label = "response=unlimited" if timeout <= 0 else f"timeout={timeout:g}s"
-        body.append(
-            f"{timeout_label} · "
-            f"retries={getattr(self, 'llm_max_retries', 0)}\n"
+        body.append(f"{first_line}\n", style="#FFFFFF")
+        body.append(f"{second_line}\n", style="#666666")
+        body.append(f"{third_line}\n", style="#666666")
+        body.append(fourth_line, style="#666666")
+        if width < 40:
+            self.print(body, overflow="ellipsis", no_wrap=True, crop=True)
+            return
+        self.print(
+            Panel(
+                body,
+                title="当前运行状态",
+                box=box.SQUARE,
+                border_style="#666666",
+                padding=(0, 1),
+                width=width,
+            )
         )
-        body.append("图片后端   ", style="bold magenta")
-        body.append(f"{getattr(getattr(self, 'config', None), 'backend_url', '-')}\n")
-        body.append("联网搜索   ", style="bold green")
-        body.append("已启用" if getattr(self, "search_service", None) else "未配置")
-        self.print(Panel(body, title="当前运行状态", border_style="cyan"))
 
     def show_models(self) -> None:
         models = self._fetch_model_catalog()

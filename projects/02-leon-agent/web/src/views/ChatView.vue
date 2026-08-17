@@ -1,17 +1,29 @@
 <script setup lang="ts">
-import { ArrowDown, History, LoaderCircle, Mic, RefreshCw, Send, Sparkles, Square } from "@lucide/vue";
+import {
+  Activity,
+  ArrowDown,
+  History,
+  LoaderCircle,
+  Mic,
+  RefreshCw,
+  Send,
+  Sparkles,
+  Square,
+} from "@lucide/vue";
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import AppStatus from "../components/AppStatus.vue";
 import BottomNav, { type WorkbenchView } from "../components/BottomNav.vue";
 import ImageViewer, { type ViewerImage } from "../components/ImageViewer.vue";
 import MessageEditDialog from "../components/MessageEditDialog.vue";
 import MessageBubble from "../components/MessageBubble.vue";
+import SessionHistoryPanel from "../components/SessionHistoryPanel.vue";
 import {
   ApiError,
   api,
   type ImageMode,
   type LeonEvent,
   type SessionMessage,
+  type SessionSummary,
   type SessionVoiceClip,
   type SessionResponse,
 } from "../api/client";
@@ -79,6 +91,13 @@ const modeSuggestionList = ref<HTMLElement | null>(null);
 const timelinePanel = ref<HTMLElement | null>(null);
 const timelineOpen = ref(false);
 const timelineEntries = ref<TimelineEntry[]>([]);
+const sessionHistoryOpen = ref(false);
+const sessionHistoryLoading = ref(false);
+const sessionHistoryError = ref("");
+const sessionSummaries = ref<SessionSummary[]>([]);
+const switchingSessionId = ref("");
+const pinningSessionId = ref("");
+const creatingSession = ref(false);
 const autoFollowMessages = ref(true);
 const showScrollToLatest = ref(false);
 const pendingAssistantId = ref<string | null>(null);
@@ -109,6 +128,8 @@ const SCROLL_FOLLOW_THRESHOLD = 72;
 const MAX_TIMELINE_ENTRIES = 100;
 const ERROR_DEDUPE_WINDOW_MS = 10_000;
 let timelineSequence = 0;
+let sessionHistoryRequestId = 0;
+let sessionSwitchRequestId = 0;
 let activeAssistantTraceId: string | null = null;
 let suppressCurrentAssistantEvents = false;
 
@@ -237,12 +258,44 @@ function clearTimeline(close = false): void {
 function toggleTimeline(): void {
   timelineOpen.value = !timelineOpen.value;
   if (timelineOpen.value) {
+    sessionHistoryOpen.value = false;
     void nextTick(() => timelinePanel.value?.focus());
   }
 }
 
 function closeTimeline(): void {
   timelineOpen.value = false;
+}
+
+function closeSessionHistory(): void {
+  sessionHistoryOpen.value = false;
+}
+
+function toggleSessionHistory(): void {
+  sessionHistoryOpen.value = !sessionHistoryOpen.value;
+  if (!sessionHistoryOpen.value) return;
+  timelineOpen.value = false;
+  void loadSessionHistory();
+}
+
+async function loadSessionHistory(): Promise<void> {
+  const requestId = ++sessionHistoryRequestId;
+  sessionHistoryLoading.value = true;
+  sessionHistoryError.value = "";
+  try {
+    const payload = await api.listSessions();
+    if (requestId !== sessionHistoryRequestId || !authenticated.value) return;
+    sessionSummaries.value = payload.sessions || [];
+  } catch (error) {
+    if (requestId !== sessionHistoryRequestId) return;
+    if (error instanceof ApiError && error.status === 401) {
+      expireLogin();
+      return;
+    }
+    sessionHistoryError.value = error instanceof Error ? error.message : "无法加载历史会话";
+  } finally {
+    if (requestId === sessionHistoryRequestId) sessionHistoryLoading.value = false;
+  }
 }
 
 function normalizeModeQuery(value: string): string {
@@ -1524,6 +1577,108 @@ async function reconcileActiveTurn(sessionId: string): Promise<void> {
   }
 }
 
+async function switchSession(sessionId: string): Promise<void> {
+  const targetSessionId = sessionId.trim();
+  if (!targetSessionId || switchingSessionId.value) return;
+  if (targetSessionId === api.sessionId) {
+    closeSessionHistory();
+    activeView.value = "chat";
+    focusLatestBubbleAfterHydration();
+    return;
+  }
+
+  const requestId = ++sessionSwitchRequestId;
+  switchingSessionId.value = targetSessionId;
+  sessionHistoryError.value = "";
+  try {
+    const session = await api.getSession(targetSessionId);
+    if (requestId !== sessionSwitchRequestId) return;
+
+    closeEvents();
+    activeSendController?.abort();
+    activeSendController = null;
+    resetAssistantStream();
+    resetStreamingSpeech();
+    stopSpeech();
+    pendingAssistantId.value = null;
+    pendingImageResultId.value = null;
+    sending.value = false;
+    suppressedUserEcho = null;
+    autoplayRequests.clear();
+    activeAssistantTraceId = null;
+    suppressCurrentAssistantEvents = false;
+    clearTimeline(true);
+    closePreview();
+    invalidateImageStateRequests();
+    clearImageState();
+    imageStateLoaded.value = false;
+    imageStateError.value = "";
+
+    api.setSession(session.session_id);
+    appendHistory(session.messages, session.voice_clips || []);
+    restoreActiveTurn(session.active_turn);
+    activeView.value = "chat";
+    closeSessionHistory();
+    focusLatestBubbleAfterHydration();
+    void nextTick(resizeComposer);
+    connectEvents();
+    if (session.active_turn) void reconcileActiveTurn(session.session_id);
+    void loadImageState(true);
+  } catch (error) {
+    if (requestId !== sessionSwitchRequestId) return;
+    if (error instanceof ApiError && error.status === 401) {
+      expireLogin();
+      return;
+    }
+    sessionHistoryError.value = error instanceof Error ? error.message : "无法切换会话";
+  } finally {
+    if (requestId === sessionSwitchRequestId) switchingSessionId.value = "";
+  }
+}
+
+async function createNewSession(): Promise<void> {
+  if (creatingSession.value || switchingSessionId.value) return;
+  creatingSession.value = true;
+  sessionHistoryError.value = "";
+  try {
+    const created = await api.createSession();
+    await switchSession(created.session_id);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      expireLogin();
+      return;
+    }
+    sessionHistoryError.value = error instanceof Error ? error.message : "无法新建会话";
+  } finally {
+    creatingSession.value = false;
+  }
+}
+
+async function toggleSessionPinned(sessionId: string, pinned: boolean): Promise<void> {
+  if (!sessionId || pinningSessionId.value) return;
+  pinningSessionId.value = sessionId;
+  sessionHistoryError.value = "";
+  try {
+    const result = await api.setSessionPinned(sessionId, pinned);
+    const target = sessionSummaries.value.find((session) => session.id === result.session_id);
+    if (target) target.pinned = result.pinned;
+    sessionSummaries.value = [...sessionSummaries.value].sort(
+      (left, right) =>
+        Number(right.pinned) - Number(left.pinned) ||
+        right.updated_at - left.updated_at ||
+        right.created_at - left.created_at,
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      expireLogin();
+      return;
+    }
+    sessionHistoryError.value = error instanceof Error ? error.message : "无法更新会话置顶";
+  } finally {
+    pinningSessionId.value = "";
+  }
+}
+
 async function openSession(): Promise<void> {
   clearTimeline(true);
   let session: SessionResponse | null = null;
@@ -1592,11 +1747,20 @@ async function login(): Promise<void> {
 
 function logout(): void {
   closeEvents();
+  sessionHistoryRequestId += 1;
+  sessionSwitchRequestId += 1;
   lastEventId = "";
   eventCursorSessionId = "";
   resetAssistantStream();
   resetStreamingSpeech();
   clearTimeline(true);
+  closeSessionHistory();
+  sessionHistoryLoading.value = false;
+  sessionHistoryError.value = "";
+  sessionSummaries.value = [];
+  switchingSessionId.value = "";
+  pinningSessionId.value = "";
+  creatingSession.value = false;
   api.logout();
   authenticated.value = false;
   clearMessages();
@@ -1836,7 +2000,20 @@ onBeforeUnmount(() => {
             <RefreshCw :class="{ spinning: imageStateLoading }" :size="18" :stroke-width="2" aria-hidden="true" />
           </button>
           <button
+            class="header-icon-button session-history-toggle"
+            :class="{ 'is-active': sessionHistoryOpen }"
+            type="button"
+            aria-controls="session-history-panel"
+            :aria-expanded="sessionHistoryOpen"
+            aria-label="历史会话"
+            title="历史会话"
+            @click="toggleSessionHistory"
+          >
+            <History :size="18" :stroke-width="2" aria-hidden="true" />
+          </button>
+          <button
             class="header-icon-button timeline-toggle"
+            :class="{ 'is-active': timelineOpen }"
             type="button"
             aria-controls="timeline-panel"
             :aria-expanded="timelineOpen"
@@ -1844,10 +2021,25 @@ onBeforeUnmount(() => {
             title="运行记录"
             @click="toggleTimeline"
           >
-            <History :size="18" :stroke-width="2" aria-hidden="true" />
+            <Activity :size="18" :stroke-width="2" aria-hidden="true" />
           </button>
         </div>
       </header>
+
+      <SessionHistoryPanel
+        v-if="sessionHistoryOpen"
+        :sessions="sessionSummaries"
+        :active-session-id="api.sessionId"
+        :loading="sessionHistoryLoading"
+        :error="sessionHistoryError"
+        :switching-session-id="switchingSessionId"
+        :pinning-session-id="pinningSessionId"
+        :creating="creatingSession"
+        @close="closeSessionHistory"
+        @create="createNewSession"
+        @select="switchSession"
+        @toggle-pin="toggleSessionPinned"
+      />
 
       <aside
         v-if="timelineOpen"

@@ -173,6 +173,33 @@ def test_create_and_list_session(client):
     assert session_id in ids
 
 
+def test_session_history_can_be_pinned_and_sorted(client):
+    first_session = client.post("/api/agent/sessions").json()["session_id"]
+    second_session = client.post("/api/agent/sessions").json()["session_id"]
+    store = get_store()
+    store.add_message(first_session, "user", "第一段会话")
+    store.add_message(second_session, "user", "第二段会话")
+
+    pinned = client.put(
+        f"/api/agent/sessions/{first_session}/pin",
+        json={"pinned": True},
+    )
+    assert pinned.status_code == 200
+    assert pinned.json() == {"session_id": first_session, "pinned": True}
+
+    sessions = client.get("/api/agent/sessions").json()["sessions"]
+    assert [item["id"] for item in sessions[:2]] == [first_session, second_session]
+    assert sessions[0]["title"] == "第一段会话"
+    assert sessions[0]["pinned"] is True
+    assert sessions[1]["pinned"] is False
+
+    missing = client.put(
+        "/api/agent/sessions/missing/pin",
+        json={"pinned": True},
+    )
+    assert missing.status_code == 404
+
+
 def test_get_session_not_found(client):
     r = client.get("/api/agent/sessions/nonexistent")
     assert r.status_code == 404
