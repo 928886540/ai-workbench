@@ -144,7 +144,8 @@
   citation，不泄露绝对路径或写入内容。
 - 安全/资源边界：最多 8 个 root；拒绝绝对/越界/ADS 路径；每次解析检查 containment；跳过 symlink、
   junction/reparse、隐藏/系统项、`.env*`、凭据、私钥、SQLite；支持受限 UTF-8/BOM UTF-16；单文件 1 MiB，
-  搜索 2,000 文件/20 MiB/50 结果，读取 200 行/16,000 字符。
+  搜索 2,000 文件/20 MiB/50 结果，读取 200 行/16,000 字符。长搜索在目录、条目、文件和文本行边界
+  协作式检查当前 turn 的取消信号，取消异常不会被 ToolRegistry 包装为普通工具错误。
 - 已验证（定向）：`packages/workbench_core/tests/test_file_search.py` 与
   `projects/02-leon-agent/tests/test_leon_file_search.py` 覆盖配置、工具 schema、路径穿越、敏感文件、
   binary/编码/预算和不可信内容标记。全量与真实进程验证完成后，把结果补到本节，不要只写“代码存在”。

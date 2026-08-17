@@ -178,7 +178,8 @@ roots 的 root id 和 opaque canonical binding 完全一致时注册。模型参
    `-wal` / `-shm` / `-journal` 伴随文件；常见二进制 magic、PEM 私钥头和控制字符也会被拒绝。
 4. 仅允许受支持的文本类型，并进行 binary sniff；编码失败返回错误，不用替换字符伪装成功。
 5. 限制单文件大小、扫描文件数、目录/条目数、累计扫描字节、命中数、读取行数和最终响应字符数；
-   无效编码和 binary 尝试读取的字节同样计入搜索预算。
+   无效编码和 binary 尝试读取的字节同样计入搜索预算。长搜索会在根目录、目录条目、文件和文本行边界
+   轮询当前 Agent turn 的取消信号；取消作为控制流向上传播，不伪装成普通工具失败。
 6. 结果只含根目录别名与相对路径；异常也不能泄露绝对路径或被拒绝文件的内容。
 7. 工具 schema 的 `minimum/maximum` 只供模型参考，handler 必须再次校验。
 
@@ -223,6 +224,8 @@ uv run leon --help
 - 写入成功后审计事件、ToolStep、SSE 和 SQLite 均不包含原始 `content` 或绝对路径。
 - 三个读取工具的 raw 正文/搜索词只进入当前 LLM transcript；事件、ToolStep、SSE 和 SQLite
   只保留 root-relative citation、行号、计数与截断元数据。
+- `file_search` 在目录枚举或正文扫描期间收到 Esc/Ctrl+C/Web cancel 后及时停止，不生成伪造的
+  `tool_failed` / `tool_finished` 审计，也不继续下一轮 LLM。
 
 实际入口验收时使用专门的临时文档目录，不把个人密钥目录加入 roots。修改 `src/` 后重启
 `leon-server`，检查 `/api/health/detail` 和真实工具事件；单元测试通过不代表旧进程已经加载新代码。

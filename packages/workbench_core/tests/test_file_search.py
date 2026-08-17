@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import codecs
+from concurrent.futures import CancelledError
 from pathlib import Path
 
 import pytest
@@ -162,6 +163,24 @@ def test_search_directory_budget_is_reported(tmp_path: Path, monkeypatch) -> Non
     assert result["ok"] is True
     assert result["truncated"] is True
     assert result["truncation_reason"] == "directory_budget"
+
+
+def test_search_cooperatively_cancels_during_directory_scan(tmp_path: Path) -> None:
+    for index in range(10):
+        (tmp_path / f"note-{index}.txt").write_text("no match", encoding="utf-8")
+    service = FileSearchService({"root": tmp_path})
+    checks = 0
+
+    def cancel_check() -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 5:
+            raise CancelledError("stop file search")
+
+    with pytest.raises(CancelledError, match="stop file search"):
+        service.search("needle", root_id="root", cancel_check=cancel_check)
+
+    assert checks == 5
 
 
 def test_root_listing_honors_max_entries(tmp_path: Path) -> None:

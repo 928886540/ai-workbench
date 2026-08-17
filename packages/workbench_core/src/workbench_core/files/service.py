@@ -7,7 +7,7 @@ import hashlib
 import os
 import re
 import secrets
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
@@ -575,7 +575,11 @@ class FileSearchService:
         workspace: Workspace,
         relative_path: str,
         state: _WalkState,
+        *,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[tuple[Path, str]]:
+        if cancel_check is not None:
+            cancel_check()
         target = self._resolve(workspace, relative_path)
         if isinstance(target, dict) or not target.exists():
             return
@@ -587,6 +591,8 @@ class FileSearchService:
 
         stack = [workspace.relative(target)]
         while stack:
+            if cancel_check is not None:
+                cancel_check()
             if state.directories >= MAX_SEARCH_DIRECTORIES:
                 state.truncation_reason = "directory_budget"
                 return
@@ -600,7 +606,11 @@ class FileSearchService:
                 state.truncation_reason = "entry_budget"
                 return
             try:
-                children = list(islice(directory.iterdir(), remaining_entries + 1))
+                children: list[Path] = []
+                for child in islice(directory.iterdir(), remaining_entries + 1):
+                    if cancel_check is not None:
+                        cancel_check()
+                    children.append(child)
             except OSError:
                 continue
             if len(children) > remaining_entries:
@@ -609,6 +619,8 @@ class FileSearchService:
             children.sort(key=lambda item: item.name.casefold())
             child_directories: list[str] = []
             for child in children:
+                if cancel_check is not None:
+                    cancel_check()
                 state.entries += 1
                 child_relative = workspace.relative(child)
                 if _is_blocked_path(child_relative):
@@ -630,7 +642,11 @@ class FileSearchService:
         root_id: str | None = None,
         relative_path: str = ".",
         max_results: int = 20,
+        *,
+        cancel_check: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
+        if cancel_check is not None:
+            cancel_check()
         if not isinstance(query, str) or not query.strip():
             return _error("invalid_argument", "query must be a non-empty string.")
         if len(query) > MAX_QUERY_CHARS:
@@ -676,6 +692,8 @@ class FileSearchService:
         walk_state = _WalkState()
 
         for selected_id, workspace in selected_roots:
+            if cancel_check is not None:
+                cancel_check()
             initial = self._resolve(workspace, relative_path)
             if isinstance(initial, dict):
                 return initial
@@ -688,7 +706,10 @@ class FileSearchService:
                 workspace,
                 str(relative_path),
                 walk_state,
+                cancel_check=cancel_check,
             ):
+                if cancel_check is not None:
+                    cancel_check()
                 if considered_files >= MAX_SEARCH_FILES:
                     truncated = True
                     truncation_reason = "file_budget"
@@ -739,10 +760,14 @@ class FileSearchService:
                         break
                     skipped_files += 1
                     continue
+                if cancel_check is not None:
+                    cancel_check()
                 scanned_files += 1
                 scanned_bytes += byte_count
 
                 for line_number, line in enumerate(text.splitlines(), start=1):
+                    if cancel_check is not None:
+                        cancel_check()
                     if query_folded not in line.casefold():
                         continue
                     snippet = line.strip()[:MAX_SNIPPET_CHARS]
@@ -769,6 +794,8 @@ class FileSearchService:
             if truncated:
                 break
 
+        if cancel_check is not None:
+            cancel_check()
         citations = list(dict.fromkeys(match["citation"] for match in matches))
         return _success(
             query=query,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from concurrent.futures import CancelledError
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -67,6 +68,11 @@ class ToolRegistry:
             return {"ok": False, "error": f"Unknown tool: {name}"}
         try:
             return tool.handler(**arguments)
+        except CancelledError:
+            # Cancellation is control flow owned by AgentRuntime. Converting it
+            # into a tool error would emit a misleading tool_finished event and
+            # delay the turn from stopping until the next runtime boundary.
+            raise
         except TypeError as exc:
             return {"ok": False, "error": f"Invalid arguments for {name}: {exc}"}
         except Exception as exc:  # noqa: BLE001 - tools are an external execution boundary

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from workbench_core.agent import AgentTool
+from workbench_core.agent import AgentCancelled, AgentTool, current_cancel_event
 from workbench_core.files import MAX_WRITE_BYTES, FileSearchService, FileWriteService
 
 _STABLE_WRITE_ERROR_CODES = frozenset(
@@ -460,6 +460,25 @@ def create_file_tools(
     def audit_file_result(result: dict[str, Any]) -> dict[str, Any]:
         return _audit_read_result(result, allowed_root_ids=allowed_root_ids)
 
+    def check_cancelled() -> None:
+        cancel_event = current_cancel_event()
+        if cancel_event is not None and cancel_event.is_set():
+            raise AgentCancelled("agent turn cancelled")
+
+    def search_files(
+        query: str,
+        root_id: str | None = None,
+        relative_path: str = ".",
+        max_results: int = 20,
+    ) -> dict[str, Any]:
+        return service.search(
+            query,
+            root_id=root_id,
+            relative_path=relative_path,
+            max_results=max_results,
+            cancel_check=check_cancelled,
+        )
+
     tools = [
         AgentTool(
             name="list_files",
@@ -519,7 +538,7 @@ def create_file_tools(
                 "required": ["query"],
                 "additionalProperties": False,
             },
-            handler=service.search,
+            handler=search_files,
             audit_arguments=audit_search_arguments,
             audit_result=audit_search_result,
         ),

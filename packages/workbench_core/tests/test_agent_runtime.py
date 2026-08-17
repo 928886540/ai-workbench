@@ -809,3 +809,64 @@ def test_agent_runtime_emits_assistant_delta_events_in_order() -> None:
     assert deltas == ["he", "llo"]
     assert events[0].kind == "turn_started"
     assert events[-1].kind == "completed"
+
+
+def test_tool_registry_preserves_cancellation_control_flow() -> None:
+    def cancel() -> dict[str, object]:
+        raise AgentCancelled("cancel inside tool")
+
+    registry = ToolRegistry(
+        [
+            AgentTool(
+                name="cancel",
+                description="cancel",
+                parameters={"type": "object", "properties": {}},
+                handler=cancel,
+            )
+        ]
+    )
+
+    with pytest.raises(AgentCancelled, match="cancel inside tool"):
+        registry.execute("cancel", {})
+
+
+def test_cancelled_tool_does_not_emit_finished_or_failed_audit() -> None:
+    class CancelToolClient:
+        def chat_turn(self, messages, tools=None, temperature=0.2):  # noqa: ANN001, ARG002
+            return ChatTurn(
+                content=None,
+                tool_calls=[
+                    ToolCall(id="cancel-1", name="cancel", arguments="{}")
+                ],
+                raw_message={"role": "assistant", "content": None},
+            )
+
+    def cancel() -> dict[str, object]:
+        raise AgentCancelled("cancel inside tool")
+
+    events: list[AgentEvent] = []
+    runtime = AgentRuntime(
+        client=CancelToolClient(),  # type: ignore[arg-type]
+        tools=ToolRegistry(
+            [
+                AgentTool(
+                    name="cancel",
+                    description="cancel",
+                    parameters={"type": "object", "properties": {}},
+                    handler=cancel,
+                )
+            ]
+        ),
+        system_prompt="test",
+        on_event=events.append,
+    )
+
+    with pytest.raises(AgentCancelled) as cancelled:
+        runtime.run("cancel")
+
+    assert cancelled.value.partial_result is None
+    assert [event.kind for event in events] == [
+        "turn_started",
+        "tool_started",
+        "cancelled",
+    ]

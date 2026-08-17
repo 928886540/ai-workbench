@@ -4,16 +4,25 @@ import asyncio
 import json
 import sqlite3
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from leon_agent.agent import build_system_prompt
 from leon_agent.config import LeonSettings
 from leon_agent.file_tools import create_file_search_service, create_file_tools
 from leon_agent.gateway import app as gateway_module
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
-from workbench_core.agent import AgentEvent, AgentResult, AgentRuntime, ToolRegistry
+from workbench_core.agent import (
+    AgentCancelled,
+    AgentEvent,
+    AgentResult,
+    AgentRuntime,
+    ToolRegistry,
+    cancellation_scope,
+)
 from workbench_core.llm import ChatTurn, ToolCall
 
 
@@ -143,6 +152,48 @@ def test_file_tools_register_only_when_service_is_available(tmp_path: Path) -> N
     assert read_result["ok"] is True
     assert "Tifa" in read_result["content"]
     assert read_result["untrusted_content"] is True
+
+
+def test_file_search_tool_propagates_active_turn_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "character.md").write_text("cinematic", encoding="utf-8")
+    service = create_file_search_service({"docs": tmp_path})
+    assert service is not None
+    registry = ToolRegistry(create_file_tools(service))
+    cancel_event = Event()
+    checks = 0
+
+    def cancel_during_search(
+        query: str,
+        root_id: str | None = None,
+        relative_path: str = ".",
+        max_results: int = 20,
+        *,
+        cancel_check=None,  # noqa: ANN001
+    ) -> dict[str, Any]:
+        del query, root_id, relative_path, max_results
+        nonlocal checks
+        assert cancel_check is not None
+        cancel_check()
+        checks += 1
+        cancel_event.set()
+        cancel_check()
+        raise AssertionError("cancel_check must stop the search")
+
+    monkeypatch.setattr(service, "search", cancel_during_search)
+
+    with cancellation_scope(cancel_event), pytest.raises(
+        AgentCancelled,
+        match="agent turn cancelled",
+    ):
+        registry.execute(
+            "file_search",
+            {"root_id": "docs", "query": "cinematic"},
+        )
+
+    assert checks == 1
 
 
 def test_file_tool_schemas_are_bounded_and_read_only(tmp_path: Path) -> None:
