@@ -221,4 +221,3 @@ def test_direct_registry_does_not_advertise_planning_tools() -> None:
 
     assert {"plan_create", "plan_update", "plan_get"}.isdisjoint(direct_tools.names)
     assert "Planning tools are enabled" in build_system_prompt(planning_enabled=True)
-

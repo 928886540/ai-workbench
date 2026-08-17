@@ -60,4 +60,3 @@ pending -> in_progress -> completed
 - fake LLM 能真实执行 `create -> update -> 业务工具 -> update -> final` 多轮闭环。
 - raw 步骤描述存在于当前 LLM transcript，但 Event、ToolStep 和 SQLite 均无原文。
 - 连续两个 turn 的计划状态相互隔离；取消后下一 turn 从空计划开始。
-

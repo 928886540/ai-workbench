@@ -154,4 +154,3 @@ class PlanningService:
             "active_step": active_step,
             "done": completed_count + failed_count == len(self._steps),
         }
-
