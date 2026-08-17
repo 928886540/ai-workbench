@@ -51,15 +51,20 @@
 - 可通过 `LEON_SYSTEM_PROMPT_FILE` 读取 UTF-8 TXT 并追加到 Agent system prompt；本机文件位于被 Git 忽略的
   `data/system-prompts/双人成行预设.txt`，CLI 与 Web Gateway 都已接入
 - Web 修复（2026-08-16）：旧 session 聊天记录恢复渲染、任务/图库按 `created_at` 最新优先；
-  编辑改为独立弹窗，完成任务显示缩略图，退出登录二次确认；Vue SW 当前为 v19
-- CLI 已升级为日用全屏 TUI：上方可滚动聊天记录，底部 1～6 行动态输入框；Enter 发送，
+  编辑改为独立弹窗，完成任务显示缩略图，退出登录二次确认；站点 favicon 已改为 CLI 同款金色 `✦`，Vue SW 当前为 v21
+- CLI 已升级为日用 inline TUI：上方可滚动聊天记录，底部 1～6 行动态输入框以 `»` 标记首行、续行不缩进；外层终端接管
+  鼠标滚轮回看和拖选复制，同时支持 PageUp/PageDown 翻页与显式闪烁竖线光标；resume 会按顺序重放最近 240 条消息；Enter 发送，
   Shift+Enter 换行，并为不兼容终端保留 Ctrl+Enter / Esc+Enter。非 TTY 继续使用 Rich fallback。
+- CLI 历史回答 `•` 为绿色、最新回答保持正文色，工具状态按青/绿/红/粉/黄区分；每轮结束显示唯一一条
+  `Worked for` 耗时分割线，下一轮开始时旧耗时文字会被纯分割线替换，resume 不伪造耗时。
+- CLI 输出区和输入区之间保留一行间隔；图片短标签改为 OSC 8 原生终端链接，不重新开启应用鼠标捕获，
+  `/open` 继续作为无法点击时的后备。
 - CLI 已补 `/resume`、`/retry`、`/last`、`/copy`、`/tools`、`/status`，斜杠命令支持中文说明、
-  大小写不敏感补全；输入历史来自当前 SQLite session，请求期间会保留下一轮草稿。
+  大小写不敏感补全；输入历史来自当前 SQLite session，请求期间 Enter 会把完整消息加入顺序队列。
 - CLI 的 Esc/Ctrl+C 使用协作式取消：会阻止后续 LLM/tool 轮、持久化和迟到结果渲染；
   `LLM_TIMEOUT_SECONDS=0` 时响应读取不限时，取消会主动关闭当前 OpenAI/httpx 连接并在短时间内收敛。
-  `generate_images` 继续用
-  `return_direct` 避免图片完成后多打一轮 provider 请求。
+  `generate_images` 继续用 `return_direct` 避免生图提交后多打一轮 provider 请求；交互式 CLI 提交后
+  立即释放输入区、后台跟踪并自动持久化完成图片，`--once` 仍同步等待结果。
 - Vue W2 基座已落地：`projects/02-leon-agent/web/` 提供 Vue 3 + Vite、API client、
   `stores/messages.ts`、ChatView 和 PWA 资产；它是唯一 Web 客户端，FastAPI 直接托管 `web/dist/`。
 - Vue 迁移当前已覆盖聊天、任务、图库和设置四个视图；聊天支持 `/nsfw --model` 模式补全，

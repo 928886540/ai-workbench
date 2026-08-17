@@ -164,16 +164,36 @@ expand it into global search/delete APIs. Normalize every `final_image_url` into
   answers remain visually separated from input.
 - Input history is loaded from the current SQLite session. Up/down recalls it, switching or creating
   a session refreshes it, and a draft typed while a turn is running remains in the composer.
-- `/resume`, `/retry`, `/last`, `/copy`, `/tools`, and `/status` are part of the CLI contract. Slash
-  completion is case-insensitive and includes Chinese descriptions.
+- The TUI runs inline instead of entering the alternate full-screen buffer. The host terminal owns
+  mouse-wheel scrollback, drag selection, and Ctrl+Shift+C, so prompt_toolkit mouse reporting stays
+  disabled. PageUp/PageDown also scroll the transcript. Image labels use terminal-native OSC 8 links
+  with `/open` as the fallback, so clickability does not require application mouse capture. A one-row
+  gap separates transcript/status output from the composer. The composer uses a `»` marker on its
+  first line, keeps continuation lines unindented, and explicitly toggles cursor visibility because
+  prompt_toolkit's Win32 output backend ignores blinking cursor shapes.
+- Completed exchanges are separated by horizontal rules. Only the latest completed turn may show a
+  `Worked for <duration>` label; launching the next turn replaces that label with a plain rule, and
+  resumed history uses plain rules because persisted messages do not contain execution duration.
+- The latest assistant marker keeps the foreground color while older assistant markers are green.
+  Execution states use distinct running/success/error/cancel/warning colors.
+- Pressing Enter while a turn is running queues the complete message, clears the composer, and sends
+  queued messages in order after the current turn settles. It must not print repeated "previous turn"
+  warnings or run two Agent turns against the same session concurrently.
+- Interactive CLI image generation returns after the backend accepts the jobs. A daemon tracker owns
+  completion polling, keeps the composer usable, persists the final image message to the submission's
+  original session, and renders clickable image links. `leon --once` remains synchronous because no
+  long-lived terminal process exists to receive a later notification.
+- `/resume`, `/retry`, `/last`, `/copy`, `/tools`, and `/status` are part of the CLI contract. Resume
+  replays up to the TUI's 240-message display capacity in SQLite order while last/retry/copy still
+  target only the latest exchange. Slash completion is case-insensitive and includes Chinese descriptions.
 - Esc/Ctrl+C cooperatively cancels the current turn: late output is not rendered or persisted, and no
   later LLM/tool round continues. A synchronous HTTP read already in flight cannot be safely killed;
   it may remain blocked until the provider returns or the 30-second timeout expires. Do not close the
   shared HTTP client and claim hard cancellation.
 - The shared `AgentTool.return_direct` flag is for deterministic, user-facing tool results that do
-  not need another provider round-trip. Leon's `generate_images` uses it and renders image URLs or
-  task status directly after the image tool finishes. This avoids an unnecessary second LLM request
-  after a long image wait, which is important for low-RPM providers.
+  not need another provider round-trip. Leon's interactive `generate_images` uses it to report the
+  accepted background submission immediately; the tracker renders image URLs only after completion.
+  This avoids both a long foreground wait and an unnecessary second provider request.
 
 ## Web Search Contract
 
@@ -385,7 +405,7 @@ Interaction correction pass (SW cache `leon-vue-v15`):
 - Image submission copy always says `已提交 N 张图片任务` and asks the user to wait for automatic
   delivery; it no longer claims completion before an image URL is available.
 
-Refresh/voice/UI reliability pass (SW cache `leon-vue-v19`):
+Refresh/voice/UI reliability pass (SW cache `leon-vue-v21`):
 
 - Session history includes stable message ids plus persisted assistant revisions. Refreshing during
   an active normal/retry turn reconstructs the pending bubble from `active_turn`; completion remains
@@ -463,7 +483,7 @@ For Web changes also verify a mobile viewport with a real browser:
 
 Historical legacy browser coverage was retired when the single-file client was deleted. The
 canonical provider-free browser suite is `tests/manual_vue_web_check.py`; the Service Worker cache
-is `leon-vue-v19`.
+is `leon-vue-v21`.
 
 The LLM transport safety fix was validated separately with `101 passed`. Current Vue provider-free
 validation additionally includes `npm run typecheck`, `npm run build`, and `manual_vue_web_check.py`

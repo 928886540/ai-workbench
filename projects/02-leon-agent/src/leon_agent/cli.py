@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
+from collections import deque
 from collections.abc import Sequence
 from contextlib import nullcontext
 from contextvars import ContextVar
@@ -44,6 +45,7 @@ from leon_agent.memory.service import MemoryService
 from leon_agent.memory.store import MemoryStore
 from leon_agent.models import model_provider_scope, resolve_model_id
 from leon_agent.search import create_search_service
+from leon_agent.service import _wait_for_image_results
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
 
@@ -69,6 +71,7 @@ else:  # pragma: no cover - platform-specific compatibility shim
 try:
     from prompt_toolkit.application import Application
     from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.cursor_shapes import CursorShape
     from prompt_toolkit.data_structures import Point
     from prompt_toolkit.filters import Condition, has_focus
     from prompt_toolkit.history import InMemoryHistory
@@ -76,13 +79,13 @@ try:
     from prompt_toolkit.layout import HSplit, Layout, Window
     from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.layout.dimension import Dimension
-    from prompt_toolkit.layout.margins import ScrollbarMargin
     from prompt_toolkit.mouse_events import MouseButton, MouseEventType
     from prompt_toolkit.styles import Style
     from prompt_toolkit.widgets import TextArea
 except ModuleNotFoundError:  # pragma: no cover - legacy prompt fallback remains usable
     Application = None
     WordCompleter = None
+    CursorShape = None
     Point = None
     Condition = None
     has_focus = None
@@ -93,7 +96,6 @@ except ModuleNotFoundError:  # pragma: no cover - legacy prompt fallback remains
     FormattedTextControl = None
     Dimension = None
     InMemoryHistory = None
-    ScrollbarMargin = None
     MouseButton = None
     MouseEventType = None
     Style = None
@@ -140,9 +142,10 @@ _WIN32_ALT_PRESSED = 0x0003
 
 _URL_PATTERN = re.compile(r"https?://[^\s<>{}\[\]()]+", re.IGNORECASE)
 _IMAGE_SUFFIXES = (".avif", ".gif", ".jpeg", ".jpg", ".png", ".webp")
-_THINKING_BEAM_SPEED = 1.6
+_THINKING_BEAM_SPEED = 2.0
 _THINKING_BEAM_TRAIL = 2.4
 _THINKING_BEAM_GAP = 1.2
+_CURSOR_BLINK_SECONDS = 0.53
 
 
 def _image_urls(text: str) -> list[str]:
@@ -174,6 +177,20 @@ def _image_link_suffix(index: int, total: int) -> str:
     position = f" {index}/{total}" if total > 1 else ""
     fallback = "  ·  /open" if index == total else ""
     return position + fallback
+
+
+def _launch_external_url(url: str) -> bool:
+    """Hand a URL to the desktop without letting a shell split its query string."""
+
+    if sys.platform == "win32":
+        subprocess.Popen(
+            ["explorer.exe", url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    return bool(webbrowser.open(url, new=2))
 
 
 def _legacy_prompt_markup(console: Console) -> str:
@@ -382,9 +399,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 class TerminalChatUI:
-    """Fullscreen chat surface with explicit turn ownership and cancellation."""
+    """Inline chat surface with explicit turn ownership and cancellation."""
 
-    _MAX_BLOCKS = 240
+    _MAX_BLOCKS = 480
+    _RESUME_MESSAGE_LIMIT = 240
+    _WORKED_SEPARATOR_PREFIX = "─ Worked for "
     _IDLE_STATUS = "● 就绪"
 
     def __init__(self, owner: LeonConsole) -> None:
@@ -412,6 +431,12 @@ class TerminalChatUI:
         self._history_index = 0
         self._history_draft = ""
         self._history_setting = False
+        self._queued_messages: deque[str] = deque()
+        self._background_image_jobs: set[str] = set()
+        self._animation_stop_event = threading.Event()
+        self._animation_thread: threading.Thread | None = None
+        self._cursor_visible = True
+        self._cursor_blink_started_at = monotonic()
 
         self.output_control = FormattedTextControl(
             self._output_fragments,
@@ -424,16 +449,16 @@ class TerminalChatUI:
             height=Dimension(weight=1),
             wrap_lines=True,
             always_hide_cursor=True,
-            right_margins=[ScrollbarMargin(display_arrows=False)],
         )
+        self.output_gap = Window(height=1)
         input_kwargs = {
             "height": Dimension(min=1, max=6),
             "dont_extend_height": True,
-            "prompt": [("class:composer.prompt", "  » ")],
             "get_line_prefix": self._composer_line_prefix,
             "multiline": True,
             "accept_handler": self._accept,
             "style": "class:composer.input",
+            "prompt": [("class:composer.prompt", "» ")],
         }
         if InMemoryHistory is not None:
             input_kwargs["history"] = self._build_input_history()
@@ -445,6 +470,11 @@ class TerminalChatUI:
                 sentence=True,
             )
         self.input = TextArea(**input_kwargs)
+        # prompt_toolkit's Win32 output backend ignores blinking cursor shapes.
+        # Toggle cursor visibility explicitly so Windows Terminal still blinks.
+        self.input.window.always_hide_cursor = Condition(
+            lambda: not self._cursor_visible
+        )
         self.input.buffer.on_text_changed += self._on_input_text_changed
         self.status = Window(
             content=FormattedTextControl(self._status_fragments),
@@ -572,9 +602,18 @@ class TerminalChatUI:
             self.clear_output()
             self._set_status(self.status_text, animate=self._status_animated)
 
+        @key_bindings.add("pageup")
+        def _(event) -> None:  # noqa: ANN001, ARG001
+            self._scroll_output_page(-1)
+
+        @key_bindings.add("pagedown")
+        def _(event) -> None:  # noqa: ANN001, ARG001
+            self._scroll_output_page(1)
+
         root = HSplit(
             [
                 self.output,
+                self.output_gap,
                 self.status,
                 self.composer_top,
                 self.input,
@@ -587,9 +626,16 @@ class TerminalChatUI:
                 "message.user": "#DCEEFF",
                 "message.assistant": "#DCEEFF",
                 "message.marker": "#DCEEFF",
+                "message.marker.old": "#65E7B8",
                 "message.tool": "#71869A",
+                "message.separator": "#516579",
                 "message.link": "underline #73B8FF",
                 "status": "#71869A",
+                "status.running": "#59D7E7",
+                "status.success": "#65E7B8",
+                "status.error": "#FF8FB1",
+                "status.warning": "#F5C26B",
+                "status.background": "#73B8FF",
                 "status.pulse.hot": "bold #FFFFFF",
                 "status.pulse.bright": "#DCEEFF",
                 "status.pulse.mid": "#AFC4D6",
@@ -610,10 +656,20 @@ class TerminalChatUI:
         application_kwargs = {
             "layout": Layout(root, focused_element=self.input),
             "key_bindings": key_bindings,
-            "full_screen": True,
-            "mouse_support": True,
+            # Inline mode keeps the normal terminal scrollback active. In a
+            # full-screen alternate buffer Windows Terminal translates the
+            # mouse wheel into Up/Down keys, which incorrectly moves through
+            # composer history instead of scrolling the conversation.
+            "full_screen": False,
+            # Keep mouse reporting disabled so the host terminal owns drag
+            # selection and Ctrl+Shift+C, just like a normal PowerShell tab.
+            "mouse_support": False,
+            "cursor": CursorShape.BLINKING_BEAM,
             "style": tui_style,
-            "refresh_interval": 1 / 12,
+            # Continuous redraws reset the host terminal's cursor blink cycle.
+            # Animated statuses get their own refresh loop while idle input
+            # remains untouched.
+            "refresh_interval": None,
         }
         native_input = self._create_native_input()
         if native_input is not None:
@@ -656,9 +712,7 @@ class TerminalChatUI:
 
     @staticmethod
     def _composer_line_prefix(line_number: int, wrap_count: int):  # noqa: ARG004
-        if line_number == 0 and wrap_count == 0:
-            return ""
-        return [("class:composer.prompt", "    ")]
+        return ""
 
     def _build_input_history(self):
         history = InMemoryHistory()
@@ -682,6 +736,8 @@ class TerminalChatUI:
         if self._history_setting:
             return
         with self.lock:
+            self._cursor_visible = True
+            self._cursor_blink_started_at = monotonic()
             self._history_index = len(self._history_entries)
             self._history_draft = buffer.text
             # A normal edit breaks a consecutive Ctrl+C sequence. The first
@@ -768,19 +824,41 @@ class TerminalChatUI:
 
     def _bottom_bar_fragments(self):
         hint = self._composer_hint_fragments()
+        with self.lock:
+            queued_count = len(self._queued_messages)
+            background_count = len(self._background_image_jobs)
         if hint:
-            return hint
+            fragments = list(hint)
+            if queued_count:
+                fragments.append(
+                    ("class:bottom.meta", f"  ·  队列 {queued_count}")
+                )
+            return fragments
         model = getattr(self.owner, "llm_model", "-") or "-"
         provider = getattr(self.owner, "llm_provider_name", "-") or "-"
         session = getattr(self.owner, "session_id", "-") or "-"
         fragments = [
-            ("class:bottom.model", f"  {model}"),
+            ("class:bottom.model", model),
             ("class:bottom.meta", "  "),
             ("class:bottom.provider", provider),
             ("class:bottom.meta", "  "),
             ("class:bottom.path", str(Path.cwd())),
             ("class:bottom.meta", f"  ·  session {session[:8]}"),
         ]
+        if queued_count:
+            fragments.extend(
+                [
+                    ("class:bottom.meta", "  ·  "),
+                    ("class:bottom.model", f"队列 {queued_count}"),
+                ]
+            )
+        if background_count:
+            fragments.extend(
+                [
+                    ("class:bottom.meta", "  ·  "),
+                    ("class:message.link", f"后台生图 {background_count}"),
+                ]
+            )
         if getattr(self.owner, "_last_answer", ""):
             fragments.extend(
                 [
@@ -800,18 +878,19 @@ class TerminalChatUI:
         elif not text:
             return []
         elif busy:
-            hint = "当前轮处理中 · 草稿会保留 · esc 取消"
+            hint = "Enter 加入队列 · esc 取消当前轮"
         elif text.lstrip().startswith("/"):
             hint = "Tab 补全命令 · Enter 执行"
         else:
             hint = "Enter 发送 · Shift+Enter/Ctrl+J 换行 · Tab 补全"
-        return [("class:composer.hint", f"  {hint}")]
+        return [("class:composer.hint", hint)]
 
     def _status_height(self) -> Dimension:
         with self.lock:
             visible = (
                 self.busy
                 or self._model_picker is not None
+                or bool(self._background_image_jobs)
                 or self.status_text != self._IDLE_STATUS
             )
         return Dimension.exact(1 if visible else 0)
@@ -824,15 +903,16 @@ class TerminalChatUI:
             animation_started_at = self._status_animation_started_at
             busy = self.busy
             model_picker = self._model_picker
+            background_count = len(self._background_image_jobs)
         if busy and started_at is not None:
             now = monotonic()
             elapsed = self._format_elapsed(now - started_at)
             if status.startswith("⏹"):
                 return [
-                    ("class:status.cancel", f"  ◦ {status}"),
+                    ("class:status.cancel", f"◦ {status}"),
                     ("class:status", f" ({elapsed})"),
                 ]
-            fragments = [("class:status", "  ◦ ")]
+            fragments = [("class:status.running", "◦ ")]
             animation_origin = (
                 animation_started_at
                 if animation_started_at is not None
@@ -863,11 +943,18 @@ class TerminalChatUI:
             fragments.append(("class:status", f" ({elapsed} • esc 取消)"))
             return fragments
         if model_picker is not None:
-            return [("class:status", "  ◦ 选择模型：输入序号或完整 ID · esc 取消")]
+            return [("class:status", "◦ 选择模型：输入序号或完整 ID · esc 取消")]
+        if background_count:
+            return [
+                (
+                    "class:status.background",
+                    f"◦ 后台生图 {background_count} 项 · 输入区可继续使用",
+                )
+            ]
         if status == self._IDLE_STATUS:
             return []
         style = "class:status.cancel" if status.startswith("⏹") else "class:status"
-        return [(style, f"  {status}")]
+        return [(style, status)]
 
     @staticmethod
     def _format_elapsed(seconds: float) -> str:
@@ -883,15 +970,28 @@ class TerminalChatUI:
             started_at = self._started_at
             busy = self.busy
             model_picker = self._model_picker
+            background_count = len(self._background_image_jobs)
         if busy and started_at is not None:
             elapsed = self._format_elapsed(monotonic() - started_at)
             suffix = "" if status.startswith("⏹") else " • esc 取消"
             return f"◦ {status} ({elapsed}{suffix})"
         if model_picker is not None:
             return "◦ 选择模型：输入序号或完整 ID · esc 取消"
+        if background_count:
+            return f"◦ 后台生图 {background_count} 项 · 输入区可继续使用"
         if status == self._IDLE_STATUS:
             return ""
         return status
+
+    def add_background_image_jobs(self, job_ids: Sequence[str]) -> None:
+        with self.lock:
+            self._background_image_jobs.update(job_id for job_id in job_ids if job_id)
+        self.app.invalidate()
+
+    def remove_background_image_jobs(self, job_ids: Sequence[str]) -> None:
+        with self.lock:
+            self._background_image_jobs.difference_update(job_ids)
+        self.app.invalidate()
 
     def _rendered_blocks(self) -> str:
         with self.lock:
@@ -904,6 +1004,20 @@ class TerminalChatUI:
             return Point(x=0, y=line_count - 1)
         current_scroll = max(0, int(getattr(self.output, "vertical_scroll", 0)))
         return Point(x=0, y=min(line_count - 1, current_scroll))
+
+    def _scroll_output_page(self, direction: int) -> None:
+        rendered = self._rendered_blocks()
+        line_count = max(1, rendered.count("\n"))
+        render_info = getattr(self.output, "render_info", None)
+        page_size = max(1, int(getattr(render_info, "window_height", 10)) - 1)
+        current_scroll = max(0, int(getattr(self.output, "vertical_scroll", 0)))
+        target = min(
+            line_count - 1,
+            max(0, current_scroll + (page_size if direction > 0 else -page_size)),
+        )
+        self.output.vertical_scroll = target
+        self._follow_output = direction > 0 and target >= line_count - 1
+        self.app.invalidate()
 
     def _observe_output_mouse(self, event):  # noqa: ANN001
         if event.event_type == MouseEventType.SCROLL_UP:
@@ -919,8 +1033,8 @@ class TerminalChatUI:
 
     def _open_url(self, url: str) -> None:
         try:
-            opened = webbrowser.open(url, new=2)
-        except (OSError, webbrowser.Error) as exc:
+            opened = _launch_external_url(url)
+        except (OSError, subprocess.SubprocessError, webbrowser.Error) as exc:
             self.write_plain(f"⚠ 无法打开图片：{type(exc).__name__}: {exc}")
             return
         if not opened:
@@ -944,11 +1058,21 @@ class TerminalChatUI:
             return [("class:status", "\n", self._observe_output_mouse)]
         fragments = []
         continuation_style = ""
-        for line in rendered.splitlines(keepends=True):
+        rendered_lines = rendered.splitlines(keepends=True)
+        assistant_lines = [
+            index
+            for index, line in enumerate(rendered_lines)
+            if line.rstrip("\n").startswith("• ")
+        ]
+        latest_assistant_line = assistant_lines[-1] if assistant_lines else -1
+        for line_index, line in enumerate(rendered_lines):
             line_without_newline = line.rstrip("\n")
             cursor = 0
             if not line_without_newline:
                 base_style = ""
+                continuation_style = ""
+            elif line_without_newline.startswith("─"):
+                base_style = "class:message.separator"
                 continuation_style = ""
             elif line_without_newline.startswith("» "):
                 base_style = "class:message.user"
@@ -960,12 +1084,29 @@ class TerminalChatUI:
             elif line_without_newline.startswith("• "):
                 base_style = "class:message.assistant"
                 continuation_style = base_style
+                marker_style = (
+                    "class:message.marker"
+                    if line_index == latest_assistant_line
+                    else "class:message.marker.old"
+                )
                 fragments.append(
-                    ("class:message.marker", "• ", self._observe_output_mouse)
+                    (marker_style, "• ", self._observe_output_mouse)
                 )
                 cursor = 2
-            elif line_without_newline.startswith(("● ", "✓ ", "✗ ", "◦ ", "⏹ ", "⚠ ")):
-                base_style = "class:message.tool"
+            elif line_without_newline.startswith(("● ", "◦ ")):
+                base_style = "class:status.running"
+                continuation_style = base_style
+            elif line_without_newline.startswith(("✓ ", "✅ ")):
+                base_style = "class:status.success"
+                continuation_style = base_style
+            elif line_without_newline.startswith(("✗ ", "❌ ", "💥 ")):
+                base_style = "class:status.error"
+                continuation_style = base_style
+            elif line_without_newline.startswith("⏹ "):
+                base_style = "class:status.cancel"
+                continuation_style = base_style
+            elif line_without_newline.startswith("⚠ "):
+                base_style = "class:status.warning"
                 continuation_style = base_style
             elif line_without_newline.startswith("  ") and continuation_style:
                 base_style = continuation_style
@@ -986,7 +1127,13 @@ class TerminalChatUI:
                             self._observe_output_mouse,
                         )
                     )
-                fragments.append(("class:message.link", "↗ 打开图片", self._link_handler(url)))
+                fragments.extend(
+                    [
+                        ("[ZeroWidthEscape]", f"\x1b]8;;{url}\x1b\\"),
+                        ("class:message.link", "↗ 打开图片"),
+                        ("[ZeroWidthEscape]", "\x1b]8;;\x1b\\"),
+                    ]
+                )
                 cursor = match.end()
             if cursor < len(line_without_newline):
                 fragments.append(
@@ -998,14 +1145,55 @@ class TerminalChatUI:
 
     def run(self) -> None:
         self.owner.ui = self
+        output = getattr(self.app, "output", None)
+        self._start_animation_refresh()
         try:
+            if output is not None and hasattr(output, "set_title"):
+                output.set_title("✦ Leon Agent")
             self.owner._print_startup()
             if getattr(self.owner, "_resumed_session", False):
                 self.owner._print_resume_context()
             self.app.run()
         finally:
+            self._stop_animation_refresh()
             self._shutdown_worker()
+            if output is not None and hasattr(output, "reset_title"):
+                output.reset_title()
             self.owner.ui = None
+
+    def _start_animation_refresh(self) -> None:
+        thread = self._animation_thread
+        if thread is not None and thread.is_alive():
+            return
+        self._animation_stop_event.clear()
+        thread = threading.Thread(
+            target=self._animation_refresh_loop,
+            name="leon-tui-animation",
+            daemon=True,
+        )
+        self._animation_thread = thread
+        thread.start()
+
+    def _animation_refresh_loop(self) -> None:
+        while not self._animation_stop_event.wait(1 / 12):
+            now = monotonic()
+            with self.lock:
+                animated = self._status_animated
+                blink_due = (
+                    now - self._cursor_blink_started_at >= _CURSOR_BLINK_SECONDS
+                )
+                if blink_due:
+                    self._cursor_visible = not self._cursor_visible
+                    self._cursor_blink_started_at = now
+            if animated or blink_due:
+                self.app.invalidate()
+
+    def _stop_animation_refresh(self) -> None:
+        self._animation_stop_event.set()
+        thread = self._animation_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=0.5)
+        self._animation_thread = None
 
     def _shutdown_worker(self) -> None:
         with self.lock:
@@ -1065,6 +1253,26 @@ class TerminalChatUI:
             if urls:
                 self._latest_image_url = urls[-1]
             self._follow_output = True
+        self.app.invalidate()
+
+    def write_turn_separator(self, elapsed_seconds: float | None = None) -> None:
+        width = self._render_width()
+        if elapsed_seconds is None:
+            separator = "─" * width
+        else:
+            label = f"{self._WORKED_SEPARATOR_PREFIX}{self._format_elapsed(elapsed_seconds)} "
+            separator = label + "─" * max(1, width - len(label))
+        self.write_plain(separator)
+
+    def _retire_worked_separator(self) -> None:
+        with self.lock:
+            for index in range(len(self.blocks) - 1, -1, -1):
+                if self.blocks[index].startswith(self._WORKED_SEPARATOR_PREFIX):
+                    self.blocks[index] = "─" * self._render_width()
+                    self._follow_output = True
+                    break
+            else:
+                return
         self.app.invalidate()
 
     def clear_output(self) -> None:
@@ -1206,6 +1414,7 @@ class TerminalChatUI:
             still_current = self._active_cancel_event is cancel_event and self.busy
             if still_current and exit_after:
                 self._exit_requested = True
+                self._queued_messages.clear()
             should_exit = exit_after and not still_current
             exit_requested = still_current and self._exit_requested
             if exit_requested:
@@ -1309,11 +1518,17 @@ class TerminalChatUI:
             else:
                 return self._accept_model_choice(buffer, message.strip())
         if busy:
+            buffer.text = ""
+            with self.lock:
+                self._history_entries.append(message)
+                self._history_index = len(self._history_entries)
+                self._history_draft = ""
+                self._queued_messages.append(message)
+                queued_count = len(self._queued_messages)
             self.write_plain(
-                "⏳ 上一轮仍在处理；草稿已保留。按 Esc 取消，"
-                "或按 Ctrl+C 清输入 → 打断 → 退出。"
+                f"◦ 已加入消息队列 · 当前轮结束后自动发送（待发送 {queued_count}）"
             )
-            return True
+            return False
         if buffer.text != message:
             # Keep the history entry identical to the text sent to the agent;
             # a final Shift+Enter should not leave a phantom blank line.
@@ -1322,10 +1537,15 @@ class TerminalChatUI:
             self._history_entries.append(message)
             self._history_index = len(self._history_entries)
             self._history_draft = ""
+        self._launch_turn(message)
+        return False
+
+    def _launch_turn(self, message: str) -> None:
+        self._retire_worked_separator()
         self.write_user_message(message)
         if message.casefold() in {"/exit", "/quit"}:
             self.app.exit()
-            return False
+            return
 
         cancel_event = threading.Event()
         with self.lock:
@@ -1352,7 +1572,6 @@ class TerminalChatUI:
                 self._active_thread = None
                 self._started_at = None
             raise
-        return False
 
     def _run_message(
         self,
@@ -1361,9 +1580,11 @@ class TerminalChatUI:
         cancel_event: threading.Event,
     ) -> None:
         token = _ACTIVE_TURN.set((generation, cancel_event))
+        completed = False
         try:
             with cancellation_scope(cancel_event):
                 keep_running = self.owner.handle_interactive_message(message)
+                completed = bool(keep_running)
                 if not keep_running:
                     with self.lock:
                         self._exit_requested = True
@@ -1380,6 +1601,8 @@ class TerminalChatUI:
             _ACTIVE_TURN.reset(token)
             should_exit = False
             current = False
+            queued_message: str | None = None
+            started_at: float | None = None
             with self.lock:
                 current = (
                     self._generation == generation
@@ -1387,16 +1610,26 @@ class TerminalChatUI:
                 )
                 if current:
                     should_exit = self._exit_requested
+                    started_at = self._started_at
                     self.busy = False
                     self._active_cancel_event = None
                     self._active_thread = None
                     self._started_at = None
+                    if not should_exit and self._queued_messages:
+                        queued_message = self._queued_messages.popleft()
             if current:
                 if should_exit:
                     self._set_status("👋 正在退出")
                     self.app.exit()
                 else:
-                    self._set_status(self._IDLE_STATUS)
+                    if completed and started_at is not None:
+                        self.write_turn_separator(monotonic() - started_at)
+                    else:
+                        self.write_turn_separator()
+                    if queued_message is not None:
+                        self._launch_turn(queued_message)
+                    else:
+                        self._set_status(self._IDLE_STATUS)
 
     def _set_status(self, text: str, *, animate: bool = False) -> None:
         with self.lock:
@@ -1448,6 +1681,12 @@ class LeonConsole:
         self._progress_task_id: int | None = None
         self._image_progress_active = False
         self._commit_lock = threading.Lock()
+        self._background_image_lock = threading.RLock()
+        self._tracked_image_jobs: set[str] = set()
+        self._background_image_threads: set[threading.Thread] = set()
+        # One-shot invocations have no long-lived UI/process to receive a later
+        # completion notification, so they keep the synchronous result contract.
+        self.background_image_tracking = not bool(args.once)
         self.agent = self._create_agent()
 
     def _resolve_session(self, args: argparse.Namespace) -> str:
@@ -1479,14 +1718,26 @@ class LeonConsole:
         self._last_image_url = urls[-1] if urls else None
 
     def _print_resume_context(self) -> None:
+        messages = self.store.load_messages(
+            self.session_id,
+            limit=TerminalChatUI._RESUME_MESSAGE_LIMIT,
+        )
         ui = getattr(self, "ui", None)
-        if self._last_user_message:
-            if ui is not None:
-                ui.write_user_message(self._last_user_message)
+        for message in messages:
+            content = str(message["content"])
+            if message["role"] == "user":
+                if ui is not None:
+                    ui.write_user_message(content)
+                else:
+                    self.print(Text(f"» {content}", style="#DCEEFF"))
+            elif ui is not None:
+                ui.write_answer(content)
+                ui.write_turn_separator()
             else:
-                self.print(Text(f"» {self._last_user_message}", style="#DCEEFF"))
-        if self._last_answer:
-            self._print_answer(self._last_answer)
+                self._print_answer(content)
+        # Rendering older answers must not change /retry, /last, /copy or
+        # /open away from the actual latest exchange.
+        self._restore_last_exchange()
 
     def print(self, *objects: object, **kwargs: object) -> None:
         ui = getattr(self, "ui", None)
@@ -1531,6 +1782,134 @@ class LeonConsole:
         with self._commit_context():
             self.store.record_result(self.session_id, audit_result)
 
+    def _on_generation_submitted(self, submission: dict[str, object]) -> None:
+        """Track submitted image jobs without keeping the CLI turn busy."""
+        jobs = [
+            item
+            for item in submission.get("jobs", [])
+            if isinstance(item, dict) and item.get("job_id")
+        ]
+        job_ids = [str(item["job_id"]) for item in jobs]
+        if not job_ids:
+            return
+
+        lock = getattr(self, "_background_image_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._background_image_lock = lock
+        with lock:
+            tracked = getattr(self, "_tracked_image_jobs", set())
+            fresh_job_ids = [job_id for job_id in job_ids if job_id not in tracked]
+            if not fresh_job_ids:
+                return
+            tracked.update(fresh_job_ids)
+            self._tracked_image_jobs = tracked
+
+        session_id = self.session_id
+        image_client = self.image_client
+        tracked_submission = {
+            **submission,
+            "jobs": [item for item in jobs if str(item["job_id"]) in fresh_job_ids],
+        }
+        ui = getattr(self, "ui", None)
+        if ui is not None and hasattr(ui, "add_background_image_jobs"):
+            ui.add_background_image_jobs(fresh_job_ids)
+        elif ui is None:
+            self.print(
+                f"[cyan]◦[/cyan] 已提交 {len(fresh_job_ids)} 张图片任务，后台生成中"
+            )
+
+        thread = threading.Thread(
+            target=self._track_image_submission,
+            args=(session_id, image_client, tracked_submission, fresh_job_ids),
+            name=f"leon-image-{fresh_job_ids[0][:8]}",
+            daemon=True,
+        )
+        with lock:
+            threads = getattr(self, "_background_image_threads", set())
+            threads.add(thread)
+            self._background_image_threads = threads
+        try:
+            thread.start()
+        except Exception:
+            with lock:
+                self._tracked_image_jobs.difference_update(fresh_job_ids)
+                self._background_image_threads.discard(thread)
+            if ui is not None and hasattr(ui, "remove_background_image_jobs"):
+                ui.remove_background_image_jobs(fresh_job_ids)
+            raise
+
+    def _track_image_submission(
+        self,
+        session_id: str,
+        image_client: LeonImageClient,
+        submission: dict[str, object],
+        job_ids: list[str],
+    ) -> None:
+        # Give the foreground tool result a short head start so its audit row is
+        # persisted before an unusually fast backend completion notification.
+        threading.Event().wait(0.35)
+        try:
+            result = _wait_for_image_results(
+                image_client,
+                chat_id=f"leon-agent:{session_id}",
+                submission=submission,
+                poll_interval_seconds=1.0,
+            )
+        except Exception as exc:  # noqa: BLE001 - background tracking must not kill the TUI
+            result = {
+                **submission,
+                "ok": False,
+                "images": [],
+                "error": f"后台状态查询失败：{type(exc).__name__}: {exc}",
+            }
+        finally:
+            lock = getattr(self, "_background_image_lock", None)
+            if lock is not None:
+                with lock:
+                    self._tracked_image_jobs.difference_update(job_ids)
+                    self._background_image_threads.discard(threading.current_thread())
+
+        self._finish_image_submission(session_id, job_ids, result)
+
+    def _finish_image_submission(
+        self,
+        session_id: str,
+        job_ids: Sequence[str],
+        result: dict[str, object],
+    ) -> None:
+        ui = getattr(self, "ui", None)
+        if ui is not None and hasattr(ui, "remove_background_image_jobs"):
+            ui.remove_background_image_jobs(job_ids)
+
+        images = [
+            str(item["image_url"])
+            for item in result.get("images", [])
+            if isinstance(item, dict) and item.get("image_url")
+        ]
+        if result.get("ok") and images:
+            answer = f"{len(images)} 张图片生成好了。\n\n" + "\n".join(
+                f"- {url}" for url in images
+            )
+        else:
+            detail = str(result.get("error") or "图片任务结束，但没有返回可用地址")
+            answer = f"后台生图未完成：{detail}"
+
+        try:
+            self.store.add_message(session_id, "assistant", answer)
+        except Exception as exc:  # noqa: BLE001 - still show the completed image to the user
+            if ui is not None:
+                ui.write_plain(f"⚠ 后台图片结果持久化失败：{type(exc).__name__}")
+
+        if session_id == self.session_id:
+            self._print_answer(answer)
+            return
+        notice = f"会话 {session_id[:8]} 的后台生图通知\n{answer}"
+        if ui is not None:
+            ui.write_answer(notice)
+        else:
+            self.print(Text(notice, style="#DCEEFF"))
+
     def _create_agent(self) -> LeonAgent:
         reset_settings_cache()
         llm_settings = self._resolve_llm_settings()
@@ -1568,6 +1947,12 @@ class LeonConsole:
             base_url=self.config.tavily_base_url,
             timeout_seconds=self.config.tavily_timeout_seconds,
             max_results=self.config.tavily_max_results,
+            fallback_api_key=(
+                self.config.tavily_fallback_api_key.get_secret_value()
+                if self.config.tavily_fallback_api_key
+                else None
+            ),
+            fallback_base_url=self.config.tavily_fallback_base_url,
         )
         self.file_service = create_file_search_service(self.config.file_roots)
         self.file_write_service = create_file_write_service(self.config.file_roots)
@@ -1575,10 +1960,16 @@ class LeonConsole:
             self.memory_store,
             session_id=self.session_id,
         )
+        background_images = bool(getattr(self, "background_image_tracking", True))
+        generation_callback = (
+            self._on_generation_submitted if background_images else None
+        )
         self.direct_tools = create_leon_tools(
             self.image_client,
             session_id=self.session_id,
             default_mode_ids=self.config.default_mode_ids,
+            wait_for_image_completion=not background_images,
+            on_generation_submitted=generation_callback,
             search_service=self.search_service,
             file_service=self.file_service,
             file_write_service=self.file_write_service,
@@ -1589,6 +1980,8 @@ class LeonConsole:
             session_id=self.session_id,
             default_mode_ids=self.config.default_mode_ids,
             on_event=self._on_event,
+            wait_for_image_completion=not background_images,
+            on_generation_submitted=generation_callback,
             search_service=self.search_service,
             file_service=self.file_service,
             file_write_service=self.file_write_service,
@@ -1638,7 +2031,7 @@ class LeonConsole:
         if width < 40:
             value_width = max(1, width - 2)
             compact = Text()
-            compact.append(">_ LEON\n", style="bold #DCEEFF")
+            compact.append("✦ LEON\n", style="bold #73B8FF")
             compact.append(f"m {self._clip_startup(model, value_width)}\n", style="#DCEEFF")
             compact.append(
                 f"p {self._clip_startup(provider, value_width)}\n",
@@ -1651,19 +2044,36 @@ class LeonConsole:
             self.print(compact)
             return
 
-        title = Text(">_ LEON AGENT", style="bold #DCEEFF")
-        title.append("  v0.1.0", style="#71869A")
+        panel_width = min(width, 88)
+        title = Text("✦ LEON AGENT", style="bold #73B8FF")
+        title.append("  /  terminal", style="#71869A")
         body = Text()
-        inner_width = max(1, width - 4)
-        model = self._clip_startup(model, max(4, min(32, inner_width - 21)))
-        provider = self._clip_startup(provider, max(4, inner_width - 10))
-        body.append("model:     ", style="#71869A")
+        inner_width = max(1, panel_width - 4)
+        value_width = max(4, inner_width - 12)
+        model = self._clip_startup(model, value_width)
+        provider = self._clip_startup(provider, value_width)
+        endpoint = self._clip_startup(
+            getattr(self, "llm_base_url", "-") or "-",
+            value_width,
+        )
+        body.append("Model      ", style="#71869A")
         body.append(model, style="#DCEEFF")
         body.append("\n", style="#DCEEFF")
-        body.append("provider:  ", style="#71869A")
+        body.append("Provider   ", style="#71869A")
         body.append(f"{provider}\n", style="#DCEEFF")
-        body.append("session:   ", style="#71869A")
+        body.append("Endpoint   ", style="#71869A")
+        body.append(f"{endpoint}\n", style="#AFC4D6")
+        body.append("Session    ", style="#71869A")
         body.append(self.session_id[:16], style="#AFC4D6")
+        body.append("\n\n", style="#71869A")
+        body.append("/model", style="#73B8FF")
+        body.append(" 模型  ·  ", style="#71869A")
+        body.append("/tools", style="#73B8FF")
+        body.append(" 工具  ·  ", style="#71869A")
+        body.append("/history", style="#73B8FF")
+        body.append(" 会话  ·  ", style="#71869A")
+        body.append("/help", style="#73B8FF")
+        body.append(" 帮助", style="#71869A")
 
         self.print(
             Group(
@@ -1673,6 +2083,7 @@ class LeonConsole:
                     border_style="#15304A",
                     padding=(0, 1),
                     expand=False,
+                    width=panel_width,
                 ),
             )
         )
@@ -1707,7 +2118,7 @@ class LeonConsole:
         self._image_progress_active = True
         ui = getattr(self, "ui", None)
         if ui is not None:
-            ui._set_status("正在生成图片", animate=True)
+            ui._set_status("正在提交生图任务", animate=True)
             return
         self._progress = Progress(
             SpinnerColumn(),
@@ -1716,7 +2127,7 @@ class LeonConsole:
             console=self.console,
         )
         self._progress.start()
-        self._progress_task_id = self._progress.add_task("正在生成图片…", total=None)
+        self._progress_task_id = self._progress.add_task("正在提交生图任务…", total=None)
 
     def _stop_image_progress(self, *, ok: bool | None = None) -> None:
         active = bool(getattr(self, "_image_progress_active", False))
@@ -1768,7 +2179,14 @@ class LeonConsole:
         elif event.kind == "tool_finished":
             ok = bool(event.result and event.result.get("ok"))
             if event.tool_name == "generate_images":
-                self._stop_image_progress(ok=ok)
+                background = bool(
+                    event.result
+                    and event.result.get("waited_for_completion") is False
+                )
+                self._stop_image_progress(ok=None if background else ok)
+                if background:
+                    self.print("[green]✓[/green] [dim]generate_images 已提交[/dim]")
+                    return
             if ok:
                 self.print(f"[green]✓[/green] [dim]{event.tool_name} 完成[/dim]")
             else:
@@ -1812,14 +2230,14 @@ class LeonConsole:
             self.print("[yellow]当前会话还没有可打开的图片。[/yellow]")
             return False
         try:
-            opened = webbrowser.open(url, new=2)
-        except (OSError, webbrowser.Error) as exc:
+            opened = _launch_external_url(url)
+        except (OSError, subprocess.SubprocessError, webbrowser.Error) as exc:
             self.print(f"[red]打开图片失败：{type(exc).__name__}: {exc}[/red]")
             return False
         if not opened:
             self.print("[yellow]系统没有可用的浏览器打开图片链接。[/yellow]")
             return False
-        self.print("[green]↗ 已打开最近图片[/green]")
+        self.print("[green]↗ 已交给系统浏览器[/green]")
         return True
 
     def _start_llm_request(self) -> None:
@@ -1933,7 +2351,8 @@ class LeonConsole:
             self.print(f"[red]直达生图失败：{type(exc).__name__}: {exc}[/red]")
             return False
         ok = bool(result.get("ok"))
-        self._stop_image_progress(ok=ok)
+        background = result.get("waited_for_completion") is False
+        self._stop_image_progress(ok=None if background else ok)
         if not ok:
             self.print(f"[red]直达生图失败：{result.get('error') or '未知错误'}[/red]")
             return False
@@ -1942,9 +2361,15 @@ class LeonConsole:
             for item in result.get("images", [])
             if isinstance(item, dict) and item.get("image_url")
         ]
-        answer = f"{command.mode_name}模式的图片生成好了。"
-        if images:
-            answer += "\n\n" + "\n".join(f"- {url}" for url in images)
+        if background:
+            answer = (
+                f"已使用 {command.mode_name} 模式提交 1 张图片任务，正在后台生成；"
+                "你可以继续聊天，完成后会自动显示。"
+            )
+        else:
+            answer = f"{command.mode_name}模式的图片生成好了。"
+            if images:
+                answer += "\n\n" + "\n".join(f"- {url}" for url in images)
         agent_result = AgentResult(
             answer=answer,
             steps=[ToolStep("generate_images", arguments, result)],
@@ -2011,6 +2436,7 @@ class LeonConsole:
         self.agent = self._create_agent()
         ui = getattr(self, "ui", None)
         if ui is not None:
+            ui.clear_output()
             ui.refresh_input_history()
         self.print(f"[green]已切换会话[/green] {session_id}")
         self._print_resume_context()

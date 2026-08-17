@@ -4,7 +4,7 @@
 
 ## 当前能力
 
-- `leon` 日用全屏 TUI：可滚动聊天记录、1～6 行动态输入框、SQLite 输入历史和 Rich 非 TTY fallback
+- `leon` 日用 inline TUI：无可见滚动条的聊天记录、1～6 行动态输入框、运行中消息队列、后台生图通知、SQLite 输入历史和 Rich 非 TTY fallback
 - `leon-server`：FastAPI Gateway + SSE + 手机 PWA Web Client
 - 普通问题直接聊天，不调用工具
 - 明确生图请求优先路由工具，用户原话作为 `source_text` 透传，不由 Agent 扩写 Prompt
@@ -90,7 +90,8 @@ Tunnel 缓存规则见 [Windows + Cloudflare 部署](docs/windows-cloudflare-dep
 leon resume 6b34ef29606447d395f05899ba30abf7
 ```
 
-恢复后会继续使用该 session 在 SQLite 中保存的消息历史。旧写法
+恢复后会按顺序重放该 session 最近 240 条 SQLite 消息，并继续在同一会话中保存；`/retry`、
+`/last` 和 `/copy` 仍只指向最新一轮。旧写法
 `leon --session <session_id>` 继续兼容。
 
 交互命令：
@@ -112,9 +113,17 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 - `/exit`：退出
 
 全屏 TUI 中 Enter 发送，Shift+Enter 换行；终端不支持修饰键时可用 Ctrl+Enter 或 Esc+Enter。
+输入框首行使用 `»` 提示符，续行、运行状态和底栏不做额外缩进；光标使用显式显隐节拍保证 Windows Terminal 下闪烁。CLI 使用 inline 模式，
+鼠标滚轮滚动外层会话记录，拖选归宿主终端处理，选中后可用 Ctrl+Shift+C 复制；
+聊天记录也可用 PageUp/PageDown 翻页。图片使用不依赖应用鼠标捕获的 OSC 8 原生超链接，`/open` 是后备；
+输出区与输入区保留一行呼吸空间。历史回答标记为绿色，最新回答保持正文色；
+工具运行/成功/失败/取消/警告分别使用青/绿/红/粉/黄。每轮完成后显示唯一一条 `Worked for` 耗时分割线，
+下一轮发送时旧耗时会退化为纯分割线，resume 历史只渲染纯分割线。
 Esc/Ctrl+C 会协作式取消当前轮并丢弃迟到结果，Ctrl+D/Q 退出。LLM 响应默认不设读取时限，
 长推理会一直等待到 provider 完成；取消时会主动关闭当前连接，不会继续后续 LLM/tool 轮，
-也不会持久化或渲染迟到结果。
+也不会持久化或渲染迟到结果。当前轮运行时再次按 Enter 会把消息加入队列，当前轮收敛后按顺序自动发送。
+交互式 CLI 的生图工具只等待任务提交成功，随后释放输入区并在后台跟踪；图片完成后自动追加可点击链接并
+持久化到原 session。`leon --once` 没有常驻界面，仍同步等待图片结果，避免进程退出后丢失通知。
 
 启动时只读取 `%USERPROFILE%\.leon\config.toml` 中复制的 provider，使用其中的
 `base_url`、`experimental_bearer_token` 和顶层 `model`。`/model` 接受列表序号或任意新
@@ -237,8 +246,8 @@ uv run leon-server --help
 ## Mobile Web Client
 
 Vue Web 客户端的 5 个阶段均已完成：HTTP Gateway、SSE 事件流、手机 PWA 聊天、任务/图库视图，以及运行时间线。
-Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 job id，并在后台跟踪状态和完成图片；CLI 仍保留
-同步等待图片结果的体验。图片完成后 Gateway 会主动持久化并推送一条带图片的助手消息，Web
+Web Gateway 提交生图任务后立即通过 SSE 推送任务模式和内部 job id，并在后台跟踪状态和完成图片；交互式 CLI
+采用同样的“提交即释放输入区”语义，并在终端后台跟踪结果。图片完成后 Gateway 会主动持久化并推送一条带图片的助手消息，Web
 聊天气泡直接显示图片，不需要再次询问 LLM。Web 设置页可为当前 session 选择模型，或恢复用户 `.leon`
 配置快照中的默认模型；选择会与 CLI 共用同一份 SQLite 会话状态。
 

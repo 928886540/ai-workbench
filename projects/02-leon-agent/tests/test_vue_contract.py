@@ -34,9 +34,11 @@ def test_vue_entry_is_the_only_web_client() -> None:
     assert 'app.mount("/", StaticFiles(directory=_WEB_DIR, html=True)' in gateway
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
+    assert '<link rel="icon" href="/icon.svg" type="image/svg+xml" />' in entry
+    assert '<link rel="apple-touch-icon" href="/icon.svg" />' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-19"' in main
-    assert "leon-vue-v19" in service_worker
+    assert 'register("/sw.js?v=vue-21"' in main
+    assert "leon-vue-v21" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:

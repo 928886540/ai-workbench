@@ -230,6 +230,117 @@ def test_nsfw_command_bypasses_llm_and_defaults_to_marika(tmp_path) -> None:  # 
     ]
 
 
+def test_cli_background_image_completion_persists_and_renders(tmp_path) -> None:  # noqa: ANN001
+    class FakeUI:
+        def __init__(self) -> None:
+            self.removed = []
+            self.answers = []
+            self.lines = []
+
+        def remove_background_image_jobs(self, job_ids):  # noqa: ANN001
+            self.removed.extend(job_ids)
+
+        def write_answer(self, answer):  # noqa: ANN001
+            self.answers.append(answer)
+
+        def write_plain(self, text):  # noqa: ANN001
+            self.lines.append(text)
+
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.ui = FakeUI()
+    cli._last_answer = ""
+    cli._last_image_url = None
+
+    cli._finish_image_submission(
+        cli.session_id,
+        ["job-1"],
+        {
+            "ok": True,
+            "images": [
+                {"job_id": "job-1", "image_url": "https://example.test/result.png"}
+            ],
+        },
+    )
+
+    assert cli.ui.removed == ["job-1"]
+    assert cli.ui.answers == [
+        "1 张图片生成好了。\n\n- https://example.test/result.png"
+    ]
+    assert cli.store.load_messages(cli.session_id) == [
+        {
+            "role": "assistant",
+            "content": "1 张图片生成好了。\n\n- https://example.test/result.png",
+        }
+    ]
+    assert cli._last_image_url == "https://example.test/result.png"
+
+
+def test_cli_background_tracker_delivers_completed_image(tmp_path) -> None:  # noqa: ANN001
+    delivered = threading.Event()
+
+    class FakeImageClient:
+        def get_image_tasks(self, *, chat_id, limit):  # noqa: ANN001
+            assert chat_id.startswith("leon-agent:")
+            assert limit >= 20
+            return {
+                "ok": True,
+                "items": [
+                    {
+                        "job_id": "job-fast",
+                        "status": "completed",
+                        "image_url": "https://example.test/fast.png",
+                    }
+                ],
+            }
+
+        def get_recent_images(self, *, chat_id, limit):  # noqa: ANN001, ARG002
+            raise AssertionError("completed task URL should not query gallery")
+
+    class FakeUI:
+        def __init__(self) -> None:
+            self.active = set()
+            self.answers = []
+
+        def add_background_image_jobs(self, job_ids):  # noqa: ANN001
+            self.active.update(job_ids)
+
+        def remove_background_image_jobs(self, job_ids):  # noqa: ANN001
+            self.active.difference_update(job_ids)
+
+        def write_answer(self, answer):  # noqa: ANN001
+            self.answers.append(answer)
+            delivered.set()
+
+        def write_plain(self, text):  # noqa: ANN001, ARG002
+            return None
+
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.image_client = FakeImageClient()
+    cli.ui = FakeUI()
+    cli._last_answer = ""
+    cli._last_image_url = None
+    cli._background_image_lock = threading.RLock()
+    cli._tracked_image_jobs = set()
+    cli._background_image_threads = set()
+
+    cli._on_generation_submitted(
+        {"ok": True, "jobs": [{"job_id": "job-fast", "status": "queued"}]}
+    )
+
+    assert delivered.wait(timeout=2)
+    assert cli.ui.active == set()
+    assert cli.ui.answers == [
+        "1 张图片生成好了。\n\n- https://example.test/fast.png"
+    ]
+    assert cli.store.load_messages(cli.session_id)[-1]["content"].endswith(
+        "https://example.test/fast.png"
+    )
+
+
 def test_switch_model_accepts_custom_model_id(tmp_path) -> None:  # noqa: ANN001
     cli = LeonConsole.__new__(LeonConsole)
     cli.store = SessionStore(tmp_path / "leon.db")
@@ -352,7 +463,9 @@ def test_restore_last_exchange_recovers_latest_image_for_resume(tmp_path) -> Non
     assert cli._last_image_url == "https://example.test/two.png"
 
 
-def test_print_resume_context_replays_latest_turn_with_clickable_image() -> None:
+def test_print_resume_context_replays_session_history_and_keeps_latest_turn(
+    tmp_path,
+) -> None:  # noqa: ANN001
     calls = []
 
     class FakeUI:
@@ -362,18 +475,35 @@ def test_print_resume_context_replays_latest_turn_with_clickable_image() -> None
         def write_answer(self, answer):  # noqa: ANN001
             calls.append(("assistant", answer))
 
+        def write_turn_separator(self):
+            calls.append(("separator", None))
+
     cli = LeonConsole.__new__(LeonConsole)
     cli.ui = FakeUI()
-    cli._last_user_message = "生成一张图"
-    cli._last_answer = "生成好了 https://example.test/result.png"
-    cli._last_image_url = "https://example.test/result.png"
+    cli.store = SessionStore(tmp_path / "leon.db")
+    cli.session_id = cli.store.create_session()
+    cli.store.add_message(cli.session_id, "user", "我操")
+    cli.store.add_message(cli.session_id, "assistant", "第一轮回答")
+    cli.store.add_message(cli.session_id, "user", "生成一张图")
+    cli.store.add_message(
+        cli.session_id,
+        "assistant",
+        "生成好了 https://example.test/result.png",
+    )
+    cli._restore_last_exchange()
 
     cli._print_resume_context()
 
     assert calls == [
+        ("user", "我操"),
+        ("assistant", "第一轮回答"),
+        ("separator", None),
         ("user", "生成一张图"),
         ("assistant", "生成好了 https://example.test/result.png"),
+        ("separator", None),
     ]
+    assert cli._last_user_message == "生成一张图"
+    assert cli._last_answer == "生成好了 https://example.test/result.png"
     assert cli._last_image_url == "https://example.test/result.png"
 
 
@@ -597,6 +727,8 @@ def _make_composition_cli(monkeypatch, tmp_path, file_roots):  # noqa: ANN001
         bridge_timeout_seconds=1.0,
         tavily_api_key=None,
         tavily_base_url="https://api.tavily.com",
+        tavily_fallback_api_key=None,
+        tavily_fallback_base_url=None,
         tavily_timeout_seconds=1.0,
         tavily_max_results=5,
         file_roots=file_roots,
@@ -621,6 +753,11 @@ def test_cli_file_write_composition_is_disabled_without_roots(monkeypatch, tmp_p
     assert {"create_file", "write_file"}.isdisjoint(cli.direct_tools.names)
     assert captured["agent_kwargs"]["file_service"] is None
     assert captured["agent_kwargs"]["file_write_service"] is None
+    assert captured["agent_kwargs"]["wait_for_image_completion"] is False
+    assert captured["agent_kwargs"]["on_generation_submitted"].__self__ is cli
+    generation_service = cli.direct_tools._tools["generate_images"].handler.__self__
+    assert generation_service.wait_for_image_completion is False
+    assert generation_service.on_generation_submitted.__self__ is cli
 
 
 def test_cli_file_write_composition_reuses_matching_service(monkeypatch, tmp_path) -> None:
@@ -632,6 +769,19 @@ def test_cli_file_write_composition_reuses_matching_service(monkeypatch, tmp_pat
     assert cli.file_service.root_bindings == cli.file_write_service.root_bindings
     assert captured["agent_kwargs"]["file_service"] is cli.file_service
     assert captured["agent_kwargs"]["file_write_service"] is cli.file_write_service
+
+
+def test_cli_once_mode_keeps_synchronous_image_result(monkeypatch, tmp_path) -> None:
+    cli, captured = _make_composition_cli(monkeypatch, tmp_path, {})
+    cli.background_image_tracking = False
+
+    cli._create_agent()
+
+    assert captured["agent_kwargs"]["wait_for_image_completion"] is True
+    assert captured["agent_kwargs"]["on_generation_submitted"] is None
+    generation_service = cli.direct_tools._tools["generate_images"].handler.__self__
+    assert generation_service.wait_for_image_completion is True
+    assert generation_service.on_generation_submitted is None
 
 
 def test_cli_memory_composition_uses_shared_db_and_current_session(monkeypatch, tmp_path) -> None:
@@ -1225,10 +1375,18 @@ def test_terminal_ui_hides_idle_status_and_only_shows_composer_hint_for_input(
     ui.input.buffer.text = "普通问题"
     ui.busy = True
     busy_text = "".join(fragment[1] for fragment in ui._bottom_bar_fragments())
-    assert "草稿会保留" in busy_text
+    assert "Enter 加入队列" in busy_text
     ui.input.buffer.text = ""
     idle_text = "".join(fragment[1] for fragment in ui._bottom_bar_fragments())
     assert "fake-model" in idle_text
+
+    ui.busy = False
+    ui.add_background_image_jobs(["job-1"])
+    background_status = "".join(fragment[1] for fragment in ui._status_fragments())
+    assert "后台生图 1 项" in background_status
+    assert ui.status.height().preferred == 1
+    ui.remove_background_image_jobs(["job-1"])
+    assert ui.status.height().preferred == 0
     assert "Enter 发送" not in idle_text
 
 
@@ -1355,6 +1513,70 @@ def test_terminal_ui_history_follows_session_and_preserves_draft(
     assert ui.input.buffer.history.get_strings() == ["另一个会话的问题"]
 
 
+def test_terminal_ui_uses_inline_scrollback_native_selection_and_blinking_cursor(
+    monkeypatch,
+) -> None:
+    application_kwargs = {}
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            application_kwargs.update(kwargs)
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(
+        SimpleNamespace(
+            llm_model="fake-model",
+            llm_provider_name="fake-provider",
+            session_id="session-test",
+        )
+    )
+
+    assert ui.app is not None
+    assert application_kwargs["full_screen"] is False
+    assert application_kwargs["mouse_support"] is False
+    assert application_kwargs["cursor"] == cli_module.CursorShape.BLINKING_BEAM
+    assert application_kwargs["refresh_interval"] is None
+    prompt_processor = ui.input.control.input_processors[2]
+    assert prompt_processor.text == [("class:composer.prompt", "» ")]
+    assert ui.input.window.always_hide_cursor() is False
+    ui._cursor_visible = False
+    assert ui.input.window.always_hide_cursor() is True
+
+
+def test_terminal_ui_page_scroll_changes_output_position(monkeypatch) -> None:
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            self.invalidations = 0
+
+        def invalidate(self) -> None:
+            self.invalidations += 1
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(
+        SimpleNamespace(
+            llm_model="fake-model",
+            llm_provider_name="fake-provider",
+            session_id="session-test",
+        )
+    )
+    ui.blocks = [f"message {index}" for index in range(30)]
+    ui.output.render_info = SimpleNamespace(window_height=6)
+    ui.output.vertical_scroll = 20
+
+    ui._scroll_output_page(-1)
+    assert ui.output.vertical_scroll == 15
+    assert ui._follow_output is False
+
+    ui.output.vertical_scroll = 58
+    ui._scroll_output_page(1)
+    assert ui.output.vertical_scroll == 58
+    assert ui._follow_output is True
+    assert ui.app.invalidations == 2
+
+
 def test_terminal_ui_ctrl_d_deletes_draft_then_exits_when_empty(monkeypatch) -> None:
     class FakeOwner:
         llm_model = "fake-model"
@@ -1436,14 +1658,10 @@ def test_terminal_ui_input_editing_shortcuts(monkeypatch) -> None:
     assert buffer.text == "first line\n"
 
 
-def test_terminal_ui_multiline_composer_keeps_prompt_width() -> None:
+def test_terminal_ui_multiline_composer_has_no_artificial_indent() -> None:
     assert TerminalChatUI._composer_line_prefix(0, 0) == ""
-    assert TerminalChatUI._composer_line_prefix(1, 0) == [
-        ("class:composer.prompt", "    ")
-    ]
-    assert TerminalChatUI._composer_line_prefix(0, 1) == [
-        ("class:composer.prompt", "    ")
-    ]
+    assert TerminalChatUI._composer_line_prefix(1, 0) == ""
+    assert TerminalChatUI._composer_line_prefix(0, 1) == ""
 
 
 def test_terminal_ui_history_has_an_empty_cursor_after_last_entry(monkeypatch) -> None:
@@ -1570,7 +1788,7 @@ def test_terminal_ui_modified_enter_sequences_create_multiline_prompt(
     assert ui.input.buffer.history.get_strings() == ["one\ntwo"]
 
 
-def test_terminal_ui_keeps_draft_when_previous_turn_is_busy(monkeypatch) -> None:
+def test_terminal_ui_queues_message_when_previous_turn_is_busy(monkeypatch) -> None:
     class FakeOwner:
         llm_model = "fake-model"
         llm_provider_name = "fake-provider"
@@ -1595,10 +1813,70 @@ def test_terminal_ui_keeps_draft_when_previous_turn_is_busy(monkeypatch) -> None
         )
     )
 
-    assert ui.input.buffer.text == "第二轮草稿\n仍然保留"
+    assert ui.input.buffer.text == ""
     assert ui.input.buffer.history.get_strings() == []
-    assert "草稿已保留" in ui.blocks[-1]
+    assert list(ui._queued_messages) == ["第二轮草稿\n仍然保留"]
+    assert "已加入消息队列" in ui.blocks[-1]
     assert ui._active_thread is None
+
+
+def test_terminal_ui_runs_queued_message_after_current_turn(monkeypatch) -> None:
+    first_started = threading.Event()
+    release_first = threading.Event()
+    second_finished = threading.Event()
+    calls = []
+
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+        def handle_interactive_message(self, message):  # noqa: ANN001
+            calls.append(message)
+            if message == "第一轮":
+                first_started.set()
+                release_first.wait(timeout=2)
+            else:
+                second_finished.set()
+            return True
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            self.exited = False
+
+        def invalidate(self) -> None:
+            return None
+
+        def exit(self) -> None:
+            self.exited = True
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    owner = FakeOwner()
+    ui = TerminalChatUI(owner)
+    owner.ui = ui
+
+    ui.input.buffer.text = "第一轮"
+    ui._accept(ui.input.buffer)
+    first_worker = ui._active_thread
+    assert first_worker is not None
+    assert first_started.wait(timeout=1)
+
+    ui.input.buffer.text = "第二轮"
+    ui._accept(ui.input.buffer)
+    assert list(ui._queued_messages) == ["第二轮"]
+
+    release_first.set()
+    first_worker.join(timeout=1)
+    assert second_finished.wait(timeout=1)
+    second_worker = ui._active_thread
+    if second_worker is not None:
+        second_worker.join(timeout=1)
+
+    assert calls == ["第一轮", "第二轮"]
+    assert list(ui._queued_messages) == []
+    assert ui.busy is False
+    assert sum("Worked for" in block for block in ui.blocks) == 1
+    assert any(block and set(block) == {"─"} for block in ui.blocks)
 
 
 def test_terminal_ui_ignores_whitespace_without_polluting_history(monkeypatch) -> None:
@@ -1707,6 +1985,8 @@ def test_terminal_ui_uses_two_unframed_composer_lines_and_delays_user_render(
 
     assert ui.composer_top.char == "─"
     assert ui.composer_bottom.char == "─"
+    assert ui.output_gap.height == 1
+    assert ui.output.right_margins == []
     ui.input.buffer.text = "尚未发送的草稿"
     assert all("尚未发送的草稿" not in block for block in ui.blocks)
 
@@ -1741,6 +2021,52 @@ def test_terminal_ui_answer_uses_bullet_without_leon_and_indents_following_lines
     assert lines[-1] == "  第二行"
     assert all("Leon" not in line for line in lines)
     assert all(line.startswith("  ") for line in lines[1:])
+
+
+def test_terminal_ui_turn_separator_retires_old_timing_and_colors_markers(
+    monkeypatch,
+) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+    monkeypatch.setattr(ui, "_render_width", lambda: 48)
+
+    ui.write_answer("旧回答")
+    ui.write_turn_separator(174.9)
+    assert ui.blocks[-1].startswith("─ Worked for 2m 54s ")
+
+    ui._retire_worked_separator()
+    assert ui.blocks[-1] == "─" * 48
+    assert all("Worked for" not in block for block in ui.blocks)
+
+    ui.write_answer("新回答")
+    ui.write_turn_separator(5.9)
+    assert sum("Worked for" in block for block in ui.blocks) == 1
+    ui.write_plain("✓ tool 完成")
+    ui.write_plain("✗ tool 失败")
+    fragments = ui._output_fragments()
+
+    marker_styles = [style for style, text, *_ in fragments if text == "• "]
+    assert marker_styles == ["class:message.marker.old", "class:message.marker"]
+    assert any(
+        style == "class:status.success" and text == "✓ tool 完成"
+        for style, text, *_ in fragments
+    )
+    assert any(
+        style == "class:status.error" and text == "✗ tool 失败"
+        for style, text, *_ in fragments
+    )
 
 
 def test_terminal_ui_answer_list_does_not_leave_a_lonely_outer_bullet(monkeypatch) -> None:
@@ -1803,7 +2129,7 @@ def test_startup_uses_compact_unframed_summary_on_narrow_terminal() -> None:
 
     rendered = output.getvalue()
     assert "╭" not in rendered
-    assert ">_ LEON" in rendered
+    assert "✦ LEON" in rendered
     assert "/help /model" not in rendered
     assert "Commands:" not in rendered
     assert len(rendered.splitlines()) <= 5
@@ -1825,9 +2151,12 @@ def test_startup_hides_command_catalog_in_normal_width() -> None:
     assert "Tip:" not in rendered
     assert "Commands:" not in rendered
     assert "/model 选择" not in rendered
-    assert "model:" in rendered
-    assert "provider:" in rendered
-    assert "session:" in rendered
+    assert "Model" in rendered
+    assert "Provider" in rendered
+    assert "Endpoint" in rendered
+    assert "Session" in rendered
+    assert "/model" in rendered
+    assert "/tools" in rendered
 
 
 def test_legacy_answer_and_feedback_match_compact_tui_contract() -> None:
@@ -1864,9 +2193,16 @@ def test_terminal_ui_uses_aurora_drift_palette(monkeypatch) -> None:
     palette = dict(ui.app.style.style_rules)
 
     assert palette["message.assistant"] == "#DCEEFF"
+    assert palette["message.marker.old"] == "#65E7B8"
     assert palette["message.tool"] == "#71869A"
+    assert palette["message.separator"] == "#516579"
     assert palette["message.link"] == "underline #73B8FF"
+    assert palette["status.running"] == "#59D7E7"
+    assert palette["status.success"] == "#65E7B8"
+    assert palette["status.error"] == "#FF8FB1"
+    assert palette["status.warning"] == "#F5C26B"
     assert palette["status.cancel"] == "#FF8FB1"
+    assert palette["status.background"] == "#73B8FF"
     assert palette["composer.line"] == "#15304A"
     assert palette["composer.prompt"] == "bold #F5C26B"
 
@@ -1895,7 +2231,7 @@ def test_terminal_ui_render_width_tracks_very_narrow_terminal(monkeypatch) -> No
     assert ui._render_width() == 16
 
 
-def test_terminal_ui_delivers_image_with_click_and_open_fallback(monkeypatch) -> None:
+def test_terminal_ui_delivers_native_hyperlink_with_open_fallback(monkeypatch) -> None:
     class FakeOwner:
         llm_model = "fake-model"
         llm_provider_name = "fake-provider"
@@ -1909,12 +2245,6 @@ def test_terminal_ui_delivers_image_with_click_and_open_fallback(monkeypatch) ->
             return None
 
     monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
-    opened = []
-    monkeypatch.setattr(
-        cli_module.webbrowser,
-        "open",
-        lambda url, new=0: opened.append((url, new)) or True,
-    )
     ui = TerminalChatUI(FakeOwner())
     url = (
         "https://comfyui.928886540.xyz/view?filename=k2_queen_marika_00004_.png"
@@ -1923,26 +2253,21 @@ def test_terminal_ui_delivers_image_with_click_and_open_fallback(monkeypatch) ->
 
     ui.write_answer(f"1 张图片生成好了。\n\n- {url}")
     fragments = ui._output_fragments()
-    rendered = "".join(fragment[1] for fragment in fragments)
+    rendered = "".join(
+        fragment[1] for fragment in fragments if fragment[0] != "[ZeroWidthEscape]"
+    )
     links = [
         fragment
         for fragment in fragments
-        if len(fragment) >= 3 and "打开图片" in fragment[1]
+        if "打开图片" in fragment[1]
     ]
 
     assert url not in rendered
     assert rendered.count("↗ 打开图片  ·  /open") == 1
     assert len(links) == 1
     assert ui._latest_image_url == url
-
-    links[0][2](
-        SimpleNamespace(
-            event_type=cli_module.MouseEventType.MOUSE_UP,
-            button=cli_module.MouseButton.LEFT,
-        )
-    )
-
-    assert opened == [(url, 2)]
+    assert ("[ZeroWidthEscape]", f"\x1b]8;;{url}\x1b\\") in fragments
+    assert ("[ZeroWidthEscape]", "\x1b]8;;\x1b\\") in fragments
 
 
 def test_terminal_ui_keeps_multiple_image_links_distinct(monkeypatch) -> None:
@@ -1959,12 +2284,6 @@ def test_terminal_ui_keeps_multiple_image_links_distinct(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
-    opened = []
-    monkeypatch.setattr(
-        cli_module.webbrowser,
-        "open",
-        lambda url, new=0: opened.append((url, new)) or True,
-    )
     ui = TerminalChatUI(FakeOwner())
     urls = [
         "https://images.example/first.png",
@@ -1973,11 +2292,13 @@ def test_terminal_ui_keeps_multiple_image_links_distinct(monkeypatch) -> None:
 
     ui.write_answer("生成完成\n\n" + "\n".join(f"- {url}" for url in urls))
     fragments = ui._output_fragments()
-    rendered = "".join(fragment[1] for fragment in fragments)
+    rendered = "".join(
+        fragment[1] for fragment in fragments if fragment[0] != "[ZeroWidthEscape]"
+    )
     links = [
         fragment
         for fragment in fragments
-        if len(fragment) >= 3 and "打开图片" in fragment[1]
+        if "打开图片" in fragment[1]
     ]
 
     assert all(url not in rendered for url in urls)
@@ -1985,16 +2306,8 @@ def test_terminal_ui_keeps_multiple_image_links_distinct(monkeypatch) -> None:
     assert "↗ 打开图片 2/2  ·  /open" in rendered
     assert len(links) == 2
     assert ui._latest_image_url == urls[-1]
-
-    for fragment in links:
-        fragment[2](
-            SimpleNamespace(
-                event_type=cli_module.MouseEventType.MOUSE_UP,
-                button=cli_module.MouseButton.LEFT,
-            )
-        )
-
-    assert opened == [(urls[0], 2), (urls[1], 2)]
+    for url in urls:
+        assert ("[ZeroWidthEscape]", f"\x1b]8;;{url}\x1b\\") in fragments
 
 
 def test_terminal_ui_does_not_invent_image_link_without_url(monkeypatch) -> None:
@@ -2061,6 +2374,7 @@ def test_terminal_ui_thinking_status_pulses_without_moving_ellipsis(monkeypatch)
             return None
 
     monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    assert cli_module._THINKING_BEAM_SPEED == 2.0
     now = [100.0]
     monkeypatch.setattr(cli_module, "monotonic", lambda: now[0])
     ui = TerminalChatUI(FakeOwner())
@@ -2078,10 +2392,10 @@ def test_terminal_ui_thinking_status_pulses_without_moving_ellipsis(monkeypatch)
     assert "正在请求模型" not in first_line
     assert "..." not in first_line
     assert "".join(fragment[1] for fragment in first_fragments) == (
-        "  ◦ 正在思考中 (1m 12s • esc 取消)"
+        "◦ 正在思考中 (1m 12s • esc 取消)"
     )
     assert "".join(fragment[1] for fragment in second_fragments) == (
-        "  ◦ 正在思考中 (1m 12s • esc 取消)"
+        "◦ 正在思考中 (1m 12s • esc 取消)"
     )
     first_classes = [
         fragment[0]
@@ -2115,20 +2429,57 @@ def test_terminal_ui_thinking_status_pulses_without_moving_ellipsis(monkeypatch)
     assert ui._status_line() == ""
 
 
+def test_windows_image_launcher_keeps_query_string_in_one_argument(monkeypatch) -> None:
+    launched = []
+    monkeypatch.setattr(cli_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        cli_module.subprocess,
+        "Popen",
+        lambda args, **kwargs: launched.append((args, kwargs)),
+    )
+    url = (
+        "https://comfyui.example/view?filename=latest.png"
+        "&subfolder=2026-08-17%5Cnsfw&type=output"
+    )
+
+    assert cli_module._launch_external_url(url) is True
+    assert launched[0][0] == ["explorer.exe", url]
+
+
 def test_legacy_open_last_image_is_a_keyboard_safe_fallback(monkeypatch) -> None:
     opened = []
     monkeypatch.setattr(
-        cli_module.webbrowser,
-        "open",
-        lambda url, new=0: opened.append((url, new)) or True,
+        cli_module,
+        "_launch_external_url",
+        lambda url: opened.append(url) or True,
     )
     cli = LeonConsole.__new__(LeonConsole)
     cli.console = Console(quiet=True)
     cli.ui = None
-    cli._last_image_url = "https://comfyui.example/view?filename=latest.png"
+    cli._last_image_url = (
+        "https://comfyui.example/view?filename=latest.png"
+        "&subfolder=2026-08-17%5Cnsfw&type=output"
+    )
 
     assert cli.open_last_image() is True
-    assert opened == [(cli._last_image_url, 2)]
+    assert opened == [cli._last_image_url]
+
+
+def test_legacy_open_last_image_does_not_report_false_success(monkeypatch) -> None:
+    def fail_to_launch(url):  # noqa: ANN001, ARG001
+        raise OSError("browser launch failed")
+
+    monkeypatch.setattr(cli_module, "_launch_external_url", fail_to_launch)
+    output = StringIO()
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.console = Console(file=output, width=100)
+    cli.ui = None
+    cli._last_image_url = "https://comfyui.example/view?filename=latest.png"
+
+    assert cli.open_last_image() is False
+    rendered = output.getvalue()
+    assert "打开图片失败" in rendered
+    assert "已交给系统浏览器" not in rendered
 
 
 def test_legacy_prompt_uses_ascii_marker_for_non_unicode_console() -> None:

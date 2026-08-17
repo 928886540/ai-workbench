@@ -1,6 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Leon Agent">
   <rect width="512" height="512" rx="112" fill="#0f2742"/>
-  <circle cx="256" cy="256" r="168" fill="#2783de"/>
-  <path d="M256 112 286 226 400 256 286 286 256 400 226 286 112 256 226 226Z" fill="#fff"/>
-  <circle cx="256" cy="256" r="28" fill="#7ee5ff"/>
+  <path d="M256 82C267 187 325 245 430 256C325 267 267 325 256 430C245 325 187 267 82 256C187 245 245 187 256 82Z" fill="#f5c26b"/>
 </svg>
