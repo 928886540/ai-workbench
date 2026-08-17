@@ -31,7 +31,7 @@
 - Web session 会把 provider identity 与 base URL 持久化到 SQLite，Gateway 重启后不会静默切换 provider
 - ASR 语音输入已接入 OpenAI-compatible `/audio/transcriptions`，录音转写后只回填输入框，不自动发送
 - 可选 Tavily `web_search` 已接入 CLI 与 Web：只在后端配置 Key 后注册，并返回可引用的结构化实时搜索结果
-- 可选 File Tools 已接入 Gateway/Web：通过配置的目录白名单查找、读取文件；用户明确授权当前回合时还可新建或整体替换受限文本文件。CLI 已接入三项读工具，写工具等待 TUI Owner 完成 composition
+- 可选 File Tools 已接入 CLI 与 Gateway/Web：通过配置的目录白名单查找、读取文件；用户用严格首行命令明确授权当前回合时，还可新建或整体替换受限文本文件
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读

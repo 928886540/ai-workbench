@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 from io import StringIO
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from leon_agent.cli import (
     _legacy_prompt_markup,
     parse_args,
 )
+from leon_agent.file_write_policy import file_write_turn
 from leon_agent.session import SessionStore
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.completion import CompleteEvent
@@ -19,8 +21,12 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
-from workbench_core.agent import AgentResult
-from workbench_core.agent.runtime import cancellation_scope, current_cancel_event
+from workbench_core.agent import AgentResult, ToolStep
+from workbench_core.agent.runtime import (
+    AgentCancelled,
+    cancellation_scope,
+    current_cancel_event,
+)
 
 
 class FailingAgent:
@@ -551,6 +557,186 @@ def _make_process_cli(tmp_path, agent):  # noqa: ANN001
     cli.llm_model = "test-model"
     cli._ensure_current_provider = lambda: None  # type: ignore[method-assign]
     return cli
+
+
+def _make_composition_cli(monkeypatch, tmp_path, file_roots):  # noqa: ANN001
+    captured = {}
+
+    class FakeSettings:
+        profile = "toml:test"
+        active_base_url = "http://llm.example/v1"
+        llm_source = "toml"
+        codex_config_path = "test-config.toml"
+        llm_timeout_seconds = 0.0
+        llm_max_retries = 0
+
+    class FakeLLMClient:
+        model = "test-model"
+        profile = "toml:test"
+
+        def __init__(self, settings, model_override=None):  # noqa: ANN001, ARG002
+            return None
+
+    class FakeImageClient:
+        def __init__(self, **kwargs):  # noqa: ANN003, ARG002
+            return None
+
+    class FakeLeonAgent:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            captured["agent_kwargs"] = kwargs
+
+    cli = LeonConsole.__new__(LeonConsole)
+    cli.session_id = "composition-session"
+    cli.model_selection = None
+    cli.config = SimpleNamespace(
+        backend_url="http://backend.example",
+        active_plugin_dir=tmp_path,
+        active_public_image_base_url="http://images.example",
+        http_timeout_seconds=1.0,
+        bridge_timeout_seconds=1.0,
+        tavily_api_key=None,
+        tavily_base_url="https://api.tavily.com",
+        tavily_timeout_seconds=1.0,
+        tavily_max_results=5,
+        file_roots=file_roots,
+        default_mode_ids=["k2_tifa_plus"],
+        read_additional_system_prompt=lambda: None,
+    )
+    cli._resolve_llm_settings = lambda: FakeSettings()  # type: ignore[method-assign]
+    monkeypatch.setattr(cli_module, "LLMClient", FakeLLMClient)
+    monkeypatch.setattr(cli_module, "LeonImageClient", FakeImageClient)
+    monkeypatch.setattr(cli_module, "LeonAgent", FakeLeonAgent)
+
+    cli._create_agent()
+    return cli, captured
+
+
+def test_cli_file_write_composition_is_disabled_without_roots(monkeypatch, tmp_path) -> None:
+    cli, captured = _make_composition_cli(monkeypatch, tmp_path, {})
+
+    assert cli.file_service is None
+    assert cli.file_write_service is None
+    assert {"create_file", "write_file"}.isdisjoint(cli.direct_tools.names)
+    assert captured["agent_kwargs"]["file_service"] is None
+    assert captured["agent_kwargs"]["file_write_service"] is None
+
+
+def test_cli_file_write_composition_reuses_matching_service(monkeypatch, tmp_path) -> None:
+    cli, captured = _make_composition_cli(monkeypatch, tmp_path, {"docs": tmp_path})
+
+    assert cli.file_service is not None
+    assert cli.file_write_service is not None
+    assert {"create_file", "write_file"}.issubset(cli.direct_tools.names)
+    assert cli.file_service.root_bindings == cli.file_write_service.root_bindings
+    assert captured["agent_kwargs"]["file_service"] is cli.file_service
+    assert captured["agent_kwargs"]["file_write_service"] is cli.file_write_service
+
+
+def test_cli_file_write_budget_resets_between_turns(monkeypatch, tmp_path) -> None:
+    cli, _ = _make_composition_cli(monkeypatch, tmp_path, {"docs": tmp_path})
+    service = cli.file_write_service
+    assert service is not None
+
+    with file_write_turn(service, "!file create docs:first.md"):
+        first = cli.direct_tools.execute(
+            "create_file",
+            {"root_id": "docs", "relative_path": "first.md", "content": "first"},
+        )
+    with file_write_turn(service, "!file create docs:second.md"):
+        second = cli.direct_tools.execute(
+            "create_file",
+            {"root_id": "docs", "relative_path": "second.md", "content": "second"},
+        )
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert (tmp_path / "first.md").read_text(encoding="utf-8") == "first"
+    assert (tmp_path / "second.md").read_text(encoding="utf-8") == "second"
+
+
+def test_cancelled_cli_turn_persists_only_safe_partial_tool_audit(tmp_path) -> None:
+    answer_marker = "cancelled-answer-must-not-persist"
+    content_marker = "raw-file-content-must-not-persist"
+
+    class PartiallyCompletedAgent:
+        def run(self, message, *, history):  # noqa: ANN001, ARG002
+            partial = AgentResult(
+                answer=answer_marker,
+                messages=[{"role": "assistant", "content": content_marker}],
+                steps=[
+                    ToolStep(
+                        "create_file",
+                        {"root_id": "docs", "relative_path": "note.md"},
+                        {
+                            "ok": True,
+                            "created": True,
+                            "root_id": "docs",
+                            "path": "note.md",
+                            "citation": "docs:note.md",
+                            "bytes": 4,
+                        },
+                    )
+                ],
+            )
+            raise AgentCancelled(partial_result=partial)
+
+    cli = _make_process_cli(tmp_path, PartiallyCompletedAgent())
+
+    assert cli.process("!file create docs:note.md\n" + content_marker) is False
+    assert cli.store.load_messages(cli.session_id) == []
+
+    with sqlite3.connect(cli.store.path) as connection:
+        rows = connection.execute(
+            "SELECT name, arguments_json, result_json FROM tool_calls WHERE session_id = ?",
+            (cli.session_id,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "create_file"
+    assert content_marker not in repr(rows[0])
+    assert answer_marker not in repr(rows[0])
+
+
+def test_cli_cancel_after_agent_result_preserves_completed_tool_audit(tmp_path) -> None:
+    agent_returned = False
+
+    class CompletedToolAgent:
+        def run(self, message, *, history):  # noqa: ANN001, ARG002
+            nonlocal agent_returned
+            agent_returned = True
+            return AgentResult(
+                answer="late answer",
+                steps=[
+                    ToolStep(
+                        "create_file",
+                        {"root_id": "docs", "relative_path": "note.md"},
+                        {
+                            "ok": True,
+                            "created": True,
+                            "root_id": "docs",
+                            "path": "note.md",
+                            "citation": "docs:note.md",
+                            "bytes": 4,
+                        },
+                    )
+                ],
+            )
+
+    cli = _make_process_cli(tmp_path, CompletedToolAgent())
+
+    def cancel_after_result() -> None:
+        if agent_returned:
+            raise AgentCancelled()
+
+    cli._check_active_turn = cancel_after_result  # type: ignore[method-assign]
+
+    assert cli.process("create a file") is False
+    assert cli.store.load_messages(cli.session_id) == []
+    with sqlite3.connect(cli.store.path) as connection:
+        rows = connection.execute(
+            "SELECT name FROM tool_calls WHERE session_id = ?",
+            (cli.session_id,),
+        ).fetchall()
+    assert rows == [("create_file",)]
 
 
 def test_cancelled_late_cli_turn_is_not_persisted(tmp_path) -> None:  # noqa: ANN001

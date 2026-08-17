@@ -213,7 +213,7 @@ uv run leon --help
 - `../`、绝对路径、Windows 特殊路径、symlink/junction 逃逸均被拒绝。
 - `.env`、密钥和数据库既不能被列出，也不能直接读取。
 - 超大文件、binary、伪装 ZIP/私钥、扫描预算、目录预算和结果上限能稳定收口。
-- Gateway/Web 注入同一 roots 后工具 schema 和结果一致；CLI 当前只保证三项读工具，写工具接线完成后再补五工具一致性验收。
+- CLI 与 Gateway/Web 注入同一 roots 后均注册五个文件工具，read/write opaque root binding、schema 和结果保持一致。
 - 文件中的“忽略之前指令”只作为文本返回，不改变 Agent system prompt。
 - 写工具未注入时 schema 不出现；未明确授权、路径越界、目标已存在/缺失和单轮第二次写入均稳定拒绝。
 - 写入成功后审计事件、ToolStep、SSE 和 SQLite 均不包含原始 `content` 或绝对路径。

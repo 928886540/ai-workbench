@@ -289,5 +289,6 @@ Notion AI 通过 GitHub 读代码。任何没 `git push` 的 commit，它**完�
 - `AgentCancelled.partial_result` 会先保留已完成且脱敏的 tool audit；`LLM_TIMEOUT_SECONDS=0` 表示响应读取不限时，但取消主动关闭 transport。相关测试已并入 `4c267e5`。
 - Windows Gateway wrapper 位于 `scripts/windows/run-leon-autostart-service.ps1`：`pythonw.exe -m leon_agent.gateway.server`、隐藏窗口、端口占用只监测不抢占；同进程 supervisor 在子进程退出后默认 60 秒重试、20 次预算，稳定 300 秒后重置。隔离端口 18233 的 worker 崩溃/重启 smoke 已通过，PS5.1 parser 无错误。
 - 当前运行态：`Leon Agent` 任务为 `Running`，wrapper 监测另一个会话占用的 8233 PID `11308`；`/api/health` 与 `/api/health/detail` 为 200；IDEA `64342=15332`、代理 `64343=7596` 未受影响。若要让最新 shared LLM/cancel 代码加载到 8233，等该 direct 进程释放后让 wrapper 接管，或由其 owner 协调重启，勿盲杀并行进程。
-- 当前唯一产品缺口：CLI 锁定的 `projects/02-leon-agent/src/leon_agent/cli.py` 和 `tests/test_cli.py` 仍只有三项读文件工具；CLI-TUI-Codex 需在 `_create_agent()` 接入 per-turn `create_file_write_service`，补五工具回归并追加 `RELEASED`。当前未提交 CLI/TUI、图片 `service.py/tools.py` 改动，不要 reset/checkout。
-- 接手顺序：先读 `projects/02-leon-agent/docs/TUI-REDESIGN-COLLABORATION.md` 最新消息板；运行 `git status --short`；等待/确认 CLI Owner 释放后再接线；然后跑 `uv run pytest -q`、`uv run ruff check .`、真实 `/api/health/detail` 与五工具 smoke，再按文件范围提交。
+- CLI FileWrite composition 已完成：`_create_agent()` 从同一 `config.file_roots` 创建 read/write service，并把同一 write service 传给 direct registry 与 `LeonAgent`；无 roots 时不注册文件工具，有 roots 时五项齐全，跨轮写预算会重置。
+- CLI 取消分支会持久化已完成且脱敏的 tool audit；取消回答、LLM transcript 和文件正文不进入 SQLite。Agent 返回后才收到取消的竞态也保留安全审计，不留下半条会话消息。
+- 当前验证：全仓 `410 passed`、Ruff 全绿、CLI `80 passed`、FileWrite Agent/policy/adapter `18 passed`、`py_compile` 与 `git diff --check` clean。接手者先读协作板和 `git status`，源码变更后重启实际 `leon`，用 `/tools` 验证五项文件工具，再按临时根做显式 create/write smoke；不要对个人密钥目录操作。

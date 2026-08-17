@@ -37,6 +37,7 @@ from leon_agent.agent import LeonAgent
 from leon_agent.config import LeonSettings
 from leon_agent.config_file import apply_config_file
 from leon_agent.file_tools import create_file_search_service
+from leon_agent.file_write_policy import create_file_write_service
 from leon_agent.image_modes import format_mode_catalog, parse_nsfw_command
 from leon_agent.leon_client import LeonImageClient
 from leon_agent.models import model_provider_scope, resolve_model_id
@@ -1512,6 +1513,21 @@ class LeonConsole:
             if not ui.is_current_turn(generation, turn_event):
                 raise AgentCancelled("stale agent turn")
 
+    def _record_cancelled_tool_audit(
+        self,
+        exc: AgentCancelled,
+        fallback_result: AgentResult | None = None,
+    ) -> None:
+        """Persist only completed, already-projected tool steps from a cancelled turn."""
+        partial_result = getattr(exc, "partial_result", None)
+        if not isinstance(partial_result, AgentResult) or not partial_result.steps:
+            partial_result = fallback_result
+        if not isinstance(partial_result, AgentResult) or not partial_result.steps:
+            return
+        audit_result = AgentResult(answer="", steps=list(partial_result.steps), messages=[])
+        with self._commit_context():
+            self.store.record_result(self.session_id, audit_result)
+
     def _create_agent(self) -> LeonAgent:
         reset_settings_cache()
         llm_settings = self._resolve_llm_settings()
@@ -1551,12 +1567,14 @@ class LeonConsole:
             max_results=self.config.tavily_max_results,
         )
         self.file_service = create_file_search_service(self.config.file_roots)
+        self.file_write_service = create_file_write_service(self.config.file_roots)
         self.direct_tools = create_leon_tools(
             self.image_client,
             session_id=self.session_id,
             default_mode_ids=self.config.default_mode_ids,
             search_service=self.search_service,
             file_service=self.file_service,
+            file_write_service=self.file_write_service,
         )
         return LeonAgent(
             llm_client=llm_client,
@@ -1566,6 +1584,7 @@ class LeonConsole:
             on_event=self._on_event,
             search_service=self.search_service,
             file_service=self.file_service,
+            file_write_service=self.file_write_service,
             additional_system_prompt=self.config.read_additional_system_prompt(),
         )
 
@@ -1833,6 +1852,7 @@ class LeonConsole:
         if not stripped:
             return True
         self._last_user_message = message
+        result: AgentResult | None = None
         try:
             self._check_active_turn()
             if stripped.casefold() == "/nsfw" or stripped.casefold().startswith("/nsfw "):
@@ -1843,11 +1863,18 @@ class LeonConsole:
             self._start_llm_request()
             result = self.agent.run(message, history=history)
             self._check_active_turn()
+            result.answer = _normalise_unicode_text(result.answer)
+            with self._commit_context():
+                self._check_active_turn()
+                self.store.add_message(self.session_id, "user", message)
+                self.store.record_result(self.session_id, result)
+                self.store.add_message(self.session_id, "assistant", result.answer)
         except KeyboardInterrupt:
             self._stop_image_progress(ok=False)
             self.print("[yellow]⚠ 本次请求已取消，Leon 仍在运行。[/yellow]")
             return False
-        except AgentCancelled:
+        except AgentCancelled as exc:
+            self._record_cancelled_tool_audit(exc, result)
             self._stop_image_progress(ok=None)
             self.print("[yellow]⏹ 本次请求已取消，迟到结果已丢弃。[/yellow]")
             return False
@@ -1855,13 +1882,7 @@ class LeonConsole:
             self._stop_image_progress(ok=False)
             self.print(f"[red]{self._format_request_error(exc)}[/red]")
             return False
-        result.answer = _normalise_unicode_text(result.answer)
-        with self._commit_context():
-            self._check_active_turn()
-            self.store.add_message(self.session_id, "user", message)
-            self.store.record_result(self.session_id, result)
-            self.store.add_message(self.session_id, "assistant", result.answer)
-        self._check_active_turn()
+        assert result is not None
         self._print_answer(result.answer)
         return True
 
