@@ -86,9 +86,11 @@ def test_apply_config_file_pins_provider_to_leon_toml(
 
     assert config_file.os.environ["LLM_SOURCE"] == "toml"
     assert config_file.os.environ["CODEX_CONFIG_PATH"] == str(path)
+    assert config_file.os.environ["LLM_TIMEOUT_SECONDS"] == "0"
     settings = Settings()
     assert settings.llm_source == "toml"
     assert settings.codex_config_path == path
+    assert settings.llm_timeout_seconds == 0.0
     _clear_applied_config(tmp_path)
 
 
@@ -186,6 +188,7 @@ def test_initialize_config_copies_provider_and_migrates_env_without_echoing_secr
         "_current_env_values",
         lambda: {
             "LLM_SOURCE": "toml",
+            "LLM_TIMEOUT_SECONDS": "0",
             "TAVILY_API_KEY": "test-search-key",
             "LEON_FILE_ROOTS": "{}",
         },
@@ -204,6 +207,7 @@ def test_initialize_config_copies_provider_and_migrates_env_without_echoing_secr
     )
     assert parsed["leon"]["env"]["TAVILY_API_KEY"] == "test-search-key"
     assert parsed["leon"]["env"]["CODEX_CONFIG_PATH"] == str(destination)
+    assert parsed["leon"]["env"]["LLM_TIMEOUT_SECONDS"] == "0"
 
     with pytest.raises(config_file.LeonConfigError, match="edit that file directly"):
         config_file.initialize_config(

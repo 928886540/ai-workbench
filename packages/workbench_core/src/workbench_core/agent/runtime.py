@@ -34,7 +34,21 @@ EventHandler = Callable[[AgentEvent], None]
 
 
 class AgentCancelled(CancelledError):
-    """Raised when a caller cancels an in-flight agent turn."""
+    """Raised when a caller cancels an in-flight agent turn.
+
+    ``partial_result`` contains only completed, audit-projected tool steps. It
+    deliberately excludes assistant content and the raw in-memory transcript so
+    callers may persist the side-effect audit without persisting a cancelled turn.
+    """
+
+    def __init__(
+        self,
+        message: str = "agent turn cancelled",
+        *,
+        partial_result: AgentResult | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.partial_result = partial_result
 
 
 _cancel_event: ContextVar[Event | None] = ContextVar(
@@ -272,6 +286,16 @@ class AgentRuntime:
         def usage_snapshot() -> dict[str, int] | None:
             return dict(usage_totals) if usage_totals else None
 
+        def partial_audit_result() -> AgentResult | None:
+            if not steps:
+                return None
+            return AgentResult(
+                answer="",
+                steps=deepcopy(steps),
+                turns=current_turn,
+                messages=[],
+            )
+
         try:
             self._check_cancelled(cancel_event)
             for turn in range(1, self.max_turns + 1):
@@ -324,15 +348,6 @@ class AgentRuntime:
                             }
                         else:
                             raw_result = self.tools.execute(call.name, arguments)
-                        self._check_cancelled(cancel_event)
-                        direct_answer = (
-                            direct_answer_resolver(call.name, arguments, raw_result)
-                            if direct_answer_resolver is not None and not parse_failed
-                            else None
-                        )
-                        if direct_answer:
-                            direct_answers.append(direct_answer)
-                        self._check_cancelled(cancel_event)
                         audited_result = _audit_payload(
                             self.tools,
                             "audit_result",
@@ -352,6 +367,16 @@ class AgentRuntime:
                                 result=audited_result,
                             )
                         )
+                        # Once a handler returns, its side effect may already be durable.
+                        # Publish the audit record before observing a concurrent cancel.
+                        self._check_cancelled(cancel_event)
+                        direct_answer = (
+                            direct_answer_resolver(call.name, arguments, raw_result)
+                            if direct_answer_resolver is not None and not parse_failed
+                            else None
+                        )
+                        if direct_answer:
+                            direct_answers.append(direct_answer)
                         self._check_cancelled(cancel_event)
                         # ``messages`` is the in-memory LLM transcript. Persisted/event audit
                         # consumers receive only ``audited_arguments``/``audited_result`` above.
@@ -416,11 +441,17 @@ class AgentRuntime:
                 model=served_model,
                 usage=usage_snapshot(),
             )
-        except AgentCancelled:
+        except AgentCancelled as exc:
+            partial_result = partial_audit_result()
+            if partial_result is not None:
+                exc.partial_result = partial_result
             self._emit(AgentEvent(kind="cancelled", turn=current_turn))
             raise
         except CancelledError as exc:
             if cancel_event is not None and cancel_event.is_set():
                 self._emit(AgentEvent(kind="cancelled", turn=current_turn))
-                raise AgentCancelled("agent turn cancelled") from exc
+                raise AgentCancelled(
+                    "agent turn cancelled",
+                    partial_result=partial_audit_result(),
+                ) from exc
             raise

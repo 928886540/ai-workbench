@@ -20,7 +20,7 @@ def isolated_user_config(
     path = tmp_path / "leon-config.toml"
 
     defaults: dict[str, str] = {
-        "LLM_TIMEOUT_SECONDS": "30",
+        "LLM_TIMEOUT_SECONDS": "0",
         "LLM_MAX_RETRIES": "0",
         "LEON_SESSION_DB": str(tmp_path / "test.db"),
         "LEON_API_TOKEN": "",

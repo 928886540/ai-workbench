@@ -1,5 +1,5 @@
 from concurrent.futures import CancelledError
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -69,6 +69,87 @@ def test_client_passes_timeout_and_retry_policy_to_openai(monkeypatch) -> None: 
 
     assert captured["timeout"] == 17
     assert captured["max_retries"] == 0
+
+
+def test_zero_timeout_keeps_response_read_open_but_bounds_connection(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            captured.update(kwargs)
+
+    monkeypatch.setattr("workbench_core.llm.OpenAI", FakeOpenAI)
+    settings = Settings(
+        _env_file=None,
+        LLM_SOURCE="env",
+        LLM_BASE_URL="https://provider.example/v1",
+        LLM_API_KEY="sk-test",
+        LLM_MODEL="default-model",
+        LLM_TIMEOUT_SECONDS=0,
+    )
+
+    LLMClient(settings)
+
+    timeout = captured["timeout"]
+    assert timeout.connect == 10.0
+    assert timeout.read is None
+    assert timeout.write == 60.0
+    assert timeout.pool == 10.0
+
+
+def test_cancellation_closes_a_blocked_provider_read(monkeypatch) -> None:  # noqa: ANN001
+    started = Event()
+    closed = Event()
+    cancel_event = Event()
+    errors: list[BaseException] = []
+
+    class FakeCompletions:
+        def create(self, **kwargs):  # noqa: ANN003, ARG002
+            started.set()
+            if not closed.wait(timeout=2):
+                raise AssertionError("cancellation did not close the provider client")
+            raise RuntimeError("transport closed")
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):  # noqa: ANN003, ARG002
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        def close(self) -> None:
+            closed.set()
+
+    monkeypatch.setattr("workbench_core.llm.OpenAI", FakeOpenAI)
+    settings = Settings(
+        _env_file=None,
+        LLM_SOURCE="env",
+        LLM_BASE_URL="https://provider.example/v1",
+        LLM_API_KEY="sk-test",
+        LLM_MODEL="default-model",
+        LLM_TIMEOUT_SECONDS=0,
+    )
+    client = LLMClient(settings)
+
+    def invoke() -> None:
+        try:
+            client.chat_turn(
+                [{"role": "user", "content": "long task"}],
+                cancel_event=cancel_event,
+            )
+        except BaseException as exc:  # noqa: BLE001 - assertion captures thread failure
+            errors.append(exc)
+
+    worker = Thread(target=invoke)
+    worker.start()
+    assert started.wait(timeout=1)
+
+    cancel_event.set()
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert closed.is_set()
+    assert len(errors) == 1
+    assert isinstance(errors[0], CancelledError)
 
 
 def test_list_models_uses_active_provider_catalog(monkeypatch) -> None:  # noqa: ANN001

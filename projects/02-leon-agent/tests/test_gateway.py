@@ -15,7 +15,7 @@ from leon_agent.gateway.app import _resolve_web_dir, _track_image_jobs, app, get
 from leon_agent.gateway.events import EventBusRegistry
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools as build_leon_tools
-from workbench_core.agent import AgentResult
+from workbench_core.agent import AgentCancelled, AgentResult, ToolStep
 
 _FILE_TOOL_NAMES = frozenset(
     {"list_files", "file_search", "read_file", "create_file", "write_file"}
@@ -434,13 +434,92 @@ def test_send_message_builds_isolated_file_write_services_for_agent_and_direct_t
     assert direct["file_write_service"] is not captures[1]["file_write_service"]
 
 
-def test_cancel_endpoint_sets_and_releases_the_active_turn(client):
+def test_cancelled_side_effect_persists_only_projected_tool_audit(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captures: list[dict[str, Any]] = []
+    _install_gateway_agent_capture(monkeypatch, captures)
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    marker = "raw-file-content-must-not-persist"
+
+    class CancellingAgent:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            del kwargs
+
+        def run(self, message, *, history=(), cancel_event=None):  # noqa: ANN001
+            del message, history, cancel_event
+            raise AgentCancelled(
+                partial_result=AgentResult(
+                    answer=marker,
+                    messages=[{"role": "tool", "content": marker}],
+                    steps=[
+                        ToolStep(
+                            "create_file",
+                            {"root_id": "workbench", "relative_path": "note.md"},
+                            {
+                                "ok": True,
+                                "created": True,
+                                "root_id": "workbench",
+                                "path": "note.md",
+                                "citation": "workbench:note.md",
+                                "bytes": 4,
+                            },
+                        )
+                    ],
+                )
+            )
+
+    monkeypatch.setattr(gateway_app, "LeonAgent", CancellingAgent)
+    session_id = client.post("/api/agent/sessions").json()["session_id"]
+
+    response = client.post(
+        f"/api/agent/sessions/{session_id}/messages",
+        json={"content": "cancel after side effect"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "session_id": session_id,
+        "answer": "已停止",
+        "ok": False,
+    }
+    store = get_store()
+    with store._connect() as connection:  # noqa: SLF001 - verify persistence boundary
+        rows = connection.execute(
+            """
+            SELECT name, arguments_json, result_json
+            FROM tool_calls WHERE session_id = ? ORDER BY id
+            """,
+            (session_id,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "create_file"
+    assert json.loads(rows[0]["arguments_json"]) == {
+        "root_id": "workbench",
+        "relative_path": "note.md",
+    }
+    assert json.loads(rows[0]["result_json"])["created"] is True
+    assert marker not in repr([dict(row) for row in rows])
+    assert store.load_messages(session_id) == [
+        {"role": "user", "content": "cancel after side effect"}
+    ]
+
+
+def test_cancel_endpoint_keeps_the_active_turn_until_its_worker_finishes(client):
     gateway_app = importlib.import_module("leon_agent.gateway.app")
     session_id = client.post("/api/agent/sessions").json()["session_id"]
     cancel_event = Event()
+    closed: list[str] = []
+
+    class FakeLLMClient:
+        def close(self) -> None:
+            closed.append("closed")
+
     gateway_app._active_turns[session_id] = gateway_app.ActiveTurnState(
         cancel_event=cancel_event,
         retry_latest=True,
+        llm_client=FakeLLMClient(),
     )
 
     session = client.get(f"/api/agent/sessions/{session_id}")
@@ -453,7 +532,16 @@ def test_cancel_endpoint_sets_and_releases_the_active_turn(client):
     assert response.status_code == 200
     assert response.json() == {"session_id": session_id, "cancelled": True}
     assert cancel_event.is_set()
-    assert session_id not in gateway_app._active_turns
+    assert closed == ["closed"]
+    assert session_id in gateway_app._active_turns
+    assert (
+        client.post(
+            f"/api/agent/sessions/{session_id}/messages",
+            json={"content": "must wait for the cancelled worker"},
+        ).status_code
+        == 409
+    )
+    gateway_app._active_turns.pop(session_id)
 
     delete_event = Event()
     gateway_app._active_turns[session_id] = gateway_app.ActiveTurnState(
@@ -464,6 +552,7 @@ def test_cancel_endpoint_sets_and_releases_the_active_turn(client):
     assert delete_response.status_code == 200
     assert delete_response.json()["cancelled"] is True
     assert delete_event.is_set()
+    gateway_app._active_turns.pop(session_id)
 
 
 def test_tts_audio_cache_reuses_results_and_keeps_at_least_ten_entries():

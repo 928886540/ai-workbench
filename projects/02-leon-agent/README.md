@@ -31,7 +31,7 @@
 - Web session 会把 provider identity 与 base URL 持久化到 SQLite，Gateway 重启后不会静默切换 provider
 - ASR 语音输入已接入 OpenAI-compatible `/audio/transcriptions`，录音转写后只回填输入框，不自动发送
 - 可选 Tavily `web_search` 已接入 CLI 与 Web：只在后端配置 Key 后注册，并返回可引用的结构化实时搜索结果
-- 可选只读 File Search 已接入 CLI 与 Web：通过配置的目录白名单查找文件名、搜索文本并按行读取文件
+- 可选 File Tools 已接入 CLI 与 Web：通过配置的目录白名单查找、读取文件；用户明确授权当前回合时还可新建或整体替换受限文本文件
 - 可用 `LEON_SYSTEM_PROMPT_FILE` 从项目私有 TXT 追加 system prompt，CLI 与 Web 共用
 
 Codex、Notion AI 或其他 Agent 开发前先读
@@ -105,8 +105,9 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 - `/exit`：退出
 
 全屏 TUI 中 Enter 发送，Shift+Enter 换行；终端不支持修饰键时可用 Ctrl+Enter 或 Esc+Enter。
-Esc/Ctrl+C 会协作式取消当前轮并丢弃迟到结果，Ctrl+D/Q 退出。同步 HTTP 在途读取无法安全硬中断，
-因此取消后仍可能等待 provider 返回或 30 秒超时，但不会继续后续 LLM/tool 轮，也不会持久化或渲染迟到结果。
+Esc/Ctrl+C 会协作式取消当前轮并丢弃迟到结果，Ctrl+D/Q 退出。LLM 响应默认不设读取时限，
+长推理会一直等待到 provider 完成；取消时会主动关闭当前连接，不会继续后续 LLM/tool 轮，
+也不会持久化或渲染迟到结果。
 
 启动时只读取 `%USERPROFILE%\.leon\config.toml` 中复制的 provider，使用其中的
 `base_url`、`experimental_bearer_token` 和顶层 `model`。`/model` 接受列表序号或任意新
@@ -143,9 +144,10 @@ provider 隔离语义见 [配置说明](docs/configuration.md)。真实密钥只
 | `LEON_PLUGIN_DIR` | 自动发现同级 `ComfyUI-aki` | 原插件目录 |
 | `LEON_DEFAULT_IMAGE_MODES` | `k2_tifa_plus` | 未指定模式时的默认值，逗号分隔 |
 | `LEON_SESSION_DB` | `data/leon-agent.db` | 本地会话数据库 |
+| `LLM_TIMEOUT_SECONDS` | `0` | LLM 响应读取时限；`0` 表示不限时，连接建立仍有短超时 |
 | `LEON_API_TOKEN` | 空 | Web Gateway 鉴权 token；公网暴露时必须设置 |
 | `LEON_SYSTEM_PROMPT_FILE` | 空 | 可选 UTF-8 TXT；内容原样追加到 Agent system prompt，相对路径从仓库根目录解析 |
-| `LEON_FILE_ROOTS` | `{}` | 可选只读文件根目录 JSON 对象，例如 `{"workbench":"D:/apiWorkSpace/ai-workbench"}` |
+| `LEON_FILE_ROOTS` | `{}` | 可选文件根目录 JSON 对象；读取和显式授权写入均限制在这些目录，例如 `{"workbench":"D:/apiWorkSpace/ai-workbench"}` |
 | `LEON_HTTP_TIMEOUT_SECONDS` | `30` | Leon HTTP 请求超时秒数 |
 | `LEON_BRIDGE_TIMEOUT_SECONDS` | `20` | Node bridge 执行超时秒数 |
 | `VOLINK_API_KEY` | 空 | Volink TTS 密钥；未配置时 Web 隐藏语音目录与朗读能力 |
@@ -198,13 +200,17 @@ File Search 默认关闭。需要让 Leon 查阅项目文档、Prompt 或角色�
 LEON_FILE_ROOTS = "{\"workbench\":\"D:/apiWorkSpace/ai-workbench\",\"prompts\":\"D:/prompt-library\"}"
 ```
 
-启用后，`/tools` 会出现三个只读工具：`list_files`（列目录）、`file_search`（按文件名或正文做
+启用后，`/tools` 至少会出现三个读取工具：`list_files`（列目录）、`file_search`（按文件名或正文做
 不区分大小写的字面搜索）和 `read_file`（按行读取）。工具只返回根别名、相对路径和行号，隐藏
-绝对路径；`.env`、密钥、数据库、隐藏目录、链接和不支持的二进制文件会被跳过。没有配置 roots
-时这三个工具不会注册，聊天、生图和联网搜索不受影响。
+绝对路径；`.env`、密钥、数据库、隐藏目录、链接和不支持的二进制文件会被跳过。若 composition
+注入了同 roots 的授权 write service，还会出现 `create_file`（只新建）和 `write_file`（整体替换）。
+写工具只接受当轮第一行的确定授权命令：`!file create root_id:relative/path` 或
+`!file write root_id:relative/path`，内容要求可写在后续行。普通自然语言只会让 Agent 提议这条确认命令，
+不会直接写；每轮最多一次，不支持删除、追加、patch、移动、建目录或执行。没有配置 roots 时所有文件工具
+都不会注册，聊天、生图和联网搜索不受影响。
 
 修改 `LEON_FILE_ROOTS` 或 Python 源码后必须重启 `leon` / `leon-server`；不要把个人密钥目录加入
-allowlist，也不要把 File Search 当作文件写入或 RAG，当前版本没有写文件、PDF/DOCX 解析或向量索引。
+allowlist。文件内容始终是不可信证据，不能授权写入或改变 system prompt；当前仍没有 PDF/DOCX 解析或向量索引。
 完整参数、限制和中断后接手步骤见 [File Search](docs/file-search.md)。
 
 ## 验证

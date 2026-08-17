@@ -447,10 +447,11 @@ def test_agent_runtime_cancelled_before_first_llm_call() -> None:
     cancel_event = threading.Event()
     cancel_event.set()
 
-    with pytest.raises(AgentCancelled):
+    with pytest.raises(AgentCancelled) as cancelled:
         runtime.run("hello", cancel_event=cancel_event)
 
     assert client.calls == 0
+    assert cancelled.value.partial_result is None
     assert [event.kind for event in events] == ["cancelled"]
 
 
@@ -492,16 +493,98 @@ def test_agent_runtime_cancel_between_tool_and_next_round() -> None:
         ]
     )
     client = ToolThenAnswerClient()
+    events = []
     runtime = AgentRuntime(
         client=client,  # type: ignore[arg-type]
         tools=registry,
         system_prompt="Use tools.",
+        on_event=events.append,
     )
 
-    with pytest.raises(AgentCancelled):
+    with pytest.raises(AgentCancelled) as cancelled:
         runtime.run("echo", cancel_event=cancel_event)
 
     assert client.calls == 1
+    assert [event.kind for event in events] == [
+        "turn_started",
+        "tool_started",
+        "tool_finished",
+        "cancelled",
+    ]
+    assert events[2].result == {"ok": True, "value": "late"}
+    partial_result = cancelled.value.partial_result
+    assert partial_result is not None
+    assert partial_result.answer == ""
+    assert partial_result.messages == []
+    assert partial_result.turns == 1
+    assert partial_result.steps[0].name == "echo"
+    assert partial_result.steps[0].arguments == {"value": "late"}
+    assert partial_result.steps[0].result == {"ok": True, "value": "late"}
+
+
+def test_cancelled_side_effect_partial_result_uses_only_audit_projection() -> None:
+    cancel_event = threading.Event()
+    argument_secret = "private-argument"
+    result_secret = "private-result"
+    transcript_secret = "private-assistant-message"
+
+    class OneToolClient:
+        def chat_turn(
+            self,
+            messages,
+            tools=None,
+            temperature=0.2,
+        ):  # noqa: ANN001, ARG002
+            arguments = json.dumps({"value": argument_secret})
+            return ChatTurn(
+                content=None,
+                tool_calls=[ToolCall(id="call-1", name="write", arguments=arguments)],
+                raw_message={"role": "assistant", "content": transcript_secret},
+            )
+
+    def write(value: str) -> dict[str, object]:
+        assert value == argument_secret
+        cancel_event.set()
+        return {"ok": True, "value": result_secret}
+
+    events = []
+    runtime = AgentRuntime(
+        client=OneToolClient(),  # type: ignore[arg-type]
+        tools=ToolRegistry(
+            [
+                AgentTool(
+                    name="write",
+                    description="Perform one side effect.",
+                    parameters={"type": "object"},
+                    handler=write,
+                    audit_arguments=lambda _arguments: {"authorized": True},
+                    audit_result=lambda result: {"ok": result.get("ok") is True},
+                )
+            ]
+        ),
+        system_prompt="Use tools.",
+        on_event=events.append,
+    )
+
+    with pytest.raises(AgentCancelled) as cancelled:
+        runtime.run("write", cancel_event=cancel_event)
+
+    partial_result = cancelled.value.partial_result
+    assert partial_result is not None
+    assert partial_result.answer == ""
+    assert partial_result.messages == []
+    assert partial_result.steps[0].arguments == {"authorized": True}
+    assert partial_result.steps[0].result == {"ok": True}
+    serialized = repr(partial_result)
+    assert argument_secret not in serialized
+    assert result_secret not in serialized
+    assert transcript_secret not in serialized
+    assert [event.kind for event in events] == [
+        "turn_started",
+        "tool_started",
+        "tool_finished",
+        "cancelled",
+    ]
 
 
 def test_agent_runtime_discards_late_blocking_llm_result() -> None:
@@ -572,8 +655,10 @@ def test_agent_runtime_discards_late_blocking_tool_result() -> None:
         release.wait(timeout=2)
         return {"ok": True, "value": value}
 
+    client = ToolClient()
+    events = []
     runtime = AgentRuntime(
-        client=ToolClient(),  # type: ignore[arg-type]
+        client=client,  # type: ignore[arg-type]
         tools=ToolRegistry(
             [
                 AgentTool(
@@ -585,6 +670,7 @@ def test_agent_runtime_discards_late_blocking_tool_result() -> None:
             ]
         ),
         system_prompt="Wait safely.",
+        on_event=events.append,
     )
 
     def run() -> None:
@@ -602,6 +688,18 @@ def test_agent_runtime_discards_late_blocking_tool_result() -> None:
 
     assert not worker.is_alive()
     assert isinstance(outcome[0], AgentCancelled)
+    assert client.calls == 1
+    assert [event.kind for event in events] == [
+        "turn_started",
+        "tool_started",
+        "tool_finished",
+        "cancelled",
+    ]
+    assert events[2].result == {"ok": True, "value": "late"}
+    partial_result = outcome[0].partial_result
+    assert partial_result is not None
+    assert partial_result.messages == []
+    assert partial_result.steps[0].result == {"ok": True, "value": "late"}
 
 
 def test_agent_runtime_does_not_return_after_completed_callback_requests_cancel() -> None:

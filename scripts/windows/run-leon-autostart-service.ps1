@@ -5,7 +5,15 @@ param(
     [string]$Service,
     [string]$ProjectRoot = "D:\apiWorkSpace\ai-workbench",
     [string]$UserProfile = $env:USERPROFILE,
-    [int]$DelaySeconds = 30
+    [int]$DelaySeconds = 30,
+    [ValidateRange(1, 65535)]
+    [int]$GatewayPort = 8233,
+    [ValidateRange(1, 999)]
+    [int]$RestartCount = 20,
+    [ValidateRange(1, 3600)]
+    [int]$RestartDelaySeconds = 60,
+    [ValidateRange(1, 86400)]
+    [int]$RestartResetSeconds = 300
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,12 +54,18 @@ function Test-LocalPort {
 
 switch ($Service) {
     "Gateway" {
-        $port = 8233
-        $mutexName = "Global\LeonAgentGateway8233"
+        $port = $GatewayPort
+        $mutexName = "Global\LeonAgentGateway$port"
         $configPath = Join-Path $UserProfile ".leon\config.toml"
         $workingDirectory = (Resolve-Path -LiteralPath $ProjectRoot).Path
-        $executable = Join-Path $workingDirectory ".venv\Scripts\leon-server.exe"
-        $arguments = @("--host", "127.0.0.1", "--port", "$port")
+        # pythonw.exe is a GUI-subsystem launcher: it prevents a console window
+        # (and its taskbar button) from being created for the background Gateway.
+        $executable = Join-Path $workingDirectory ".venv\Scripts\pythonw.exe"
+        $arguments = @(
+            "-m", "leon_agent.gateway.server",
+            "--host", "127.0.0.1",
+            "--port", "$port"
+        )
         $requiredFiles = @($configPath, $executable)
     }
     "IdeaMcpProxy" {
@@ -94,32 +108,62 @@ try {
         exit 0
     }
 
-    if (Test-LocalPort -Port $port) {
-        Write-RunLog "port $port is already listening; leaving existing process untouched"
-        exit 0
-    }
-
     if ($Service -eq "Gateway") {
         $env:LEON_CONFIG_FILE = [System.IO.Path]::GetFullPath($configPath)
         Write-RunLog "using user config file (path omitted from child arguments)"
     }
 
-    $stamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
-    $stdoutPath = Join-Path $logRoot "$Service-$stamp.stdout.log"
-    $stderrPath = Join-Path $logRoot "$Service-$stamp.stderr.log"
-    Write-RunLog "starting executable=$executable working_directory=$workingDirectory"
-    $child = Start-Process `
-        -FilePath $executable `
-        -ArgumentList $arguments `
-        -WorkingDirectory $workingDirectory `
-        -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath `
-        -PassThru
-    Write-RunLog "child started pid=$($child.Id) stdout=$stdoutPath stderr=$stderrPath"
-    $child.WaitForExit()
-    $exitCode = [int]$child.ExitCode
-    Write-RunLog "child exited code=$exitCode"
-    exit $exitCode
+    $remainingRestarts = $RestartCount
+    while ($true) {
+        if (Test-LocalPort -Port $port) {
+            if ($Service -ne "Gateway") {
+                Write-RunLog "port $port is already listening; leaving existing process untouched"
+                exit 0
+            }
+            # Do not kill or replace a process that owns the port. Keep the
+            # hidden task alive and take ownership only after it is released.
+            Write-RunLog "port $port is already listening; monitoring until it is released"
+            while (Test-LocalPort -Port $port) {
+                Start-Sleep -Seconds 5
+            }
+            Write-RunLog "port $port released; starting managed Gateway"
+        }
+
+        $stamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+        $stdoutPath = Join-Path $logRoot "$Service-$stamp.stdout.log"
+        $stderrPath = Join-Path $logRoot "$Service-$stamp.stderr.log"
+        Write-RunLog "starting executable=$executable working_directory=$workingDirectory"
+        $startedAt = Get-Date
+        $child = Start-Process `
+            -FilePath $executable `
+            -ArgumentList $arguments `
+            -WorkingDirectory $workingDirectory `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath `
+            -PassThru
+        Write-RunLog "child started pid=$($child.Id) stdout=$stdoutPath stderr=$stderrPath"
+        $child.WaitForExit()
+        $exitCode = [int]$child.ExitCode
+        $runSeconds = ((Get-Date) - $startedAt).TotalSeconds
+        Write-RunLog "child exited code=$exitCode runtime_seconds=$([int]$runSeconds)"
+
+        if ($Service -ne "Gateway") {
+            exit $exitCode
+        }
+        if ($runSeconds -ge $RestartResetSeconds) {
+            $remainingRestarts = $RestartCount
+        }
+        $remainingRestarts--
+        if ($remainingRestarts -le 0) {
+            $taskExitCode = if ($exitCode -eq 0) { 1 } else { $exitCode }
+            Write-RunLog "Gateway restart budget exhausted; returning task code=$taskExitCode"
+            exit $taskExitCode
+        }
+
+        Write-RunLog "Gateway stopped; retrying in ${RestartDelaySeconds}s remaining_attempts=$remainingRestarts"
+        Start-Sleep -Seconds $RestartDelaySeconds
+    }
 }
 catch {
     Write-RunLog ("ERROR {0}: {1}" -f $_.Exception.GetType().Name, $_.Exception.Message)

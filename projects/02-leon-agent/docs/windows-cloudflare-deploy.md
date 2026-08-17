@@ -56,7 +56,10 @@ token 的 query 参数，因为浏览器原生 `EventSource` 不能添加 Author
 ## Gateway 自启 / IDEA MCP 按需启动
 
 安装器为当前 Windows 用户注册 `Leon Agent` 任务。它使用隐藏 PowerShell wrapper、
-单实例策略 `IgnoreNew`、失败后每分钟重试 5 次，并把 wrapper、stdout 和 stderr 写到
+单实例策略 `IgnoreNew` 和 `StartWhenAvailable`（错过触发后会在任务计划可用时补启动）。隐藏
+wrapper 自身会监督 Gateway 子进程：子进程意外结束后默认每分钟重启一次，最多重试 20 次；即使
+`pythonw` shim 报告退出码 `0`，wrapper 也会继续重试。任务计划的 `RestartOnFailure` 同时保留为
+wrapper 崩溃时的外层兜底。wrapper、stdout 和 stderr 都写到
 `%USERPROFILE%\.leon\logs`：
 
 ```powershell
@@ -64,9 +67,24 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\windows\install-leon-autostart.ps1
 ```
 
-`Leon Agent` 在登录或开机后运行仓库 `.venv\Scripts\leon-server.exe`，通过
-`%USERPROFILE%\.leon\config.toml` 启动 `127.0.0.1:8233`；旧的
+`Leon Agent` 在登录或开机后由隐藏 wrapper 运行仓库
+`.venv\Scripts\pythonw.exe -m leon_agent.gateway.server`，通过 `%USERPROFILE%\.leon\config.toml` 启动
+`127.0.0.1:8233`。`pythonw.exe` 和隐藏窗口参数让 Gateway 静默驻留后台，不创建控制台窗口或
+任务栏按钮；旧的
 `install-leon-agent-task.ps1` 仅保留作历史兼容，不要再用它覆盖新任务。
+
+如果 8233 已被另一个进程占用，wrapper 不会强杀或抢占；它会保持隐藏任务运行并监测端口，原进程
+释放后再启动受管 Gateway。这样手动恢复或升级期间不会产生第二个服务树。
+
+如果这次只需要安装或更新 Gateway 任务，不希望停止当前 `64343` 代理，也不希望改写 IDEA
+快捷方式，可以显式跳过 IDEA 代理生命周期处理：
+
+```powershell
+.\scripts\windows\install-leon-autostart.ps1 -SkipIdeaProxyLifecycle
+```
+
+该开关会保留当前代理 listener 和 IDEA 快捷方式状态；安装器仍会注册 `Leon Agent`，并清理可能
+残留的旧 `IDEA MCP Auth Proxy` 计划任务。
 
 IDEA MCP 代理没有计划任务，不会登录或开机自启。安装器会把桌面、开始菜单和任务栏中的
 IDEA 快捷方式改为隐藏 launcher，并保留相邻的 `.leon-original` 备份。从这些快捷方式

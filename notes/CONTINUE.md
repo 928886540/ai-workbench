@@ -17,7 +17,7 @@
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
 - `02-leon-agent`：独立 `leon` CLI、SQLite、7 个生图工具和 `speak_text` 已完成
-- `02-leon-agent`：可选只读 File Search MVP 已接入 CLI/Web，默认关闭，详见 `projects/02-leon-agent/docs/file-search.md`
+- `02-leon-agent`：可选 File Search + 显式 FileWrite MVP 已接入 Agent/Gateway，默认关闭；CLI 仍等 TUI Owner 完成最小 composition 接线，详见 `projects/02-leon-agent/docs/file-search.md`
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线
 - CLI、Web 与 Leon MCP 的唯一持久配置源是 `%USERPROFILE%\.leon\config.toml`；`.codex` 和
   仓库 `.env` 只参与首次 `leon-config init`，CC Switch 后续操作与 Leon 无关
@@ -50,7 +50,8 @@
 - CLI 已补 `/resume`、`/retry`、`/last`、`/copy`、`/tools`、`/status`，斜杠命令支持中文说明、
   大小写不敏感补全；输入历史来自当前 SQLite session，请求期间会保留下一轮草稿。
 - CLI 的 Esc/Ctrl+C 使用协作式取消：会阻止后续 LLM/tool 轮、持久化和迟到结果渲染；
-  已经在途的同步 HTTP 读取不能可靠硬中断，仍需等待返回或 30 秒超时。`generate_images` 继续用
+  `LLM_TIMEOUT_SECONDS=0` 时响应读取不限时，取消会主动关闭当前 OpenAI/httpx 连接并在短时间内收敛。
+  `generate_images` 继续用
   `return_direct` 避免图片完成后多打一轮 provider 请求。
 - Vue W2 基座已落地：`projects/02-leon-agent/web/` 提供 Vue 3 + Vite、API client、
   `stores/messages.ts`、ChatView 和 PWA 资产；它是唯一 Web 客户端，FastAPI 直接托管 `web/dist/`。
@@ -132,13 +133,15 @@
   `extract` / `crawl` / `map` 或 Tavily MCP 接入；不要让自动测试消耗真实 Tavily credits；不要为 CLI、
   Web、未来 Telegram 分叉 provider 实现。`extract` / `crawl` / `map` 应在搜索闭环稳定后另行设计。
 
-### Leon File Search 可中断 checkpoint（2026-08-16）
+### Leon File Search/FileWrite 可中断 checkpoint（2026-08-17）
 
 - 放置位置：共享内核 `packages/workbench_core/src/workbench_core/files/`；Leon 适配层是
   `projects/02-leon-agent/src/leon_agent/file_tools.py`。`02-code-agent` 的 `workspace.py` 和旧工具
   只保留兼容导出，不要复制另一套路径策略。
-- 当前状态：已实现 `list_files`、`file_search`、`read_file` 三个只读工具。只有配置
-  `LEON_FILE_ROOTS={"id":"绝对目录"}` 才注册；结果只暴露 root id、相对路径和 citation，不泄露绝对路径。
+- 当前状态：已实现 `list_files`、`file_search`、`read_file`，以及受控 `create_file`、`write_file`。
+  只有配置 `LEON_FILE_ROOTS={"id":"绝对目录"}` 才注册读工具；写工具还要求 composition root
+  注入同 canonical roots 的 server-side authorization service。结果只暴露 root id、相对路径和
+  citation，不泄露绝对路径或写入内容。
 - 安全/资源边界：最多 8 个 root；拒绝绝对/越界/ADS 路径；每次解析检查 containment；跳过 symlink、
   junction/reparse、隐藏/系统项、`.env*`、凭据、私钥、SQLite；支持受限 UTF-8/BOM UTF-16；单文件 1 MiB，
   搜索 2,000 文件/20 MiB/50 结果，读取 200 行/16,000 字符。
@@ -147,7 +150,7 @@
   binary/编码/预算和不可信内容标记。全量与真实进程验证完成后，把结果补到本节，不要只写“代码存在”。
 - 接手顺序：先跑共享内核测试，再跑 Leon 文件工具测试，最后用临时目录启动新的 `leon-server`，检查
   `/api/health/detail` 的 `file_tool` 状态和实际注册列表；不要把个人密钥目录加进 roots。当前 MVP 不含
-  写文件、PDF/DOCX、embedding/RAG 或 File Search MCP。
+  删除/移动/执行、PDF/DOCX、embedding/RAG 或 File Search MCP；CLI composition 仍受 TUI Owner 文件锁约束。
 
 ---
 

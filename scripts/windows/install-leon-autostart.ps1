@@ -3,8 +3,11 @@ param(
     [string]$GatewayTaskName = "Leon Agent",
     [string]$IdeaTaskName = "IDEA MCP Auth Proxy",
     [int]$StartupDelaySeconds = 30,
+    [ValidateRange(1, 999)]
+    [int]$RestartCount = 20,
     [switch]$SkipStart,
-    [switch]$SkipIdeaShortcutUpdate
+    [switch]$SkipIdeaShortcutUpdate,
+    [switch]$SkipIdeaProxyLifecycle
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,7 +63,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -MultipleInstances IgnoreNew `
-    -RestartCount 5 `
+    -RestartCount $RestartCount `
     -RestartInterval ([TimeSpan]::FromMinutes(1)) `
     -StartWhenAvailable `
     -Hidden
@@ -110,13 +113,18 @@ if ($ideaTask) {
 
 $nodePath = "D:\sfotwore\nodejs\node.exe"
 $proxyScriptPath = "D:\cloudflared\idea-mcp-auth-proxy.mjs"
-if (-not (Stop-IdeaMcpProxyListener -NodePath $nodePath -ProxyScriptPath $proxyScriptPath)) {
-    throw "IDEA MCP proxy port 64343 did not stop cleanly."
-}
+if (-not $SkipIdeaProxyLifecycle) {
+    if (-not (Stop-IdeaMcpProxyListener -NodePath $nodePath -ProxyScriptPath $proxyScriptPath)) {
+        throw "IDEA MCP proxy port 64343 did not stop cleanly."
+    }
 
-if (-not $SkipIdeaShortcutUpdate) {
-    $shortcutInstaller = Join-Path $PSScriptRoot "configure-idea-mcp-shortcuts.ps1"
-    & $shortcutInstaller
+    if (-not $SkipIdeaShortcutUpdate) {
+        $shortcutInstaller = Join-Path $PSScriptRoot "configure-idea-mcp-shortcuts.ps1"
+        & $shortcutInstaller
+    }
+}
+else {
+    Write-Host "IDEA proxy lifecycle unchanged (explicitly skipped)."
 }
 
 Write-Host "Gateway task: $GatewayTaskName"

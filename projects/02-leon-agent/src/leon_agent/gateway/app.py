@@ -63,6 +63,15 @@ logger = logging.getLogger(__name__)
 class ActiveTurnState:
     cancel_event: Event
     retry_latest: bool = False
+    llm_client: LLMClient | None = None
+
+    def close_llm_client(self) -> None:
+        client = self.llm_client
+        self.llm_client = None
+        if client is not None:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
 
 # ---------------------------------------------------------------------------
 # Process-global singletons
@@ -754,10 +763,11 @@ async def cancel_message(
 ):
     if not store.has_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    active_turn = _active_turns.pop(session_id, None)
+    active_turn = _active_turns.get(session_id)
     if active_turn is None:
         return CancelResponse(session_id=session_id, cancelled=False)
     active_turn.cancel_event.set()
+    active_turn.close_llm_client()
     return CancelResponse(session_id=session_id, cancelled=True)
 
 
@@ -1008,11 +1018,13 @@ async def send_message(
         if model_selection and model_selection[0] != scope:
             store.set_model_selection(session_id, provider=None, model=None)
             model_selection = None
+        llm_client = LLMClient(
+            llm_settings,
+            model_override=model_selection[1] if model_selection else None,
+        )
+        active_turn.llm_client = llm_client
         agent = LeonAgent(
-            llm_client=LLMClient(
-                llm_settings,
-                model_override=model_selection[1] if model_selection else None,
-            ),
+            llm_client=llm_client,
             image_client=image_client,
             session_id=session_id,
             default_mode_ids=config.default_mode_ids,
@@ -1053,7 +1065,14 @@ async def send_message(
         )
         return MessageResponse(session_id=session_id, answer=result.answer, ok=True)
 
-    except AgentCancelled:
+    except asyncio.CancelledError:
+        active_turn.cancel_event.set()
+        active_turn.close_llm_client()
+        raise
+    except AgentCancelled as exc:
+        partial_result = exc.partial_result
+        if partial_result is not None and partial_result.steps:
+            store.record_result(session_id, partial_result)
         bus.publish(
             LeonEvent(event="assistant.cancelled", session_id=session_id, data={})
         )
@@ -1065,6 +1084,7 @@ async def send_message(
         )
         raise HTTPException(status_code=500, detail=err_msg) from exc
     finally:
+        active_turn.close_llm_client()
         if _active_turns.get(session_id) is active_turn:
             _active_turns.pop(session_id, None)
 

@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import CancelledError
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from threading import Event
+from threading import Event, RLock, Thread
 from typing import Any
 
+import httpx
 from openai import OpenAI
 
 from workbench_core.config import Settings, get_settings
+
+_CONNECT_TIMEOUT_SECONDS = 10.0
+_WRITE_TIMEOUT_SECONDS = 60.0
+_POOL_TIMEOUT_SECONDS = 10.0
+_CANCEL_POLL_SECONDS = 0.05
+
+
+def _openai_timeout(seconds: float) -> float | httpx.Timeout:
+    if seconds > 0:
+        return seconds
+    return httpx.Timeout(
+        connect=_CONNECT_TIMEOUT_SECONDS,
+        read=None,
+        write=_WRITE_TIMEOUT_SECONDS,
+        pool=_POOL_TIMEOUT_SECONDS,
+    )
 
 
 @dataclass(frozen=True)
@@ -48,12 +66,77 @@ class LLMClient:
     ) -> None:
         self.settings = settings or get_settings()
         self._model_override = (model_override or "").strip() or None
-        self._client = OpenAI(
+        self._client_lock = RLock()
+        self._client: OpenAI | None = self._build_client()
+
+    def _build_client(self) -> OpenAI:
+        return OpenAI(
             api_key=self.settings.require_api_key(),
             base_url=self.settings.active_base_url,
-            timeout=self.settings.llm_timeout_seconds,
+            timeout=_openai_timeout(self.settings.llm_timeout_seconds),
             max_retries=self.settings.llm_max_retries,
         )
+
+    def _get_client(self) -> OpenAI:
+        with self._client_lock:
+            if self._client is None:
+                self._client = self._build_client()
+            return self._client
+
+    def _discard_client(self, client: OpenAI) -> None:
+        with self._client_lock:
+            if self._client is not client:
+                return
+            self._client = None
+        close = getattr(client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 - cancellation must remain best effort
+                pass
+
+    def close(self) -> None:
+        """Close the current transport so a blocking provider read can be interrupted."""
+        with self._client_lock:
+            client = self._client
+        if client is not None:
+            self._discard_client(client)
+
+    @contextmanager
+    def _request_client(self, cancel_event: Event | None) -> Iterator[OpenAI]:
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("LLM request cancelled")
+        client = self._get_client()
+        if cancel_event is None:
+            yield client
+            return
+
+        finished = Event()
+
+        def interrupt_blocking_read() -> None:
+            while not finished.is_set():
+                if cancel_event.wait(_CANCEL_POLL_SECONDS):
+                    if not finished.is_set():
+                        self._discard_client(client)
+                    return
+
+        watcher = Thread(
+            target=interrupt_blocking_read,
+            name="llm-cancel-watch",
+            daemon=True,
+        )
+        watcher.start()
+        try:
+            yield client
+        except Exception as exc:
+            if cancel_event.is_set() and not isinstance(exc, CancelledError):
+                raise CancelledError("LLM request cancelled") from exc
+            raise
+        finally:
+            finished.set()
+            if cancel_event.is_set():
+                self._discard_client(client)
+            watcher.join(timeout=_CANCEL_POLL_SECONDS * 2)
 
     @property
     def model(self) -> str:
@@ -65,7 +148,7 @@ class LLMClient:
 
     def list_models(self) -> list[str]:
         """Fetch the model catalog exposed by the active OpenAI-compatible provider."""
-        response = self._client.models.list()
+        response = self._get_client().models.list()
         items = getattr(response, "data", response)
         model_ids = {
             str(getattr(item, "id", "")).strip()
@@ -126,9 +209,10 @@ class LLMClient:
                 kwargs, cancel_event=cancel_event, on_delta=on_delta
             )
 
-        response = self._client.chat.completions.create(**kwargs)
-        if cancel_event is not None and cancel_event.is_set():
-            raise CancelledError("LLM request cancelled")
+        with self._request_client(cancel_event) as client:
+            response = client.chat.completions.create(**kwargs)
+            if cancel_event is not None and cancel_event.is_set():
+                raise CancelledError("LLM request cancelled")
         message = response.choices[0].message
 
         tool_calls: list[ToolCall] = []
@@ -193,48 +277,64 @@ class LLMClient:
         carries usage when the provider honours ``stream_options``; a missing
         usage stays ``None`` so consumers follow the render-nothing rule.
         """
-        stream = self._client.chat.completions.create(
-            stream=True,
-            stream_options={"include_usage": True},
-            **kwargs,
-        )
         content_parts: list[str] = []
         tool_calls_by_index: dict[int, dict[str, Any]] = {}
         usage: dict[str, int] | None = None
         served_model: str | None = None
-        for chunk in stream:
-            if cancel_event is not None and cancel_event.is_set():
-                raise CancelledError("LLM request cancelled")
-            if served_model is None:
-                served_model = str(getattr(chunk, "model", "") or "").strip() or None
-            usage_obj = getattr(chunk, "usage", None)
-            prompt_tokens = getattr(usage_obj, "prompt_tokens", None)
-            completion_tokens = getattr(usage_obj, "completion_tokens", None)
-            if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
-                usage = {"input_tokens": prompt_tokens, "output_tokens": completion_tokens}
-            choices = getattr(chunk, "choices", None) or []
-            if not choices:
-                continue
-            delta = getattr(choices[0], "delta", None)
-            if delta is None:
-                continue
-            piece = getattr(delta, "content", None)
-            if piece:
-                content_parts.append(piece)
-                on_delta(piece)
-            for fragment in getattr(delta, "tool_calls", None) or []:
-                index = getattr(fragment, "index", 0) or 0
-                slot = tool_calls_by_index.setdefault(
-                    index, {"id": "", "name": "", "arguments": ""}
-                )
-                if getattr(fragment, "id", None):
-                    slot["id"] = fragment.id
-                function = getattr(fragment, "function", None)
-                if function is not None:
-                    if getattr(function, "name", None):
-                        slot["name"] += function.name
-                    if getattr(function, "arguments", None):
-                        slot["arguments"] += function.arguments
+        with self._request_client(cancel_event) as client:
+            stream = client.chat.completions.create(
+                stream=True,
+                stream_options={"include_usage": True},
+                **kwargs,
+            )
+            try:
+                for chunk in stream:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise CancelledError("LLM request cancelled")
+                    if served_model is None:
+                        served_model = (
+                            str(getattr(chunk, "model", "") or "").strip() or None
+                        )
+                    usage_obj = getattr(chunk, "usage", None)
+                    prompt_tokens = getattr(usage_obj, "prompt_tokens", None)
+                    completion_tokens = getattr(usage_obj, "completion_tokens", None)
+                    if isinstance(prompt_tokens, int) and isinstance(
+                        completion_tokens, int
+                    ):
+                        usage = {
+                            "input_tokens": prompt_tokens,
+                            "output_tokens": completion_tokens,
+                        }
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
+                    delta = getattr(choices[0], "delta", None)
+                    if delta is None:
+                        continue
+                    piece = getattr(delta, "content", None)
+                    if piece:
+                        content_parts.append(piece)
+                        on_delta(piece)
+                    for fragment in getattr(delta, "tool_calls", None) or []:
+                        index = getattr(fragment, "index", 0) or 0
+                        slot = tool_calls_by_index.setdefault(
+                            index, {"id": "", "name": "", "arguments": ""}
+                        )
+                        if getattr(fragment, "id", None):
+                            slot["id"] = fragment.id
+                        function = getattr(fragment, "function", None)
+                        if function is not None:
+                            if getattr(function, "name", None):
+                                slot["name"] += function.name
+                            if getattr(function, "arguments", None):
+                                slot["arguments"] += function.arguments
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:  # noqa: BLE001 - response is already finished/cancelled
+                        pass
 
         content = "".join(content_parts) or None
         tool_calls: list[ToolCall] = []

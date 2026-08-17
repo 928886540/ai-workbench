@@ -110,7 +110,7 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 
 - [x] `01-llm-core`：模型调用 / Prompt / Structured Output
 - [x] `02-code-agent`：Tool-using Code Analysis Agent
-- [x] `02-leon-agent`：独立 CLI / 会话 / 生图 / 可选 Tavily 搜索与只读 File Search / FastAPI + SSE 手机 Web Client
+- [x] `02-leon-agent`：独立 CLI / 会话 / 生图 / 可选 Tavily 搜索与受控 File Search/FileWrite / FastAPI + SSE 手机 Web Client
 - [ ] `03-rag-lab`：文件问答与检索增强
 - [ ] `04-mcp-lab`：Leon MCP Server 第一版已完成；其余 MCP 实验待做
 - [ ] `05-workflow`：工作流自动化
