@@ -158,6 +158,7 @@ def create_planning_tools(service: PlanningService) -> list[AgentTool]:
             handler=service.create,
             audit_arguments=_audit_create_arguments,
             audit_result=_audit_result,
+            span_kind="planning",
         ),
         AgentTool(
             name="plan_update",
@@ -180,6 +181,7 @@ def create_planning_tools(service: PlanningService) -> list[AgentTool]:
             handler=service.update,
             audit_arguments=_audit_update_arguments,
             audit_result=_audit_result,
+            span_kind="planning",
         ),
         AgentTool(
             name="plan_get",
@@ -188,5 +190,6 @@ def create_planning_tools(service: PlanningService) -> list[AgentTool]:
             handler=service.get,
             audit_arguments=lambda arguments: {},
             audit_result=_audit_result,
+            span_kind="planning",
         ),
     ]

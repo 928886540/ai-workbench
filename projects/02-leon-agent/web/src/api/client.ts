@@ -7,6 +7,7 @@ export interface HealthResponse {
 export interface SessionResponse {
   session_id: string;
   messages: SessionMessage[];
+  voice_clips?: SessionVoiceClip[];
   active_turn: { retry: boolean } | null;
 }
 
@@ -16,6 +17,16 @@ export interface SessionMessage {
   content: string;
   created_at?: number;
   revisions?: Array<{ content: string; created_at?: number }>;
+}
+
+export interface SessionVoiceClip {
+  clip_id: string;
+  url: string;
+  text: string;
+  voice_id: string;
+  voice_name: string;
+  bytes: number;
+  created_at: number;
 }
 
 export interface CreateSessionResponse {
@@ -149,11 +160,15 @@ export class LeonApi {
   async sendMessage(
     sessionId: string,
     content: string,
-    options: { signal?: AbortSignal; retry?: boolean } = {},
+    options: { signal?: AbortSignal; retry?: boolean; voiceId?: string } = {},
   ): Promise<MessageResponse> {
     return this.request<MessageResponse>(`/api/agent/sessions/${sessionId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ content, retry: Boolean(options.retry) }),
+      body: JSON.stringify({
+        content,
+        retry: Boolean(options.retry),
+        voice_id: options.voiceId || undefined,
+      }),
       signal: options.signal,
     });
   }
@@ -244,14 +259,18 @@ export class LeonApi {
 
   connectEvents(
     sessionId: string,
-    onEvent: (event: LeonEvent) => void,
+    onEvent: (event: LeonEvent, lastEventId: string) => void,
     onError: (source: EventSource) => void,
+    lastEventId = "",
   ): EventSource {
-    const query = this.token ? `?token=${encodeURIComponent(this.token)}` : "";
+    const params = new URLSearchParams();
+    if (this.token) params.set("token", this.token);
+    if (lastEventId) params.set("last_event_id", lastEventId);
+    const query = params.size ? `?${params.toString()}` : "";
     const source = new EventSource(`/api/agent/sessions/${sessionId}/events${query}`);
     source.onmessage = (message) => {
       try {
-        onEvent(JSON.parse(message.data) as LeonEvent);
+        onEvent(JSON.parse(message.data) as LeonEvent, message.lastEventId);
       } catch {
         // Ignore malformed heartbeats or an incomplete event payload.
       }

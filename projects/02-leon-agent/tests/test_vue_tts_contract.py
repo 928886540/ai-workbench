@@ -80,7 +80,25 @@ def test_message_and_chat_wire_manual_and_automatic_speech() -> None:
         "hasImageContent(message.text)",
         "void speakMessage(message.id, message.text, activeVoiceId());",
         "void ensureVoiceCatalog();",
+        "voiceId: activeVoiceId(),",
         'v-if="audioUnlockRequired"',
         '@click="void unlockAudio()"',
     ):
         assert fragment in chat, fragment
+
+
+def test_media_session_uses_transparent_png_artwork() -> None:
+    speech = _read("web/src/utils/speech.ts")
+    manifest = _read("web/public/manifest.json")
+    service_worker = _read("web/public/sw.js")
+
+    for fragment in (
+        "export function setVoiceMediaSessionMetadata(",
+        "navigator.mediaSession.metadata = new MediaMetadata({",
+        'src: new URL("/icon-512.png", window.location.origin).href,',
+        'sizes: "512x512"',
+        'type: "image/png"',
+    ):
+        assert fragment in speech, fragment
+    assert '"src": "icon-512.png"' in manifest
+    assert "'/icon-512.png'" in service_worker

@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import json
 from threading import Event
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -15,7 +16,14 @@ from leon_agent.gateway.app import _resolve_web_dir, _track_image_jobs, app, get
 from leon_agent.gateway.events import EventBusRegistry
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools as build_leon_tools
-from workbench_core.agent import AgentCancelled, AgentResult, ToolStep
+from workbench_core.agent import (
+    AgentCancelled,
+    AgentEvent,
+    AgentResult,
+    ToolStep,
+    TraceContext,
+    TraceRecorder,
+)
 
 _FILE_TOOL_NAMES = frozenset(
     {"list_files", "file_search", "read_file", "create_file", "write_file"}
@@ -66,19 +74,32 @@ def _install_gateway_agent_capture(
                 file_write_service=file_write_service,
                 memory_service=memory_service,
             )
-            captures.append(
-                {
-                    "file_service": file_service,
-                    "file_write_service": file_write_service,
-                    "file_tools": sorted(_FILE_TOOL_NAMES.intersection(registry.names)),
-                    "memory_service": memory_service,
-                    "memory_tools": sorted(_MEMORY_TOOL_NAMES.intersection(registry.names)),
-                }
-            )
+            self.capture = {
+                "file_service": file_service,
+                "file_write_service": file_write_service,
+                "file_tools": sorted(_FILE_TOOL_NAMES.intersection(registry.names)),
+                "memory_service": memory_service,
+                "memory_tools": sorted(_MEMORY_TOOL_NAMES.intersection(registry.names)),
+            }
+            captures.append(self.capture)
 
-        def run(self, message, *, history=(), cancel_event=None):  # noqa: ANN001
+        def run(  # noqa: ANN001
+            self,
+            message,
+            *,
+            history=(),
+            cancel_event=None,
+            trace_context=None,
+            trace_sink=None,
+        ):
             del message, history, cancel_event
-            return AgentResult(answer="captured")
+            self.capture["trace_context"] = trace_context
+            self.capture["trace_sink"] = trace_sink
+            return AgentResult(
+                answer="captured",
+                trace_id=trace_context.trace_id,
+                turn_id=trace_context.turn_id,
+            )
 
     fake_image_client = FakeImageClient()
     monkeypatch.setattr(gateway_app, "_create_image_client", lambda _config: fake_image_client)
@@ -382,6 +403,88 @@ def test_send_message_without_file_roots_injects_no_file_registry(
     assert captures[0]["file_service"] is None
     assert captures[0]["file_write_service"] is None
     assert captures[0]["file_tools"] == []
+    context = captures[0]["trace_context"]
+    assert context.session_id == session_id
+    assert context.entrypoint == "web"
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    assert captures[0]["trace_sink"] is gateway_app.get_trace_store()
+    messages = client.get(f"/api/agent/sessions/{session_id}").json()["messages"]
+    assert {message["turn_id"] for message in messages} == {context.turn_id}
+
+
+def test_web_retry_reuses_turn_id_and_creates_a_new_trace(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captures: list[dict[str, Any]] = []
+    _install_gateway_agent_capture(monkeypatch, captures)
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    session_id = client.post("/api/agent/sessions").json()["session_id"]
+
+    first = client.post(
+        f"/api/agent/sessions/{session_id}/messages",
+        json={"content": "first"},
+    )
+    retried = client.post(
+        f"/api/agent/sessions/{session_id}/messages",
+        json={"content": "first edited", "retry": True},
+    )
+
+    assert first.status_code == retried.status_code == 200
+    first_context = captures[0]["trace_context"]
+    retry_context = captures[1]["trace_context"]
+    assert retry_context.turn_id == first_context.turn_id
+    assert retry_context.trace_id != first_context.trace_id
+    messages = client.get(f"/api/agent/sessions/{session_id}").json()["messages"]
+    assert [message["content"] for message in messages] == ["first edited", "captured"]
+    assert {message["turn_id"] for message in messages} == {first_context.turn_id}
+
+    bus = gateway_app._bus_registry.get(session_id)  # noqa: SLF001
+    assert bus is not None
+    retry_events = [
+        event
+        for event in bus._history  # noqa: SLF001
+        if event.data.get("trace_id") == retry_context.trace_id
+    ]
+    assert {event.event for event in retry_events} >= {
+        "user.message",
+        "assistant.started",
+        "assistant.completed",
+    }
+    assert {event.data["turn_id"] for event in retry_events} == {
+        first_context.turn_id
+    }
+
+
+def test_trace_query_endpoints_enforce_session_ownership(client) -> None:
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    session_id = client.post("/api/agent/sessions").json()["session_id"]
+    other_session_id = client.post("/api/agent/sessions").json()["session_id"]
+    context = TraceContext.create(session_id=session_id, entrypoint="web")
+    recorder = TraceRecorder(context, gateway_app.get_trace_store())
+    span_id = recorder.start_span(
+        "llm",
+        "llm.request",
+        attributes={"message_count": 2, "prompt": "must-not-leak"},
+    )
+    recorder.finish_span(span_id, model="fake-model", input_tokens=3, output_tokens=2)
+    recorder.finish_trace(status="ok", outcome="answered")
+
+    listed = client.get(f"/api/agent/sessions/{session_id}/traces")
+    detail = client.get(
+        f"/api/agent/sessions/{session_id}/traces/{context.trace_id}"
+    )
+    denied = client.get(
+        f"/api/agent/sessions/{other_session_id}/traces/{context.trace_id}"
+    )
+
+    assert listed.status_code == detail.status_code == 200
+    assert listed.json()["traces"][0]["trace_id"] == context.trace_id
+    assert detail.json()["trace"]["turn_id"] == context.turn_id
+    assert [span["kind"] for span in detail.json()["spans"]] == ["agent", "llm"]
+    assert detail.json()["spans"][1]["attributes"] == {"message_count": 2}
+    assert "must-not-leak" not in repr(detail.json())
+    assert denied.status_code == 404
 
 
 def test_send_message_injects_memory_service_on_shared_database(
@@ -477,8 +580,16 @@ def test_cancelled_side_effect_persists_only_projected_tool_audit(
         def __init__(self, **kwargs):  # noqa: ANN003
             del kwargs
 
-        def run(self, message, *, history=(), cancel_event=None):  # noqa: ANN001
-            del message, history, cancel_event
+        def run(  # noqa: ANN001
+            self,
+            message,
+            *,
+            history=(),
+            cancel_event=None,
+            trace_context=None,
+            trace_sink=None,
+        ):
+            del message, history, cancel_event, trace_sink
             raise AgentCancelled(
                 partial_result=AgentResult(
                     answer=marker,
@@ -495,8 +606,12 @@ def test_cancelled_side_effect_persists_only_projected_tool_audit(
                                 "citation": "workbench:note.md",
                                 "bytes": 4,
                             },
+                            trace_id=trace_context.trace_id,
+                            span_id="a" * 16,
                         )
                     ],
+                    trace_id=trace_context.trace_id,
+                    turn_id=trace_context.turn_id,
                 )
             )
 
@@ -534,6 +649,68 @@ def test_cancelled_side_effect_persists_only_projected_tool_audit(
     assert store.load_messages(session_id) == [
         {"role": "user", "content": "cancel after side effect"}
     ]
+
+
+def test_cancelled_stream_persists_one_partial_assistant_message(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+
+    class StreamingCancellingAgent:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.on_event = kwargs["on_event"]
+
+        def run(  # noqa: ANN001
+            self,
+            message,
+            *,
+            history=(),
+            cancel_event=None,
+            trace_context=None,
+            trace_sink=None,
+        ):
+            del message, history, cancel_event, trace_sink
+            for content in ("已经输出的", "部分回答"):
+                self.on_event(
+                    AgentEvent(
+                        kind="assistant_delta",
+                        content=content,
+                        trace_id=trace_context.trace_id,
+                        turn_id=trace_context.turn_id,
+                    )
+                )
+            raise AgentCancelled(
+                partial_result=AgentResult(
+                    answer="",
+                    trace_id=trace_context.trace_id,
+                    turn_id=trace_context.turn_id,
+                )
+            )
+
+    monkeypatch.setattr(gateway_app, "LeonAgent", StreamingCancellingAgent)
+    monkeypatch.setattr(gateway_app, "LLMClient", lambda *args, **kwargs: SimpleNamespace())
+    session_id = client.post("/api/agent/sessions").json()["session_id"]
+
+    response = client.post(
+        f"/api/agent/sessions/{session_id}/messages",
+        json={"content": "给一个很长的回答"},
+    )
+    restored = client.get(f"/api/agent/sessions/{session_id}").json()["messages"]
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "已停止"
+    assert [message["content"] for message in restored] == [
+        "给一个很长的回答",
+        "已经输出的部分回答",
+    ]
+    assert restored[0]["turn_id"] == restored[1]["turn_id"]
+    bus = gateway_app._bus_registry.get(session_id)  # noqa: SLF001
+    assert bus is not None
+    cancelled = next(
+        event for event in reversed(bus._history) if event.event == "assistant.cancelled"  # noqa: SLF001
+    )
+    assert cancelled.data["content"] == "已经输出的部分回答"
 
 
 def test_cancel_endpoint_keeps_the_active_turn_until_its_worker_finishes(client):
@@ -625,6 +802,78 @@ def test_tts_audio_cache_reuses_results_and_keeps_at_least_ten_entries():
     )
     assert recreated == b"recreated"
     assert recreated_hit is False
+
+
+def test_voice_clip_route_falls_back_to_sqlite_after_memory_cache_miss(client):
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    session_id = client.post("/api/agent/sessions").json()["session_id"]
+    clip = get_store().add_voice_clip(
+        session_id,
+        text="刷新后仍可播放",
+        voice_id="voice-persisted",
+        voice_name="持久化音色",
+        audio=b"persistent-fake-mp3",
+    )
+    gateway_app._voice_clips = gateway_app.VoiceClipStore()  # noqa: SLF001
+
+    session = client.get(f"/api/agent/sessions/{session_id}").json()
+    assert session["voice_clips"] == [
+        {
+            **clip,
+            "url": f"/api/voice/clips/{clip['clip_id']}",
+        }
+    ]
+
+    response = client.get(f"/api/voice/clips/{clip['clip_id']}")
+    assert response.status_code == 200
+    assert response.content == b"persistent-fake-mp3"
+    assert response.headers["content-type"] == "audio/mpeg"
+
+
+def test_session_speak_uses_turn_voice_unless_tool_explicitly_overrides(
+    tmp_path,
+    monkeypatch,
+):
+    gateway_app = importlib.import_module("leon_agent.gateway.app")
+    calls: list[tuple[str, str]] = []
+
+    class FakeVoiceClient:
+        def synthesize(self, *, text: str, voice_id: str) -> bytes:
+            calls.append((text, voice_id))
+            return f"audio:{voice_id}:{text}".encode()
+
+        def resolve_voice(self, voice_id: str) -> dict[str, str]:
+            return {"name": f"name:{voice_id}"}
+
+    monkeypatch.setattr(gateway_app, "_get_voice_client", lambda config: FakeVoiceClient())
+    gateway_app._tts_audio_cache = gateway_app.TTSAudioCache(max_count=10)  # noqa: SLF001
+    store = SessionStore(tmp_path / "voice-handler.db")
+    session_id = store.create_session()
+    events = []
+    handler = gateway_app._session_speak_factory(  # noqa: SLF001
+        SimpleNamespace(voice_enabled=True, volink_default_voice_id="voice-default"),
+        session_id,
+        events.append,
+        store=store,
+        preferred_voice_id="voice-selected",
+    )
+    assert handler is not None
+
+    handler("使用页面选择", None)
+    handler("使用显式音色", "voice-explicit")
+
+    assert calls == [
+        ("使用页面选择", "voice-selected"),
+        ("使用显式音色", "voice-explicit"),
+    ]
+    assert [clip["voice_id"] for clip in store.load_voice_clips(session_id)] == [
+        "voice-selected",
+        "voice-explicit",
+    ]
+    assert [event.data["voice_id"] for event in events] == [
+        "voice-selected",
+        "voice-explicit",
+    ]
 
 
 def test_asr_status_and_transcription_are_disabled_without_configuration(

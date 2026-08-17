@@ -455,9 +455,22 @@ def test_gateway_injects_file_service_into_agent(tmp_path: Path, monkeypatch: An
         def __init__(self, **kwargs: Any) -> None:
             captured["file_service"] = kwargs["file_service"]
 
-        def run(self, message: str, *, history: Any, cancel_event: Any) -> AgentResult:
+        def run(
+            self,
+            message: str,
+            *,
+            history: Any,
+            cancel_event: Any,
+            trace_context: Any,
+            trace_sink: Any,
+        ) -> AgentResult:
             del message, history, cancel_event
-            return AgentResult(answer="file tool path wired")
+            captured["trace_sink"] = trace_sink
+            return AgentResult(
+                answer="file tool path wired",
+                trace_id=trace_context.trace_id,
+                turn_id=trace_context.turn_id,
+            )
 
     class FakeImageClient:
         def __init__(self, **kwargs: Any) -> None:
@@ -484,7 +497,10 @@ def test_gateway_injects_file_service_into_agent(tmp_path: Path, monkeypatch: An
         LEON_BACKEND_URL="http://127.0.0.1:9",
         LEON_FILE_ROOTS={"docs": tmp_path},
     )
-    store = gateway_module.SessionStore(tmp_path / "session.db")
+    database = tmp_path / "session.db"
+    store = gateway_module.SessionStore(database)
+    memory_store = gateway_module.MemoryStore(database)
+    trace_store = gateway_module.SQLiteTraceStore(database)
     session_id = store.create_session()
     body = gateway_module.MessageRequest(content="查一下文档")
 
@@ -493,6 +509,8 @@ def test_gateway_injects_file_service_into_agent(tmp_path: Path, monkeypatch: An
             session_id,
             body,
             store=store,
+            memory_store=memory_store,
+            trace_store=trace_store,
             config=settings,
         )
     )
@@ -500,3 +518,4 @@ def test_gateway_injects_file_service_into_agent(tmp_path: Path, monkeypatch: An
     assert response.ok is True
     assert captured["file_service"] is not None
     assert captured["file_service"].root_ids == ["docs"]
+    assert captured["trace_sink"] is trace_store

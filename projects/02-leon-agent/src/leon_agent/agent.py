@@ -6,7 +6,13 @@ from collections.abc import Callable, Sequence
 from threading import Event
 from typing import Any
 
-from workbench_core.agent import AgentEvent, AgentResult, AgentRuntime
+from workbench_core.agent import (
+    AgentEvent,
+    AgentResult,
+    AgentRuntime,
+    TraceContext,
+    TraceSink,
+)
 from workbench_core.files import FileSearchService, FileWriteService
 from workbench_core.llm import LLMClient
 
@@ -250,6 +256,8 @@ class LeonAgent:
         *,
         history: Sequence[dict[str, Any]] = (),
         cancel_event: Event | None = None,
+        trace_context: TraceContext | None = None,
+        trace_sink: TraceSink | None = None,
     ) -> AgentResult:
         self.planning_service.reset()
         memory_context = self.memory_service.build_context() if self.memory_service else None
@@ -260,4 +268,6 @@ class LeonAgent:
                     history=history,
                     cancel_event=cancel_event,
                     system_context=memory_context,
+                    trace_context=trace_context,
+                    trace_sink=trace_sink,
                 )

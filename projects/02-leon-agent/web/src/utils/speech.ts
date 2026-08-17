@@ -37,6 +37,28 @@ let unlockPromise: Promise<boolean> | null = null;
 let active: SpeechOperation | null = null;
 let pending: PendingSpeech | null = null;
 
+export function setVoiceMediaSessionMetadata(title: string, artist = "Leon Agent"): void {
+  if (
+    typeof navigator === "undefined" ||
+    !("mediaSession" in navigator) ||
+    typeof MediaMetadata === "undefined"
+  ) {
+    return;
+  }
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: title.trim() || "Leon 语音",
+    artist: artist.trim() || "Leon Agent",
+    album: "Leon Agent",
+    artwork: [
+      {
+        src: new URL("/icon-512.png", window.location.origin).href,
+        sizes: "512x512",
+        type: "image/png",
+      },
+    ],
+  });
+}
+
 function ttsCacheKey(text: string, voiceId?: string): string {
   return `${voiceId || "default"}\u0000${text}`;
 }
@@ -233,6 +255,8 @@ export async function speakMessage(
     errorState[messageId] = "没有可朗读的文字";
     return false;
   }
+
+  setVoiceMediaSessionMetadata(text);
 
   stopSpeech();
   delete errorState[messageId];

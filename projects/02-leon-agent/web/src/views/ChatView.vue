@@ -12,6 +12,7 @@ import {
   type ImageMode,
   type LeonEvent,
   type SessionMessage,
+  type SessionVoiceClip,
   type SessionResponse,
 } from "../api/client";
 import GalleryView from "./GalleryView.vue";
@@ -86,6 +87,10 @@ const modeSuggestionsOpen = ref(false);
 let eventSource: EventSource | null = null;
 let reconnectTimer: number | null = null;
 let eventHealthProbeSource: EventSource | null = null;
+let lastEventId = "";
+let eventCursorSessionId = "";
+let resumeReconciliation: Promise<void> | null = null;
+let imageStateRequestId = 0;
 let modeBlurTimer: number | null = null;
 let imageModeCatalog: ImageMode[] | null = null;
 let imageModeCatalogRequest: Promise<ImageMode[]> | null = null;
@@ -95,12 +100,15 @@ let lastAgentErrorAt = 0;
 let activeSendController: AbortController | null = null;
 let suppressedUserEcho: { content: string; until: number } | null = null;
 const autoplayRequests = new Set<string>();
+const cancelledAssistantTraceIds = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 42;
 const COMPOSER_MAX_HEIGHT = 120;
 const SCROLL_FOLLOW_THRESHOLD = 72;
 const MAX_TIMELINE_ENTRIES = 100;
 const ERROR_DEDUPE_WINDOW_MS = 10_000;
 let timelineSequence = 0;
+let activeAssistantTraceId: string | null = null;
+let suppressCurrentAssistantEvents = false;
 
 interface ModeCompletionContext {
   prefix: string;
@@ -476,6 +484,22 @@ function scrollToLatest(force = false): void {
   });
 }
 
+function focusLatestBubbleAfterHydration(): void {
+  autoFollowMessages.value = true;
+  showScrollToLatest.value = false;
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      const panel = messagesPanel.value;
+      if (!panel) return;
+      const bubbles = panel.querySelectorAll<HTMLElement>(".message-row");
+      const latest = bubbles.item(bubbles.length - 1);
+      latest?.scrollIntoView({ block: "end", inline: "nearest" });
+      panel.scrollTop = panel.scrollHeight;
+      updateMessageScrollState();
+    });
+  });
+}
+
 function eventTime(timestamp?: string): number {
   const parsed = timestamp ? Date.parse(timestamp) : NaN;
   return Number.isFinite(parsed) ? parsed : Date.now();
@@ -485,26 +509,33 @@ async function loadImageState(force = false): Promise<void> {
   const sessionId = api.sessionId;
   if (
     !sessionId ||
-    imageStateLoading.value ||
-    (!force && imageStateLoaded.value)
+    (!force && (imageStateLoading.value || imageStateLoaded.value))
   ) {
     return;
   }
+  const requestId = ++imageStateRequestId;
   imageStateLoading.value = true;
   imageStateError.value = "";
   try {
     const state = await api.getImageState(sessionId);
-    if (api.sessionId !== sessionId) return;
+    if (api.sessionId !== sessionId || requestId !== imageStateRequestId) return;
     hydrateImageState(state.tasks || [], state.images || []);
     imageStateError.value = Object.values(state.errors || {}).join("；");
     imageStateLoaded.value = true;
   } catch (error) {
-    if (api.sessionId === sessionId) {
+    if (api.sessionId === sessionId && requestId === imageStateRequestId) {
       imageStateError.value = error instanceof Error ? error.message : "无法加载图片状态";
     }
   } finally {
-    if (api.sessionId === sessionId) imageStateLoading.value = false;
+    if (api.sessionId === sessionId && requestId === imageStateRequestId) {
+      imageStateLoading.value = false;
+    }
   }
+}
+
+function invalidateImageStateRequests(): void {
+  imageStateRequestId += 1;
+  imageStateLoading.value = false;
 }
 
 function refreshImageState(): void {
@@ -648,8 +679,57 @@ function handleEventError(source: EventSource): void {
 }
 
 function handleOnline(): void {
-  if (!authenticated.value || !api.sessionId) return;
-  if (!eventSource || eventSource.readyState === EventSource.CLOSED) connectEvents();
+  refreshVisibleState();
+}
+
+async function reconcileAfterResume(): Promise<void> {
+  const sessionId = api.sessionId;
+  if (!authenticated.value || !sessionId || document.visibilityState !== "visible") return;
+
+  // Mobile browsers may keep a stale OPEN EventSource while the page is
+  // suspended. Stop it, reconcile durable state, then replay from the cursor.
+  closeEvents();
+  try {
+    const refreshed = await api.getSession(sessionId);
+    if (api.sessionId !== sessionId) return;
+    appendHistory(refreshed.messages, refreshed.voice_clips || []);
+    if (refreshed.active_turn) {
+      restoreActiveTurn(refreshed.active_turn);
+    } else {
+      activeSendController?.abort();
+      activeSendController = null;
+      pendingAssistantId.value = null;
+      sending.value = false;
+    }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      expireLogin();
+      return;
+    }
+  }
+  await loadImageState(true);
+  if (
+    authenticated.value &&
+    api.sessionId === sessionId &&
+    document.visibilityState === "visible"
+  ) {
+    connectEvents();
+  }
+}
+
+function refreshVisibleState(): void {
+  if (document.visibilityState !== "visible" || resumeReconciliation) return;
+  resumeReconciliation = reconcileAfterResume().finally(() => {
+    resumeReconciliation = null;
+  });
+}
+
+function handleVisibilityChange(): void {
+  if (document.visibilityState === "visible") refreshVisibleState();
+}
+
+function handlePageShow(): void {
+  refreshVisibleState();
 }
 
 function hasImageContent(content: string): boolean {
@@ -662,7 +742,9 @@ function isImageOnlyContent(content: string): boolean {
 
 function appendHistory(
   history: SessionMessage[],
+  voiceClips: SessionVoiceClip[] = [],
 ): void {
+  resetAssistantStream();
   clearMessages();
   for (let index = 0; index < history.length; index += 1) {
     const item = history[index];
@@ -708,7 +790,21 @@ function appendHistory(
     message.createdAt =
       typeof item.created_at === "number" && item.created_at > 0 ? item.created_at : null;
   }
-  scrollToLatest(true);
+  for (const item of voiceClips) {
+    const clip = parseVoiceClip(item as unknown as Record<string, unknown>, false);
+    if (!clip || hasVoiceClip(clip.clipId)) continue;
+    const message = makeMessage("agent", clip.text, "done");
+    message.id = `voice_${clip.clipId}`;
+    message.audio = clip;
+    message.voice = clip;
+    message.createdAt = item.created_at > 0 ? item.created_at : null;
+    appendMessage(message);
+  }
+  messages.value.sort((left, right) => {
+    if (left.createdAt === null || right.createdAt === null) return 0;
+    return left.createdAt - right.createdAt;
+  });
+  focusLatestBubbleAfterHydration();
 }
 
 const TIME_DIVIDER_GAP_MS = 10 * 60 * 1000;
@@ -738,6 +834,7 @@ function pendingAssistant(): ChatMessage | null {
 }
 
 function cancelPendingAssistant(): void {
+  resetAssistantStream();
   const message = pendingAssistant();
   pendingAssistantId.value = null;
   if (!message) return;
@@ -859,11 +956,122 @@ interface CompletedMeta {
   tokensOut?: number | null;
 }
 
+interface PendingStreamCompletion {
+  content: string;
+  status: "done" | "error";
+  serverMeta: CompletedMeta;
+}
+
+const STREAM_TICK_MS = 18;
+const STREAM_CATCH_UP_THRESHOLD = 120;
+let assistantStreamMessageId: string | null = null;
+let assistantStreamTimer: number | null = null;
+let assistantStreamQueue: string[] = [];
+let pendingStreamCompletion: PendingStreamCompletion | null = null;
+
+function resetAssistantStream(): void {
+  if (assistantStreamTimer !== null) {
+    window.clearTimeout(assistantStreamTimer);
+    assistantStreamTimer = null;
+  }
+  assistantStreamMessageId = null;
+  assistantStreamQueue = [];
+  pendingStreamCompletion = null;
+}
+
+function assistantTraceId(data: Record<string, unknown>): string {
+  return asString(data.trace_id).trim();
+}
+
+function suppressActiveAssistantTrace(): void {
+  suppressCurrentAssistantEvents = true;
+  if (activeAssistantTraceId) cancelledAssistantTraceIds.add(activeAssistantTraceId);
+}
+
+function shouldSuppressAssistantEvent(data: Record<string, unknown>): boolean {
+  const traceId = assistantTraceId(data);
+  if (traceId && cancelledAssistantTraceIds.has(traceId)) return true;
+  return suppressCurrentAssistantEvents && (!traceId || traceId === activeAssistantTraceId);
+}
+
+function activateAssistantTrace(data: Record<string, unknown>): boolean {
+  const traceId = assistantTraceId(data);
+  if (traceId && cancelledAssistantTraceIds.has(traceId)) return false;
+  activeAssistantTraceId = traceId || null;
+  suppressCurrentAssistantEvents = false;
+  return true;
+}
+
+function scheduleAssistantStream(): void {
+  if (assistantStreamTimer !== null) return;
+  assistantStreamTimer = window.setTimeout(drainAssistantStream, STREAM_TICK_MS);
+}
+
+function drainAssistantStream(): void {
+  assistantStreamTimer = null;
+  const message = findMessage(assistantStreamMessageId);
+  if (!message) {
+    resetAssistantStream();
+    return;
+  }
+
+  const characterCount = assistantStreamQueue.length > STREAM_CATCH_UP_THRESHOLD ? 2 : 1;
+  const characters = assistantStreamQueue.splice(0, characterCount);
+  if (characters.length) {
+    message.text += characters.join("");
+    scrollToLatest();
+  }
+  if (assistantStreamQueue.length) {
+    scheduleAssistantStream();
+    return;
+  }
+
+  const completion = pendingStreamCompletion;
+  if (!completion) return;
+  pendingStreamCompletion = null;
+  assistantStreamMessageId = null;
+  finishAssistant(completion.content, completion.status, completion.serverMeta);
+}
+
+function enqueueAssistantDelta(message: ChatMessage, delta: string): void {
+  if (assistantStreamMessageId === message.id && pendingStreamCompletion) return;
+  if (assistantStreamMessageId !== message.id) {
+    resetAssistantStream();
+    assistantStreamMessageId = message.id;
+  }
+  assistantStreamQueue.push(...Array.from(delta));
+  scheduleAssistantStream();
+}
+
+function queueAssistantCompletion(
+  content: string,
+  status: "done" | "error" = "done",
+  serverMeta: CompletedMeta = {},
+  target: ChatMessage | null = pendingAssistant(),
+): void {
+  if (!target) {
+    finishAssistant(content, status, serverMeta);
+    return;
+  }
+  pendingAssistantId.value = target.id;
+  if (assistantStreamMessageId !== target.id) {
+    assistantStreamMessageId = target.id;
+  }
+  const bufferedContent = target.text + assistantStreamQueue.join("");
+  if (content.startsWith(bufferedContent)) {
+    assistantStreamQueue.push(...Array.from(content.slice(bufferedContent.length)));
+  }
+  pendingStreamCompletion = { content, status, serverMeta };
+  if (assistantStreamQueue.length) scheduleAssistantStream();
+  else drainAssistantStream();
+}
+
 function finishAssistant(
   content: string,
   status: "done" | "error" = "done",
   serverMeta: CompletedMeta = {},
 ): void {
+  resetAssistantStream();
   let completed = pendingAssistant();
   if (completed) {
     completed.text = content;
@@ -937,7 +1145,10 @@ function parseCompletedMeta(data: Record<string, unknown>): CompletedMeta {
   };
 }
 
-function parseVoiceClip(data: Record<string, unknown>): VoiceClip | null {
+function parseVoiceClip(
+  data: Record<string, unknown>,
+  autoplay = true,
+): VoiceClip | null {
   const clipId = asString(data.clip_id).trim();
   if (!clipId) return null;
   const rawUrl = asString(data.url).trim() || `/api/voice/clips/${encodeURIComponent(clipId)}`;
@@ -953,6 +1164,7 @@ function parseVoiceClip(data: Record<string, unknown>): VoiceClip | null {
     voiceId: asString(data.voice_id) || null,
     voiceName: asString(data.voice_name) || "语音",
     bytes: Number.isFinite(rawBytes) && rawBytes >= 0 ? Math.trunc(rawBytes) : 0,
+    autoplay,
   };
 }
 
@@ -980,6 +1192,11 @@ function handleEvent(event: LeonEvent): void {
       setConnection("已连接", "ok");
       break;
     case "user.message": {
+      const traceId = assistantTraceId(data);
+      if (traceId && !cancelledAssistantTraceIds.has(traceId)) {
+        activeAssistantTraceId = traceId;
+        suppressCurrentAssistantEvents = false;
+      }
       const content = asString(data.content);
       if (
         content &&
@@ -994,6 +1211,7 @@ function handleEvent(event: LeonEvent): void {
       break;
     }
     case "assistant.started": {
+      if (!activateAssistantTrace(data)) break;
       const message = pendingAssistant() || appendMessage(makeMessage("agent", "", "pending"));
       message.status = "pending";
       message.meta.startedAt = Date.now();
@@ -1002,27 +1220,35 @@ function handleEvent(event: LeonEvent): void {
       break;
     }
     case "assistant.delta": {
+      if (shouldSuppressAssistantEvent(data)) break;
       const delta = asString(data.delta);
       if (!delta) break;
       const message = pendingAssistant() || appendMessage(makeMessage("agent", "", "streaming"));
       message.status = "streaming";
       message.meta.startedAt ||= Date.now();
-      message.text += delta;
       pendingAssistantId.value = message.id;
-      scrollToLatest();
+      enqueueAssistantDelta(message, delta);
       break;
     }
     case "assistant.completed":
-      finishAssistant(
+      if (shouldSuppressAssistantEvent(data)) break;
+      queueAssistantCompletion(
         asString(data.content) || pendingAssistant()?.text || "",
         "done",
         parseCompletedMeta(data),
       );
       break;
-    case "assistant.cancelled":
+    case "assistant.cancelled": {
+      const traceId = assistantTraceId(data);
+      if (traceId) cancelledAssistantTraceIds.add(traceId);
+      suppressCurrentAssistantEvents = true;
+      const partialContent = asString(data.content);
+      const message = pendingAssistant();
+      if (partialContent && message) message.text = partialContent;
       cancelPendingAssistant();
       scrollToLatest();
       break;
+    }
     case "assistant.notice": {
       const content = asString(data.content);
       const jobIds = Array.isArray(data.job_ids) ? data.job_ids : [];
@@ -1039,12 +1265,15 @@ function handleEvent(event: LeonEvent): void {
       break;
     }
     case "agent.error":
+      if (shouldSuppressAssistantEvent(data)) break;
       finishAgentErrorOnce(asString(data.error) || "请求失败");
       break;
     case "tool.started":
+      if (shouldSuppressAssistantEvent(data)) break;
       startTool(data);
       break;
     case "tool.finished":
+      if (shouldSuppressAssistantEvent(data)) break;
       finishTool(data);
       break;
     case "image.task.created":
@@ -1080,13 +1309,24 @@ function handleEvent(event: LeonEvent): void {
 
 function connectEvents(): void {
   if (!api.sessionId) return;
+  const sessionId = api.sessionId;
+  if (eventCursorSessionId !== sessionId) {
+    eventCursorSessionId = sessionId;
+    lastEventId = "";
+  }
   closeEvents();
   setConnection("正在连接…", "neutral");
-  eventSource = api.connectEvents(
-    api.sessionId,
-    handleEvent,
+  const source = api.connectEvents(
+    sessionId,
+    (event, cursor) => {
+      if (source !== eventSource || api.sessionId !== sessionId) return;
+      handleEvent(event);
+      if (cursor) lastEventId = cursor;
+    },
     handleEventError,
+    lastEventId,
   );
+  eventSource = source;
 }
 
 function restoreActiveTurn(activeTurn: { retry: boolean } | null): void {
@@ -1115,7 +1355,7 @@ async function reconcileActiveTurn(sessionId: string): Promise<void> {
     if (sending.value && !activeSendController) {
       pendingAssistantId.value = null;
       sending.value = false;
-      appendHistory(refreshed.messages);
+      appendHistory(refreshed.messages, refreshed.voice_clips || []);
     }
   } catch {
     // SSE remains authoritative; the next explicit refresh can retry hydration.
@@ -1135,15 +1375,21 @@ async function openSession(): Promise<void> {
   if (!session) {
     const created = await api.createSession();
     api.setSession(created.session_id);
-    session = { session_id: created.session_id, messages: [], active_turn: null };
+    session = {
+      session_id: created.session_id,
+      messages: [],
+      voice_clips: [],
+      active_turn: null,
+    };
   }
-  appendHistory(session.messages);
+  appendHistory(session.messages, session.voice_clips || []);
   restoreActiveTurn(session.active_turn);
+  invalidateImageStateRequests();
   clearImageState();
-  imageStateLoading.value = false;
   imageStateLoaded.value = false;
   imageStateError.value = "";
   authenticated.value = true;
+  focusLatestBubbleAfterHydration();
   void nextTick(resizeComposer);
   connectEvents();
   if (session.active_turn) void reconcileActiveTurn(api.sessionId);
@@ -1184,12 +1430,15 @@ async function login(): Promise<void> {
 
 function logout(): void {
   closeEvents();
+  lastEventId = "";
+  eventCursorSessionId = "";
+  resetAssistantStream();
   clearTimeline(true);
   api.logout();
   authenticated.value = false;
   clearMessages();
+  invalidateImageStateRequests();
   clearImageState();
-  imageStateLoading.value = false;
   imageStateLoaded.value = false;
   imageStateError.value = "";
   activeView.value = "chat";
@@ -1216,11 +1465,14 @@ interface SendTurnOptions {
 async function sendTurn(content: string, options: SendTurnOptions): Promise<void> {
   const sessionId = api.sessionId;
   if (!content || sending.value || !sessionId) return;
+  activeAssistantTraceId = null;
+  suppressCurrentAssistantEvents = false;
   const previousAgentId = latestMessage("agent")?.id || null;
   // A POST fallback may retain its id to absorb a late SSE completion. Once a
   // new turn starts, that id belongs to the previous turn and must not be
   // reused by the next assistant.started event.
   if (options.appendUser) {
+    resetAssistantStream();
     pendingAssistantId.value = null;
     suppressedUserEcho = null;
     appendMessage(makeMessage("user", content));
@@ -1238,6 +1490,7 @@ async function sendTurn(content: string, options: SendTurnOptions): Promise<void
     const response = await api.sendMessage(sessionId, content, {
       signal: controller.signal,
       retry: options.retry,
+      voiceId: activeVoiceId(),
     });
     // SSE normally supplies the completed bubble. This fallback keeps the turn
     // visible if a mobile network drops the event right as POST returns.
@@ -1246,15 +1499,14 @@ async function sendTurn(content: string, options: SendTurnOptions): Promise<void
     const latest = latestMessage("agent");
     if (!current && latest && latest.id !== previousAgentId) current = latest;
     if (current) {
-      current.text = response.answer;
-      current.status = response.ok ? "done" : response.answer === "已停止" ? "cancelled" : "error";
-      current.meta.finishedAt = Date.now();
-      if (current.status === "done" && current.id === pendingAssistantId.value) {
-        // Keep the id briefly so a late assistant.started event can reuse this
-        // fallback bubble instead of creating a duplicate after a mobile race.
-        pendingAssistantId.value = current.id;
+      if (response.ok) {
+        queueAssistantCompletion(response.answer, "done", {}, current);
+      } else {
+        resetAssistantStream();
+        current.text = response.answer;
+        current.status = response.answer === "已停止" ? "cancelled" : "error";
+        current.meta.finishedAt = Date.now();
       }
-      maybeAutoplay(current);
     } else {
       const fallback = appendMessage(makeMessage("agent", response.answer, response.ok ? "done" : "error"));
       pendingAssistantId.value = fallback.id;
@@ -1282,6 +1534,7 @@ async function sendMessage(): Promise<void> {
 async function stopSending(): Promise<void> {
   const sessionId = api.sessionId;
   if (!sending.value || !sessionId) return;
+  suppressActiveAssistantTrace();
   const cancelRequest = api.cancelMessage(sessionId);
   activeSendController?.abort();
   sending.value = false;
@@ -1331,11 +1584,16 @@ function handleComposerKeydown(event: KeyboardEvent): void {
 
 onMounted(() => {
   window.addEventListener("online", handleOnline);
+  window.addEventListener("pageshow", handlePageShow);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
   void bootstrap();
 });
 onBeforeUnmount(() => {
   closeEvents();
+  resetAssistantStream();
   window.removeEventListener("online", handleOnline);
+  window.removeEventListener("pageshow", handlePageShow);
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
   clearTimeline(true);
   stopAsrRecording();
   if (asrNoticeTimer !== null) {

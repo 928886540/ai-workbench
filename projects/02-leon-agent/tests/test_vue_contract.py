@@ -35,10 +35,10 @@ def test_vue_entry_is_the_only_web_client() -> None:
     assert '<div id="app"></div>' in entry
     assert '<script type="module" src="/src/main.ts"></script>' in entry
     assert '<link rel="icon" href="/icon.svg" type="image/svg+xml" />' in entry
-    assert '<link rel="apple-touch-icon" href="/icon.svg" />' in entry
+    assert '<link rel="apple-touch-icon" href="/icon-512.png" />' in entry
     assert 'outDir: "dist"' in vite
-    assert 'register("/sw.js?v=vue-21"' in main
-    assert "leon-vue-v21" in service_worker
+    assert 'register("/sw.js?v=vue-25"' in main
+    assert "leon-vue-v25" in service_worker
 
 
 def test_vue_api_contract_is_fake_gateway_friendly() -> None:
@@ -89,6 +89,10 @@ def test_vue_chat_login_session_restore_and_error_dedup_contract() -> None:
         "api.clearSession();",
         "function logout()",
         "closeEvents();",
+        "function focusLatestBubbleAfterHydration(): void",
+        'panel.querySelectorAll<HTMLElement>(".message-row")',
+        'latest?.scrollIntoView({ block: "end", inline: "nearest" });',
+        "authenticated.value = true;\n  focusLatestBubbleAfterHydration();",
         'let lastAgentErrorFingerprint = ""',
         "const ERROR_DEDUPE_WINDOW_MS = 10_000",
         'case "agent.error":',
@@ -96,7 +100,14 @@ def test_vue_chat_login_session_restore_and_error_dedup_contract() -> None:
         'latest?.status === "error"',
         "finishAgentErrorOnce(error instanceof Error ? error.message : \"发送失败\")",
         'case "assistant.cancelled":',
+        "const cancelledAssistantTraceIds = new Set<string>();",
+        "function suppressActiveAssistantTrace(): void",
+        "function shouldSuppressAssistantEvent(data: Record<string, unknown>): boolean",
+        "if (shouldSuppressAssistantEvent(data)) break;",
+        "const partialContent = asString(data.content);",
+        "if (partialContent && message) message.text = partialContent;",
         "async function stopSending(): Promise<void>",
+        "suppressActiveAssistantTrace();",
         "api.cancelMessage(sessionId)",
         "activeSendController?.abort()",
     ):
@@ -107,7 +118,8 @@ def test_vue_chat_login_session_restore_and_error_dedup_contract() -> None:
     # Opening a new session must close the previous EventSource first;
     # transient failures stay on the browser's native reconnect path.
     assert "closeEvents();\n  setConnection(\"正在连接…\", \"neutral\");" in chat
-    assert "eventSource = api.connectEvents(" in chat
+    assert "const source = api.connectEvents(" in chat
+    assert "eventSource = source;" in chat
     assert "eventSource?.close();" in chat
     assert "function handleEventError(source: EventSource): void" in chat
     assert "source.readyState === EventSource.CONNECTING" in chat
@@ -117,6 +129,27 @@ def test_vue_chat_login_session_restore_and_error_dedup_contract() -> None:
     assert "function handleOnline(): void" in chat
     assert 'window.addEventListener("online", handleOnline)' in chat
     assert 'window.removeEventListener("online", handleOnline)' in chat
+    assert "async function reconcileAfterResume(): Promise<void>" in chat
+    assert "const refreshed = await api.getSession(sessionId);" in chat
+    assert "appendHistory(refreshed.messages, refreshed.voice_clips || []);" in chat
+    assert "await loadImageState(true);" in chat
+    assert "const requestId = ++imageStateRequestId;" in chat
+    assert "requestId !== imageStateRequestId" in chat
+    assert "if (source !== eventSource || api.sessionId !== sessionId) return;" in chat
+    assert 'document.addEventListener("visibilitychange", handleVisibilityChange)' in chat
+    assert 'document.removeEventListener("visibilitychange", handleVisibilityChange)' in chat
+    assert 'window.addEventListener("pageshow", handlePageShow)' in chat
+    assert 'window.removeEventListener("pageshow", handlePageShow)' in chat
+    assert 'lastEventId = "";' in chat
+    assert 'eventCursorSessionId = "";' in chat
+
+    client = _read("web/src/api/client.ts")
+    assert 'if (lastEventId) params.set("last_event_id", lastEventId);' in client
+    assert "onEvent(JSON.parse(message.data) as LeonEvent, message.lastEventId);" in client
+
+    images = _read("web/src/stores/images.ts")
+    assert "const TERMINAL_IMAGE_STATUSES" in images
+    assert "keepTerminalState" in images
 
 
 def test_vue_message_bubble_copy_edit_retry_contract() -> None:
@@ -193,11 +226,20 @@ def test_vue_message_bubble_copy_edit_retry_contract() -> None:
         'aria-label="上一张"',
         'aria-label="下一张"',
         "function handlePointerDown(event: PointerEvent): void",
+        "function handlePointerMove(event: PointerEvent): void",
         "function handlePointerUp(event: PointerEvent): void",
+        "const activePointers = new Map<number, PointerPosition>();",
+        "function beginPinch(): void",
+        "function constrainedTranslation(",
+        "const MAX_SCALE = 5;",
         "Math.abs(deltaX) < 48",
         "move(deltaX < 0 ? 1 : -1);",
         '@pointerdown="handlePointerDown"',
+        '@pointermove="handlePointerMove"',
         '@pointerup="handlePointerUp"',
+        '@wheel.prevent="handleWheel"',
+        ':data-zoomed="scale > 1"',
+        'aria-label="重置缩放"',
         "{{ activeIndex + 1 }} / {{ items.length }}",
     ):
         assert fragment in viewer, fragment
@@ -249,7 +291,10 @@ def test_vue_task_thumbnail_and_contain_viewer_contract() -> None:
     assert "max-height: 100dvh;" in styles
     assert "object-fit: contain;" in styles
     assert "grid-auto-rows: 1fr;" in styles
-    assert ".image-viewer__close,\n.image-viewer__nav {\n  position: fixed;" in styles
+    assert (
+        ".image-viewer__close,\n.image-viewer__nav,\n.image-viewer__zoom-controls {\n"
+        "  position: fixed;"
+    ) in styles
     assert "background-color: rgb(22 37 55 / 94%);" in styles
     assert "overscroll-behavior: none;" in styles
     assert "touch-action: none;" in styles

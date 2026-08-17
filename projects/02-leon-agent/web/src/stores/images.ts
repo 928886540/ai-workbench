@@ -21,6 +21,7 @@ export interface GalleryImage {
 
 export const imageTasks = ref<ImageTask[]>([]);
 export const galleryImages = ref<GalleryImage[]>([]);
+const TERMINAL_IMAGE_STATUSES = new Set(["completed", "failed", "cancelled", "canceled"]);
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
@@ -59,10 +60,18 @@ export function upsertImageTask(
   if (!jobId) return null;
   const index = imageTasks.value.findIndex((item) => item.jobId === jobId);
   const previous = index >= 0 ? imageTasks.value[index] : null;
+  const incomingStatus = asString(raw.status) || previous?.status || "queued";
+  const keepTerminalState = Boolean(
+    previous &&
+      TERMINAL_IMAGE_STATUSES.has(previous.status.toLowerCase()) &&
+      !TERMINAL_IMAGE_STATUSES.has(incomingStatus.toLowerCase()),
+  );
   const task: ImageTask = {
     jobId,
-    status: asString(raw.status) || previous?.status || "queued",
-    progress: asNumber(raw.progress) ?? previous?.progress ?? null,
+    status: keepTerminalState ? previous!.status : incomingStatus,
+    progress: keepTerminalState
+      ? previous!.progress
+      : asNumber(raw.progress) ?? previous?.progress ?? null,
     generationPlanId:
       asString(raw.generation_plan_id ?? raw.generationPlanId) ||
       previous?.generationPlanId ||

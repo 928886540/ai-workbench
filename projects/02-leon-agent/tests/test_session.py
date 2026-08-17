@@ -34,6 +34,34 @@ def test_session_store_persists_messages_and_job_ids(tmp_path: Path) -> None:
     assert store.list_sessions()[0]["message_count"] == 2
 
 
+def test_session_store_persists_voice_attachments_across_reopen(tmp_path: Path) -> None:
+    db_path = tmp_path / "voice.db"
+    store = SessionStore(db_path)
+    session_id = store.create_session()
+
+    clip = store.add_voice_clip(
+        session_id,
+        text="这是持久化语音",
+        voice_id="voice-selected",
+        voice_name="测试音色",
+        audio=b"fake-mp3",
+    )
+
+    reopened = SessionStore(db_path)
+    assert reopened.load_voice_clips(session_id) == [
+        {
+            "clip_id": clip["clip_id"],
+            "text": "这是持久化语音",
+            "voice_id": "voice-selected",
+            "voice_name": "测试音色",
+            "bytes": len(b"fake-mp3"),
+            "created_at": clip["created_at"],
+        }
+    ]
+    assert reopened.get_voice_clip_audio(str(clip["clip_id"])) == b"fake-mp3"
+    assert "audio" not in reopened.load_voice_clips(session_id)[0]
+
+
 def test_session_store_persists_model_selection(tmp_path: Path) -> None:
     db_path = tmp_path / "leon.db"
     store = SessionStore(db_path)

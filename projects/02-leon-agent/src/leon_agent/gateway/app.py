@@ -21,7 +21,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Event, RLock
 from typing import Any
@@ -32,7 +32,14 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Uploa
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from workbench_core.agent import AgentCancelled, AgentResult, ToolStep, cancellation_scope
+from workbench_core.agent import (
+    AgentCancelled,
+    AgentResult,
+    ToolStep,
+    TraceContext,
+    TraceRecorder,
+    cancellation_scope,
+)
 from workbench_core.config import Settings, get_settings, reset_settings_cache
 from workbench_core.llm import LLMClient
 
@@ -56,6 +63,7 @@ from leon_agent.models import model_provider_scope
 from leon_agent.search import create_search_service
 from leon_agent.session import SessionStore
 from leon_agent.tools import create_leon_tools
+from leon_agent.trace_store import SQLiteTraceStore
 from leon_agent.voice_client import VoiceError, VolinkVoiceClient, prepare_speech_text
 
 logger = logging.getLogger(__name__)
@@ -82,6 +90,7 @@ class ActiveTurnState:
 _config: LeonSettings | None = None
 _store: SessionStore | None = None
 _memory_store: MemoryStore | None = None
+_trace_store: SQLiteTraceStore | None = None
 _bus_registry: EventBusRegistry = EventBusRegistry()
 _llm_snapshots: dict[str, SessionLLMSnapshot] = {}
 _active_turns: dict[str, ActiveTurnState] = {}
@@ -108,13 +117,15 @@ _WEB_DIR: Path = _resolve_web_dir()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _config, _store, _memory_store, _bus_registry, _llm_snapshots, _active_turns
+    global _config, _store, _memory_store, _trace_store
+    global _bus_registry, _llm_snapshots, _active_turns
     apply_config_file()
     reset_settings_cache()
     _config = LeonSettings()
     _config.read_additional_system_prompt()
     _store = SessionStore(_config.session_db)
     _memory_store = MemoryStore(_config.session_db)
+    _trace_store = SQLiteTraceStore(_config.session_db)
     _bus_registry = EventBusRegistry()
     _llm_snapshots = {}
     _active_turns = {}
@@ -124,6 +135,7 @@ async def lifespan(app: FastAPI):
         _config = None
         _store = None
         _memory_store = None
+        _trace_store = None
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +198,12 @@ def get_memory_store() -> MemoryStore:
     return _memory_store
 
 
+def get_trace_store() -> SQLiteTraceStore:
+    if _trace_store is None:  # pragma: no cover
+        raise RuntimeError("Trace store not initialised")
+    return _trace_store
+
+
 def get_config() -> LeonSettings:
     if _config is None:  # pragma: no cover
         raise RuntimeError("Config not initialised")
@@ -205,6 +223,7 @@ class CreateSessionResponse(BaseModel):
 class MessageRequest(BaseModel):
     content: str
     retry: bool = False
+    voice_id: str | None = Field(default=None, max_length=64)
 
 
 class MessageResponse(BaseModel):
@@ -614,6 +633,10 @@ async def get_session(session_id: str, store: SessionStore = Depends(get_store))
     return {
         "session_id": session_id,
         "messages": store.load_messages(session_id, limit=100, include_created_at=True),
+        "voice_clips": [
+            {**clip, "url": f"/api/voice/clips/{clip['clip_id']}"}
+            for clip in store.load_voice_clips(session_id, limit=100)
+        ],
         "active_turn": (
             {"retry": active_turn.retry_latest} if active_turn is not None else None
         ),
@@ -631,9 +654,54 @@ async def get_messages(session_id: str, store: SessionStore = Depends(get_store)
     active_turn = _active_turns.get(session_id)
     return {
         "messages": store.load_messages(session_id, limit=100, include_created_at=True),
+        "voice_clips": [
+            {**clip, "url": f"/api/voice/clips/{clip['clip_id']}"}
+            for clip in store.load_voice_clips(session_id, limit=100)
+        ],
         "active_turn": (
             {"retry": active_turn.retry_latest} if active_turn is not None else None
         ),
+    }
+
+
+@app.get(
+    "/api/agent/sessions/{session_id}/traces",
+    tags=["traces"],
+    dependencies=[Depends(verify_token)],
+)
+async def list_session_traces(
+    session_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    store: SessionStore = Depends(get_store),
+    trace_store: SQLiteTraceStore = Depends(get_trace_store),
+):
+    if not store.has_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "traces": [asdict(trace) for trace in trace_store.list_traces(session_id, limit=limit)]
+    }
+
+
+@app.get(
+    "/api/agent/sessions/{session_id}/traces/{trace_id}",
+    tags=["traces"],
+    dependencies=[Depends(verify_token)],
+)
+async def get_session_trace(
+    session_id: str,
+    trace_id: str,
+    store: SessionStore = Depends(get_store),
+    trace_store: SQLiteTraceStore = Depends(get_trace_store),
+):
+    if not store.has_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    loaded = trace_store.get_trace(session_id, trace_id)
+    if loaded is None:
+        raise HTTPException(status_code=404, detail="Trace not found")
+    trace, spans = loaded
+    return {
+        "trace": asdict(trace),
+        "spans": [asdict(span) for span in spans],
     }
 
 
@@ -794,6 +862,7 @@ async def send_message(
     body: MessageRequest,
     store: SessionStore = Depends(get_store),
     memory_store: MemoryStore = Depends(get_memory_store),
+    trace_store: SQLiteTraceStore = Depends(get_trace_store),
     config: LeonSettings = Depends(get_config),
 ):
     if not store.has_session(session_id):
@@ -808,41 +877,115 @@ async def send_message(
     loop = asyncio.get_running_loop()
     bus = _bus_registry.get_or_create(session_id, loop)
 
-    bus.publish(
-        LeonEvent(event="user.message", session_id=session_id, data={"content": body.content})
-    )
-
-    history = store.load_messages(session_id)
-    retry_latest = bool(
-        body.retry
-        and len(history) >= 2
-        and history[-1].get("role") == "assistant"
-        and history[-2].get("role") == "user"
-    )
-    active_turn.retry_latest = retry_latest
-    if retry_latest:
-        history = history[:-2]
-        store.replace_latest_user(session_id, body.content)
-    else:
-        store.add_message(session_id, "user", body.content)
-
-    def persist_assistant(content: str) -> None:
-        if retry_latest:
-            store.replace_latest_assistant(session_id, content)
-        else:
-            store.add_message(session_id, "assistant", content)
     stripped_content = body.content.strip()
     folded_content = stripped_content.casefold()
     is_nsfw_command = folded_content == "/nsfw" or folded_content.startswith("/nsfw ")
+    stored_history = store.load_messages(
+        session_id,
+        include_created_at=True,
+    )
+    retry_latest = bool(
+        body.retry
+        and len(stored_history) >= 2
+        and stored_history[-1].get("role") == "assistant"
+        and stored_history[-2].get("role") == "user"
+    )
+    retry_turn_id = (
+        stored_history[-2].get("turn_id")
+        if retry_latest and isinstance(stored_history[-2].get("turn_id"), str)
+        else None
+    )
+    trace_context = TraceContext.create(
+        session_id=session_id,
+        entrypoint="direct" if is_nsfw_command else "web",
+        turn_id=retry_turn_id,
+    )
+
+    def correlation_data(
+        *,
+        trace_id: str | None = None,
+        turn_id: str | None = None,
+        span_id: str | None = None,
+        parent_span_id: str | None = None,
+    ) -> dict[str, str]:
+        data = {
+            "trace_id": trace_id or trace_context.trace_id,
+            "turn_id": turn_id or trace_context.turn_id,
+        }
+        if span_id is not None:
+            data["span_id"] = span_id
+        if parent_span_id is not None:
+            data["parent_span_id"] = parent_span_id
+        return data
+
+    bus.publish(
+        LeonEvent(
+            event="user.message",
+            session_id=session_id,
+            data={"content": body.content, **correlation_data()},
+        )
+    )
+
+    history = [
+        {"role": item["role"], "content": item["content"]}
+        for item in stored_history
+    ]
+    active_turn.retry_latest = retry_latest
+    if retry_latest:
+        history = history[:-2]
+        store.replace_latest_user(
+            session_id,
+            body.content,
+            turn_id=trace_context.turn_id,
+        )
+    else:
+        store.add_message(
+            session_id,
+            "user",
+            body.content,
+            turn_id=trace_context.turn_id,
+        )
+
+    def persist_assistant(content: str) -> None:
+        if retry_latest:
+            store.replace_latest_assistant(
+                session_id,
+                content,
+                turn_id=trace_context.turn_id,
+            )
+        else:
+            store.add_message(
+                session_id,
+                "assistant",
+                content,
+                turn_id=trace_context.turn_id,
+            )
+
+    streamed_content_parts: list[str] = []
+
+    def persist_streamed_content() -> str:
+        content = "".join(streamed_content_parts).rstrip()
+        if content:
+            persist_assistant(content)
+        return content
 
     def on_event(event) -> None:  # noqa: ANN001
         kind = event.kind
         if kind == "assistant_delta" and event.content:
+            streamed_content_parts.append(event.content)
             bus.publish(
                 LeonEvent(
                     event="assistant.delta",
                     session_id=session_id,
-                    data={"delta": event.content},
+                    data={
+                        "delta": event.content,
+                        **correlation_data(
+                            trace_id=event.trace_id,
+                            turn_id=event.turn_id,
+                            span_id=event.span_id,
+                            parent_span_id=event.parent_span_id,
+                        ),
+                    },
                 )
             )
         elif kind == "tool_started":
@@ -850,7 +993,16 @@ async def send_message(
                 LeonEvent(
                     event="tool.started",
                     session_id=session_id,
-                    data={"tool_name": event.tool_name, "input": event.arguments or {}},
+                    data={
+                        "tool_name": event.tool_name,
+                        "input": event.arguments or {},
+                        **correlation_data(
+                            trace_id=event.trace_id,
+                            turn_id=event.turn_id,
+                            span_id=event.span_id,
+                            parent_span_id=event.parent_span_id,
+                        ),
+                    },
                 )
             )
         elif kind == "tool_finished" and event.result is not None:
@@ -864,11 +1016,26 @@ async def send_message(
                         "tool_name": event.tool_name,
                         "ok": ok,
                         "output": result,
+                        **correlation_data(
+                            trace_id=event.trace_id,
+                            turn_id=event.turn_id,
+                            span_id=event.span_id,
+                            parent_span_id=event.parent_span_id,
+                        ),
                     },
                 )
             )
 
-    bus.publish(LeonEvent(event="assistant.started", session_id=session_id, data={}))
+    bus.publish(
+        LeonEvent(
+            event="assistant.started",
+            session_id=session_id,
+            data=correlation_data(),
+        )
+    )
+    direct_trace = (
+        TraceRecorder(trace_context, trace_store) if is_nsfw_command else None
+    )
 
     try:
         image_client = _create_image_client(config)
@@ -952,22 +1119,26 @@ async def send_message(
             except ValueError as exc:
                 answer = f"{exc}\n\n{format_mode_catalog(modes)}"
                 persist_assistant(answer)
+                if direct_trace is not None:
+                    direct_trace.finish_trace(status="ok", outcome="direct_answer")
                 bus.publish(
                     LeonEvent(
                         event="assistant.completed",
                         session_id=session_id,
-                        data={"content": answer},
+                        data={"content": answer, **correlation_data()},
                     )
                 )
                 return MessageResponse(session_id=session_id, answer=answer, ok=False)
             if command is None:
                 answer = format_mode_catalog(modes)
                 persist_assistant(answer)
+                if direct_trace is not None:
+                    direct_trace.finish_trace(status="ok", outcome="direct_answer")
                 bus.publish(
                     LeonEvent(
                         event="assistant.completed",
                         session_id=session_id,
-                        data={"content": answer},
+                        data={"content": answer, **correlation_data()},
                     )
                 )
                 return MessageResponse(session_id=session_id, answer=answer, ok=True)
@@ -976,11 +1147,31 @@ async def send_message(
                 "workflow_ids": [command.workflow_id],
                 "batch_count": 1,
             }
+            direct_tool_span_id = (
+                direct_trace.start_span(
+                    "tool",
+                    "tool.call",
+                    tool_name="generate_images",
+                )
+                if direct_trace is not None
+                else None
+            )
             bus.publish(
                 LeonEvent(
                     event="tool.started",
                     session_id=session_id,
-                    data={"tool_name": "generate_images", "input": arguments},
+                    data={
+                        "tool_name": "generate_images",
+                        "input": arguments,
+                        **correlation_data(
+                            span_id=direct_tool_span_id,
+                            parent_span_id=(
+                                direct_trace.root_span_id
+                                if direct_trace is not None
+                                else None
+                            ),
+                        ),
+                    },
                 )
             )
             direct_tools = create_leon_tools(
@@ -999,6 +1190,12 @@ async def send_message(
 
             submission = await asyncio.to_thread(execute_direct_generation)
             ok = bool(submission.get("ok"))
+            if direct_trace is not None and direct_tool_span_id is not None:
+                direct_trace.finish_span(
+                    direct_tool_span_id,
+                    status="ok" if ok else "error",
+                    error_type=None if ok else "tool_error",
+                )
             bus.publish(
                 LeonEvent(
                     event="tool.finished",
@@ -1007,6 +1204,14 @@ async def send_message(
                         "tool_name": "generate_images",
                         "ok": ok,
                         "output": submission,
+                        **correlation_data(
+                            span_id=direct_tool_span_id,
+                            parent_span_id=(
+                                direct_trace.root_span_id
+                                if direct_trace is not None
+                                else None
+                            ),
+                        ),
                     },
                 )
             )
@@ -1018,15 +1223,27 @@ async def send_message(
             )
             result = AgentResult(
                 answer=answer,
-                steps=[ToolStep("generate_images", arguments, submission)],
+                steps=[
+                    ToolStep(
+                        "generate_images",
+                        arguments,
+                        submission,
+                        trace_id=trace_context.trace_id,
+                        span_id=direct_tool_span_id,
+                    )
+                ],
+                trace_id=trace_context.trace_id,
+                turn_id=trace_context.turn_id,
             )
             store.record_result(session_id, result)
             persist_assistant(answer)
+            if direct_trace is not None:
+                direct_trace.finish_trace(status="ok", outcome="direct_answer")
             bus.publish(
                 LeonEvent(
                     event="assistant.completed",
                     session_id=session_id,
-                    data={"content": answer},
+                    data={"content": answer, **correlation_data()},
                 )
             )
             return MessageResponse(session_id=session_id, answer=answer, ok=ok)
@@ -1051,7 +1268,13 @@ async def send_message(
             on_event=on_event,
             wait_for_image_completion=False,
             on_generation_submitted=on_generation_submitted,
-            speak_handler=_session_speak_factory(config, session_id, bus.publish),
+            speak_handler=_session_speak_factory(
+                config,
+                session_id,
+                bus.publish,
+                store=store,
+                preferred_voice_id=body.voice_id,
+            ),
             search_service=search_service,
             file_service=file_service,
             file_write_service=file_write_service,
@@ -1065,6 +1288,8 @@ async def send_message(
             body.content,
             history=history,
             cancel_event=cancel_event,
+            trace_context=trace_context,
+            trace_sink=trace_store,
         )
         elapsed_ms = int((time.monotonic() - started) * 1000)
 
@@ -1076,6 +1301,10 @@ async def send_message(
             "elapsed_ms": elapsed_ms,
             "model": result.model,
             "usage": result.usage,
+            **correlation_data(
+                trace_id=result.trace_id,
+                turn_id=result.turn_id,
+            ),
         }
         bus.publish(
             LeonEvent(
@@ -1089,19 +1318,45 @@ async def send_message(
     except asyncio.CancelledError:
         active_turn.cancel_event.set()
         active_turn.close_llm_client()
+        persist_streamed_content()
+        if direct_trace is not None:
+            direct_trace.finish_trace(status="cancelled", outcome="cancelled")
         raise
     except AgentCancelled as exc:
+        if direct_trace is not None:
+            direct_trace.finish_trace(status="cancelled", outcome="cancelled")
         partial_result = exc.partial_result
         if partial_result is not None and partial_result.steps:
             store.record_result(session_id, partial_result)
+        partial_content = persist_streamed_content()
         bus.publish(
-            LeonEvent(event="assistant.cancelled", session_id=session_id, data={})
+            LeonEvent(
+                event="assistant.cancelled",
+                session_id=session_id,
+                data={
+                    "content": partial_content,
+                    **correlation_data(
+                        trace_id=(partial_result.trace_id if partial_result else None),
+                        turn_id=(partial_result.turn_id if partial_result else None),
+                    ),
+                },
+            )
         )
         return MessageResponse(session_id=session_id, answer="已停止", ok=False)
     except Exception as exc:
+        if direct_trace is not None:
+            direct_trace.finish_trace(
+                status="error",
+                outcome="failed",
+                error_type=type(exc).__name__,
+            )
         err_msg = f"{type(exc).__name__}: {exc}"
         bus.publish(
-            LeonEvent(event="agent.error", session_id=session_id, data={"error": err_msg})
+            LeonEvent(
+                event="agent.error",
+                session_id=session_id,
+                data={"error": err_msg, **correlation_data()},
+            )
         )
         raise HTTPException(status_code=500, detail=err_msg) from exc
     finally:
@@ -1188,8 +1443,8 @@ class VoiceClipStore:
         self.ttl_seconds = ttl_seconds
         self._clips: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
 
-    def put(self, audio: bytes) -> str:
-        clip_id = uuid4().hex
+    def put(self, audio: bytes, *, clip_id: str | None = None) -> str:
+        clip_id = clip_id or uuid4().hex
         self._clips[clip_id] = (time.monotonic(), audio)
         while len(self._clips) > self.max_count:
             self._clips.popitem(last=False)
@@ -1373,14 +1628,21 @@ async def transcribe_audio(
 
 
 @app.get("/api/voice/clips/{clip_id}", tags=["voice"])
-async def get_voice_clip(clip_id: str, request: Request):
+async def get_voice_clip(
+    clip_id: str,
+    request: Request,
+    store: SessionStore = Depends(get_store),
+):
     # Audio elements cannot send an Authorization header, so this route accepts
     # the same ?token= query the SSE stream already relies on.
     if not _request_has_valid_token(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     audio = _voice_clips.get(clip_id)
     if audio is None:
-        raise HTTPException(status_code=404, detail="Clip expired or not found")
+        audio = store.get_voice_clip_audio(clip_id)
+        if audio is None:
+            raise HTTPException(status_code=404, detail="Clip not found")
+        _voice_clips.put(audio, clip_id=clip_id)
     return Response(
         content=audio,
         media_type="audio/mpeg",
@@ -1392,6 +1654,9 @@ def _session_speak_factory(
     config: LeonSettings,
     session_id: str,
     bus_publish: Callable[[LeonEvent], None],
+    *,
+    store: SessionStore,
+    preferred_voice_id: str | None = None,
 ) -> Callable[[str, str | None], dict[str, Any]] | None:
     """Build the speak_text handler, or None when voice is not configured."""
     if not config.voice_enabled:
@@ -1399,10 +1664,20 @@ def _session_speak_factory(
     client = _get_voice_client(config)
 
     def speak(text: str, voice_id: str | None = None) -> dict[str, Any]:
-        target = (voice_id or config.volink_default_voice_id).strip()
+        target = (
+            voice_id or preferred_voice_id or config.volink_default_voice_id
+        ).strip()
         audio, cache_hit = _synthesize_cached(client, text=text, voice_id=target)
-        clip_id = _voice_clips.put(audio)
         voice = client.resolve_voice(target) or {}
+        clip = store.add_voice_clip(
+            session_id,
+            text=text,
+            voice_id=target,
+            voice_name=str(voice.get("name") or ""),
+            audio=audio,
+        )
+        clip_id = str(clip["clip_id"])
+        _voice_clips.put(audio, clip_id=clip_id)
         bus_publish(
             LeonEvent(
                 event="voice.ready",
@@ -1410,10 +1685,7 @@ def _session_speak_factory(
                 data={
                     "clip_id": clip_id,
                     "url": f"/api/voice/clips/{clip_id}",
-                    "text": text,
-                    "voice_id": target,
-                    "voice_name": voice.get("name") or "",
-                    "bytes": len(audio),
+                    **clip,
                 },
             )
         )

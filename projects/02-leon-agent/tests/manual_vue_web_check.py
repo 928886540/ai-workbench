@@ -53,6 +53,7 @@ FAKE_BROWSER_SCRIPT = r"""
   // EventSource is intentionally deterministic. Tests inject protocol events
   // and connection failures without opening a real provider connection.
   const instances = [];
+  let eventSequence = 0;
   class FakeEventSource {
     static CONNECTING = 0;
     static OPEN = 1;
@@ -72,6 +73,7 @@ FAKE_BROWSER_SCRIPT = r"""
               session_id: "vue-e2e-session",
               data: {},
             }),
+            lastEventId: "",
           });
         }
       });
@@ -86,6 +88,7 @@ FAKE_BROWSER_SCRIPT = r"""
     value: FakeEventSource,
   });
   window.__leonEmit = (event, data = {}) => {
+    eventSequence += 1;
     const payload = JSON.stringify({
       event,
       session_id: "vue-e2e-session",
@@ -94,8 +97,12 @@ FAKE_BROWSER_SCRIPT = r"""
     });
     instances
       .filter((source) => source.readyState === 1)
-      .forEach((source) => source.onmessage?.({ data: payload }));
+      .forEach((source) => source.onmessage?.({
+        data: payload,
+        lastEventId: String(eventSequence),
+      }));
   };
+  window.__leonEventUrls = () => instances.map((source) => source.url);
   window.__leonFailEvents = (permanent = false) => {
     instances
       .filter((source) => source.readyState !== FakeEventSource.CLOSED)
@@ -177,6 +184,39 @@ class FakeGateway:
                 "revisions": [],
             },
         ]
+        self.image_tasks: list[dict[str, Any]] = [
+            {
+                "job_id": "fake-image-job",
+                "status": "completed",
+                "progress": 100,
+                "mode_name": "蒂法增强",
+                "source_text": "测试图片",
+                "image_url": "/api/fake-image",
+                "created_at": 1,
+            },
+            {
+                "job_id": "queued-job",
+                "status": "queued",
+                "progress": 0,
+                "mode_name": "写实基础",
+                "source_text": "再来一张",
+                "created_at": 2,
+            },
+        ]
+        self.image_records: list[dict[str, Any]] = [
+            {
+                "job_id": "fake-image-job",
+                "image_url": "/api/fake-image",
+                "source_text": "测试图片",
+                "created_at": 1,
+            },
+            {
+                "job_id": "fake-image-job-2",
+                "image_url": "/api/fake-image",
+                "source_text": "第二张测试图片",
+                "created_at": 2,
+            },
+        ]
 
     def append_session_message(self, role: str, content: str) -> dict[str, Any]:
         message: dict[str, Any] = {
@@ -235,39 +275,8 @@ class FakeGateway:
             _json_response(
                 route,
                 {
-                    "tasks": [
-                        {
-                            "job_id": "fake-image-job",
-                            "status": "completed",
-                            "progress": 100,
-                            "mode_name": "蒂法增强",
-                            "source_text": "测试图片",
-                            "image_url": "/api/fake-image",
-                            "created_at": 1,
-                        },
-                        {
-                            "job_id": "queued-job",
-                            "status": "queued",
-                            "progress": 0,
-                            "mode_name": "写实基础",
-                            "source_text": "再来一张",
-                            "created_at": 2,
-                        },
-                    ],
-                    "images": [
-                        {
-                            "job_id": "fake-image-job",
-                            "image_url": "/api/fake-image",
-                            "source_text": "测试图片",
-                            "created_at": 1,
-                        },
-                        {
-                            "job_id": "fake-image-job-2",
-                            "image_url": "/api/fake-image",
-                            "source_text": "第二张测试图片",
-                            "created_at": 2,
-                        },
-                    ],
+                    "tasks": self.image_tasks,
+                    "images": self.image_records,
                     "errors": {},
                 },
             )
@@ -742,10 +751,22 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             page.get_by_text("刷新完成后保留的回复").wait_for(state="visible")
             page.reload(wait_until="domcontentloaded")
             page.get_by_text("刷新完成后保留的回复").wait_for(state="visible")
+            latest_scroll = page.locator(".messages-panel").evaluate(
+                "panel => ({ top: panel.scrollTop, height: panel.clientHeight, "
+                "scrollHeight: panel.scrollHeight })"
+            )
             check(
                 "在途回复完成后再次刷新仍保留",
                 page.locator(".thinking").count() == 0
                 and page.get_by_role("button", name="发送消息").is_visible(),
+            )
+            check(
+                "刷新后聚焦最后一条消息",
+                latest_scroll["scrollHeight"]
+                - latest_scroll["top"]
+                - latest_scroll["height"]
+                <= 2,
+                repr(latest_scroll),
             )
 
             gateway.append_session_message("user", "需要直接停止的问题")
@@ -781,6 +802,21 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             )
             gateway.cancel_post_405 = False
 
+            rows_after_cancel = page.locator(".message-row").count()
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["assistant.delta", {"delta": "取消后的迟到片段"}],
+            )
+            page.wait_for_timeout(200)
+            check(
+                "中断后的迟到 delta 不创建第二气泡",
+                page.locator(".message-row").count() == rows_after_cancel
+                and page.get_by_text("取消后的迟到片段").count() == 0,
+            )
+            page.evaluate(
+                "([event, data]) => window.__leonEmit(event, data)",
+                ["assistant.started", {}],
+            )
             page.evaluate(
                 "([event, data]) => window.__leonEmit(event, data)",
                 [
@@ -1147,6 +1183,77 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 and all(value == "fixed" for value in control_positions),
                 repr(control_positions),
             )
+            counter_before_zoom = viewer.locator("figcaption").inner_text()
+            viewer.evaluate(
+                """element => {
+                  const fire = (type, id, x, y) => element.dispatchEvent(new PointerEvent(type, {
+                    bubbles: true, pointerId: id, pointerType: 'touch',
+                    clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+                  }));
+                  fire('pointerdown', 11, 140, 422);
+                  fire('pointerdown', 12, 250, 422);
+                  fire('pointermove', 11, 80, 422);
+                  fire('pointermove', 12, 310, 422);
+                }"""
+            )
+            zoom_metrics = viewer.locator(".image-viewer__figure img").evaluate(
+                """element => {
+                  const matrix = new DOMMatrix(getComputedStyle(element).transform);
+                  return { scale: matrix.a, x: matrix.e, y: matrix.f };
+                }"""
+            )
+            viewer.evaluate(
+                """element => {
+                  const fire = (type, id, x, y) => element.dispatchEvent(new PointerEvent(type, {
+                    bubbles: true, pointerId: id, pointerType: 'touch',
+                    clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+                  }));
+                  fire('pointerup', 12, 310, 422);
+                  fire('pointermove', 11, 130, 422);
+                }"""
+            )
+            pan_metrics = viewer.locator(".image-viewer__figure img").evaluate(
+                """element => {
+                  const matrix = new DOMMatrix(getComputedStyle(element).transform);
+                  return { scale: matrix.a, x: matrix.e, y: matrix.f };
+                }"""
+            )
+            viewer.evaluate(
+                """element => element.dispatchEvent(new PointerEvent('pointerup', {
+                  bubbles: true, pointerId: 11, pointerType: 'touch',
+                  clientX: 130, clientY: 422, button: 0, buttons: 0,
+                }))"""
+            )
+            check(
+                "全屏图片支持双指局部缩放和平移且不误切图",
+                zoom_metrics["scale"] > 1.8
+                and abs(pan_metrics["x"] - zoom_metrics["x"]) >= 40
+                and viewer.locator("figcaption").inner_text() == counter_before_zoom
+                and viewer.get_by_role("button", name="重置缩放").is_enabled(),
+                f"zoom={zoom_metrics}, pan={pan_metrics}",
+            )
+            viewer.locator(".image-viewer__figure img").dispatch_event(
+                "dblclick",
+                {"clientX": 195, "clientY": 422},
+            )
+            page.wait_for_function(
+                "element => element.dataset.zoomed === 'false'",
+                arg=viewer.element_handle(),
+            )
+            page.wait_for_timeout(180)
+            reset_metrics = viewer.locator(".image-viewer__figure img").evaluate(
+                """element => {
+                  const matrix = new DOMMatrix(getComputedStyle(element).transform);
+                  return { scale: matrix.a, x: matrix.e, y: matrix.f };
+                }"""
+            )
+            check(
+                "全屏图片双击可复位缩放",
+                abs(reset_metrics["scale"] - 1) < 0.01
+                and abs(reset_metrics["x"]) < 0.01
+                and abs(reset_metrics["y"]) < 0.01,
+                repr(reset_metrics),
+            )
             viewer.locator(".image-viewer__close").click()
             page.get_by_role("button", name="聊天").click()
 
@@ -1497,6 +1604,10 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 ".message-row[data-kind='image-result']", has_text="读取最近图片"
             ).last
             latest_images_row.wait_for(state="visible")
+            page.wait_for_function(
+                "element => element.naturalHeight > 0 && element.clientHeight > 0",
+                arg=latest_images_row.locator(".markdown-image").first.element_handle(),
+            )
             latest_image_count = latest_images_row.locator(".markdown-image").count()
             latest_image_sources = latest_images_row.locator(".markdown-image").evaluate_all(
                 "nodes => nodes.map(node => node.getAttribute('src'))"
@@ -1538,6 +1649,58 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
                 and latest_images_row.locator(".message-speak").count() == 0,
                 f"before={latest_tts_before}, after={latest_tts_after}",
             )
+
+            background_image_url = f"{base_url}/api/fake-image-2?filename=background-resume.png"
+            gateway.append_session_message(
+                "assistant",
+                f"![后台恢复图片]({background_image_url})",
+            )
+            gateway.image_tasks.append(
+                {
+                    "job_id": "background-image-job",
+                    "status": "completed",
+                    "progress": 100,
+                    "mode_name": "蒂法增强",
+                    "source_text": "后台回来可见",
+                    "image_url": background_image_url,
+                    "created_at": 3,
+                }
+            )
+            gateway.image_records.append(
+                {
+                    "job_id": "background-image-job",
+                    "image_url": background_image_url,
+                    "source_text": "后台回来可见",
+                    "created_at": 3,
+                }
+            )
+            event_sources_before_resume = page.evaluate("() => window.__leonEventUrls().length")
+            page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+            page.wait_for_function(
+                "count => window.__leonEventUrls().length > count",
+                arg=event_sources_before_resume,
+            )
+            resumed_image = page.locator(
+                f'img.markdown-image[src="{background_image_url}"]'
+            )
+            resumed_image.wait_for(state="visible")
+            resumed_event_url = page.evaluate("() => window.__leonEventUrls().at(-1)")
+            check(
+                "页面恢复可补拉聊天图片且 SSE 从游标重连",
+                resumed_image.get_attribute("src") == background_image_url
+                and "last_event_id=" in resumed_event_url,
+                repr(resumed_event_url),
+            )
+            page.get_by_role("button", name="任务").click()
+            resumed_task = page.locator(".task-card", has_text="后台回来可见")
+            resumed_task.wait_for(state="visible")
+            check(
+                "页面恢复可补拉生图任务状态且无需刷新",
+                "已完成" in resumed_task.inner_text()
+                and resumed_task.locator(".task-card__thumbnail").is_visible(),
+                resumed_task.inner_text().replace("\n", " "),
+            )
+            page.get_by_role("button", name="聊天").click()
             if args.screenshot:
                 page.screenshot(path=f"{args.screenshot}.latest.png", full_page=True)
 

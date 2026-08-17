@@ -221,3 +221,19 @@ def test_direct_registry_does_not_advertise_planning_tools() -> None:
 
     assert {"plan_create", "plan_update", "plan_get"}.isdisjoint(direct_tools.names)
     assert "Planning tools are enabled" in build_system_prompt(planning_enabled=True)
+
+
+def test_planning_tools_use_dedicated_trace_span_kind() -> None:
+    tools = create_planning_tools(PlanningService())
+
+    assert {tool.name: tool.span_kind for tool in tools} == {
+        "plan_create": "planning",
+        "plan_update": "planning",
+        "plan_get": "planning",
+    }
+    assert AgentTool(
+        name="probe",
+        description="A normal domain tool.",
+        parameters={"type": "object", "properties": {}},
+        handler=lambda: {"ok": True},
+    ).span_kind == "tool"

@@ -11,6 +11,8 @@ from uuid import uuid4
 
 from workbench_core.agent import AgentResult, ToolStep
 
+from leon_agent.trace_store import initialize_trace_schema
+
 
 class SessionStore:
     def __init__(self, path: str | Path) -> None:
@@ -39,6 +41,7 @@ class SessionStore:
                     session_id TEXT NOT NULL,
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
+                    turn_id TEXT,
                     created_at INTEGER NOT NULL,
                     FOREIGN KEY (session_id) REFERENCES sessions(id)
                 );
@@ -56,6 +59,8 @@ class SessionStore:
                     arguments_json TEXT NOT NULL,
                     result_json TEXT NOT NULL,
                     generation_plan_id TEXT,
+                    trace_id TEXT,
+                    span_id TEXT,
                     created_at INTEGER NOT NULL,
                     FOREIGN KEY (session_id) REFERENCES sessions(id)
                 );
@@ -70,8 +75,21 @@ class SessionStore:
                     UNIQUE (session_id, job_id),
                     FOREIGN KEY (tool_call_id) REFERENCES tool_calls(id)
                 );
+                CREATE TABLE IF NOT EXISTS voice_clips (
+                    clip_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    voice_id TEXT NOT NULL,
+                    voice_name TEXT NOT NULL,
+                    audio BLOB NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_voice_clips_session_created
+                    ON voice_clips(session_id, created_at);
                 """
             )
+            initialize_trace_schema(connection)
             session_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(sessions)")
             }
@@ -81,6 +99,18 @@ class SessionStore:
                 connection.execute("ALTER TABLE sessions ADD COLUMN llm_model TEXT")
             if "llm_base_url" not in session_columns:
                 connection.execute("ALTER TABLE sessions ADD COLUMN llm_base_url TEXT")
+            message_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(messages)")
+            }
+            if "turn_id" not in message_columns:
+                connection.execute("ALTER TABLE messages ADD COLUMN turn_id TEXT")
+            tool_call_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(tool_calls)")
+            }
+            if "trace_id" not in tool_call_columns:
+                connection.execute("ALTER TABLE tool_calls ADD COLUMN trace_id TEXT")
+            if "span_id" not in tool_call_columns:
+                connection.execute("ALTER TABLE tool_calls ADD COLUMN span_id TEXT")
 
     def create_session(self) -> str:
         session_id = uuid4().hex
@@ -185,19 +215,111 @@ class SessionStore:
         if cursor.rowcount == 0:
             raise ValueError(f"Session not found: {session_id}")
 
-    def add_message(self, session_id: str, role: str, content: str) -> None:
+    def add_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        *,
+        turn_id: str | None = None,
+    ) -> None:
         now = int(time.time() * 1000)
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-                (session_id, role, content, now),
+                """
+                INSERT INTO messages (session_id, role, content, turn_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (session_id, role, content, turn_id, now),
             )
             connection.execute(
                 "UPDATE sessions SET updated_at = ? WHERE id = ?",
                 (now, session_id),
             )
 
-    def replace_latest_assistant(self, session_id: str, content: str) -> None:
+    def add_voice_clip(
+        self,
+        session_id: str,
+        *,
+        text: str,
+        voice_id: str,
+        voice_name: str,
+        audio: bytes,
+    ) -> dict[str, Any]:
+        """Persist a voice attachment without adding duplicate Agent context."""
+        if not audio:
+            raise ValueError("voice clip audio must not be empty")
+        clip_id = uuid4().hex
+        now = int(time.time() * 1000)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO voice_clips
+                    (clip_id, session_id, text, voice_id, voice_name, audio, created_at)
+                SELECT ?, id, ?, ?, ?, ?, ? FROM sessions WHERE id = ?
+                """,
+                (clip_id, text, voice_id, voice_name, audio, now, session_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Session not found: {session_id}")
+            connection.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+        return {
+            "clip_id": clip_id,
+            "text": text,
+            "voice_id": voice_id,
+            "voice_name": voice_name,
+            "bytes": len(audio),
+            "created_at": now,
+        }
+
+    def load_voice_clips(
+        self,
+        session_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Load attachment metadata only; audio remains behind the clip route."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT clip_id, text, voice_id, voice_name, bytes, created_at
+                FROM (
+                    SELECT
+                        clip_id,
+                        text,
+                        voice_id,
+                        voice_name,
+                        length(audio) AS bytes,
+                        created_at
+                    FROM voice_clips
+                    WHERE session_id = ?
+                    ORDER BY created_at DESC, rowid DESC
+                    LIMIT ?
+                )
+                ORDER BY created_at, clip_id
+                """,
+                (session_id, max(1, limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_voice_clip_audio(self, clip_id: str) -> bytes | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT audio FROM voice_clips WHERE clip_id = ?",
+                (clip_id,),
+            ).fetchone()
+        return bytes(row["audio"]) if row is not None else None
+
+    def replace_latest_assistant(
+        self,
+        session_id: str,
+        content: str,
+        *,
+        turn_id: str | None = None,
+    ) -> None:
         """Replace the latest assistant answer while preserving its turn position."""
         now = int(time.time() * 1000)
         with self._connect() as connection:
@@ -212,10 +334,10 @@ class SessionStore:
             if row is None:
                 connection.execute(
                     """
-                    INSERT INTO messages (session_id, role, content, created_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO messages (session_id, role, content, turn_id, created_at)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (session_id, "assistant", content, now),
+                    (session_id, "assistant", content, turn_id, now),
                 )
             else:
                 connection.execute(
@@ -226,15 +348,25 @@ class SessionStore:
                     (int(row["id"]),),
                 )
                 connection.execute(
-                    "UPDATE messages SET content = ?, created_at = ? WHERE id = ?",
-                    (content, now, int(row["id"])),
+                    """
+                    UPDATE messages
+                    SET content = ?, turn_id = COALESCE(?, turn_id), created_at = ?
+                    WHERE id = ?
+                    """,
+                    (content, turn_id, now, int(row["id"])),
                 )
             connection.execute(
                 "UPDATE sessions SET updated_at = ? WHERE id = ?",
                 (now, session_id),
             )
 
-    def replace_latest_user(self, session_id: str, content: str) -> None:
+    def replace_latest_user(
+        self,
+        session_id: str,
+        content: str,
+        *,
+        turn_id: str | None = None,
+    ) -> None:
         """Update the latest user prompt when retrying an edited current turn."""
         now = int(time.time() * 1000)
         with self._connect() as connection:
@@ -249,15 +381,19 @@ class SessionStore:
             if row is None:
                 connection.execute(
                     """
-                    INSERT INTO messages (session_id, role, content, created_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO messages (session_id, role, content, turn_id, created_at)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (session_id, "user", content, now),
+                    (session_id, "user", content, turn_id, now),
                 )
             else:
                 connection.execute(
-                    "UPDATE messages SET content = ?, created_at = ? WHERE id = ?",
-                    (content, now, int(row["id"])),
+                    """
+                    UPDATE messages
+                    SET content = ?, turn_id = COALESCE(?, turn_id), created_at = ?
+                    WHERE id = ?
+                    """,
+                    (content, turn_id, now, int(row["id"])),
                 )
             connection.execute(
                 "UPDATE sessions SET updated_at = ? WHERE id = ?",
@@ -274,9 +410,9 @@ class SessionStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, role, content, created_at
+                SELECT id, role, content, turn_id, created_at
                 FROM (
-                    SELECT id, role, content, created_at
+                    SELECT id, role, content, turn_id, created_at
                     FROM messages
                     WHERE session_id = ? AND role IN ('user', 'assistant')
                     ORDER BY id DESC
@@ -334,6 +470,9 @@ class SessionStore:
             if include_created_at and row["created_at"] is not None:
                 message["id"] = int(row["id"])
                 message["created_at"] = int(row["created_at"])
+                message["turn_id"] = (
+                    str(row["turn_id"]) if row["turn_id"] is not None else None
+                )
                 message["revisions"] = revisions_by_message.get(int(row["id"]), [])
             messages.append(message)
             index += 1
@@ -341,17 +480,28 @@ class SessionStore:
 
     def record_result(self, session_id: str, result: AgentResult) -> None:
         for step in result.steps:
-            self._record_tool_step(session_id, step)
+            self._record_tool_step(
+                session_id,
+                step,
+                fallback_trace_id=result.trace_id,
+            )
 
-    def _record_tool_step(self, session_id: str, step: ToolStep) -> None:
+    def _record_tool_step(
+        self,
+        session_id: str,
+        step: ToolStep,
+        *,
+        fallback_trace_id: str | None = None,
+    ) -> None:
         now = int(time.time() * 1000)
         plan_id = step.result.get("generation_plan_id")
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO tool_calls
-                    (session_id, name, arguments_json, result_json, generation_plan_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (session_id, name, arguments_json, result_json, generation_plan_id,
+                     trace_id, span_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -359,6 +509,8 @@ class SessionStore:
                     json.dumps(step.arguments, ensure_ascii=False),
                     json.dumps(step.result, ensure_ascii=False),
                     plan_id,
+                    step.trace_id or fallback_trace_id,
+                    step.span_id,
                     now,
                 ),
             )

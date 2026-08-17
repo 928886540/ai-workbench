@@ -26,6 +26,8 @@ export interface VoiceClip {
   voiceId: string | null;
   voiceName: string;
   bytes: number;
+  /** Only a newly delivered SSE clip should attempt autoplay. */
+  autoplay: boolean;
 }
 
 export interface MessageRevision {

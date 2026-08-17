@@ -28,6 +28,7 @@ def test_message_store_models_and_orders_voice_clips() -> None:
         "export function insertMessageBefore(",
         "export function hasVoiceClip(clipId: string): boolean",
         "message.audio?.clipId === clipId",
+        "autoplay: boolean;",
     ):
         assert fragment in messages, fragment
 
@@ -36,20 +37,27 @@ def test_chat_handles_voice_ready_and_delta_without_provider_calls() -> None:
     chat = _read("web/src/views/ChatView.vue")
 
     for fragment in (
-        "function parseVoiceClip(data: Record<string, unknown>): VoiceClip | null",
+        "function parseVoiceClip(\n  data: Record<string, unknown>,\n  autoplay = true,",
         'const clipId = asString(data.clip_id).trim();',
         "buildVoiceClipUrl(rawUrl, api.token)",
         "if (!url) return null;",
         "function handleVoiceReady(data: Record<string, unknown>): void",
         "if (!clip || hasVoiceClip(clip.clipId)) return;",
         "insertMessageBefore(message, pending?.id || null);",
+        "appendHistory(session.messages, session.voice_clips || [])",
+        "parseVoiceClip(item as unknown as Record<string, unknown>, false)",
         'case "voice.ready":',
         'case "assistant.delta":',
         'const delta = asString(data.delta);',
         'message.status = "streaming";',
-        "message.text += delta;",
-        'finishAssistant(\n        asString(data.content) || pendingAssistant()?.text || "",\n'
-        '        "done",\n        parseCompletedMeta(data),\n      );',
+        "enqueueAssistantDelta(message, delta);",
+        "assistantStreamQueue.push(...Array.from(delta));",
+        "message.text += characters.join(\"\");",
+        (
+            'queueAssistantCompletion(\n        asString(data.content) || '
+            'pendingAssistant()?.text || "",\n        "done",\n'
+            "        parseCompletedMeta(data),\n      );"
+        ),
     ):
         assert fragment in chat, fragment
 
@@ -101,6 +109,7 @@ def test_voice_bubble_owns_visible_custom_player_without_message_actions() -> No
         'class="voice-bubble__audio"',
         '@canplay="tryAutoplayVoice"',
         "await audio.play();",
+        "if (!voiceClip.value?.autoplay) return;",
         'class="voice-bubble__text"',
         "!isVoiceMessage &&",
     ):

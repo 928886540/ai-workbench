@@ -13,6 +13,7 @@ import {
   getSpeechError,
   getSpeechStatus,
   speakMessage,
+  setVoiceMediaSessionMetadata,
   stopSpeech,
   unlockAudio,
 } from "../utils/speech";
@@ -142,6 +143,10 @@ async function playVoiceBubble(autoplay = false): Promise<void> {
   const audio = voiceAudio.value;
   if (!audio) return;
   stopSpeech();
+  setVoiceMediaSessionMetadata(
+    voiceClip.value?.text || displayedMessage.value.text,
+    voiceClip.value?.voiceName || "Leon Agent",
+  );
   window.dispatchEvent(new CustomEvent("leon:voice-play", { detail: props.message.id }));
   voiceLoading.value = true;
   try {
@@ -180,6 +185,7 @@ function seekVoice(event: Event): void {
 }
 
 function tryAutoplayVoice(): void {
+  if (!voiceClip.value?.autoplay) return;
   const clipId = voiceClip.value?.clipId || "";
   if (!clipId || autoplayClipId === clipId) return;
   autoplayClipId = clipId;
