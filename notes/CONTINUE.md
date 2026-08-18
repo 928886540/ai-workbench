@@ -19,8 +19,13 @@
 - `09-langgraph-leon` 已完成第一条共享契约：把原 `AgentTool + ToolRegistry` 薄适配给 LangChain Tool，
   通过 `ToolNode + tools_condition` 实际执行原 Leon `read_file`，节点流为
   `START -> agent -> tools -> agent -> END`；未复制 schema/handler，测试和 demo 均不访问真实 provider。
-- Framework Edition 当前只用 `InMemorySaver` 证明 checkpoint 语义，尚不支持跨进程 `/resume`；下一步是
-  真实 ChatModel + File/Web Search 的最小 CLI，之后才做 Planning、Memory 和持久 checkpoint。
+- Framework Edition 的 Milestone 1、Planning 和 Memory 复用已完成：从
+  `%USERPROFILE%\\.leon\\config.toml` 构造 LangChain `ChatOpenAI`，注册 File/Web 与原 Leon 三个 Memory
+  tools，并提供简洁交互/`--once` CLI；`--plan` 会增加 `plan` node 和 2～4 步 Graph State，默认关闭以免
+  每轮多打一请求。Memory 默认开启，可用 `--no-memory` 关闭；原 consent、单轮写额度和敏感值拒绝仍生效。
+- `InMemorySaver` 仍只在进程内有效，尚不支持跨进程 `/resume`。自动 Memory context 不进入 MessagesState，
+  但显式 Memory/File tool result 会进入 ToolMessage；`--interrupt-demo` 已证明 ToolNode 前暂停、同 thread
+  恢复后工具只执行一次。下一步先设计 checkpoint 脱敏/裁剪，再做 SQLite 持久化与 `/resume <id>`。
 - RAG 仍是独立 `03-rag-lab`，尚不存在可供两套 Runtime 共享的 Leon RAG Tool；接入前先定义唯一共享 Tool，
   不把计划写成完成事实。09 不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
 

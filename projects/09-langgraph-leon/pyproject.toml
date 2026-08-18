@@ -6,6 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
   "leon-agent",
   "langchain-core>=1,<2",
+  "langchain-openai>=1,<2",
   "langgraph>=1,<2",
 ]
 

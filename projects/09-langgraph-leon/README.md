@@ -123,24 +123,84 @@ uv run leon-graph --demo
 
 ### Milestone 1：最小 `leon-graph` CLI
 
-- [ ] 复用 Leon 私有配置构造 LangChain ChatModel。
-- [ ] 只接 File Search/Read 和 Web Search。
-- [ ] 输出简洁 node 流转，不做 TUI。
+- [x] 复用 Leon 私有配置构造 LangChain `ChatOpenAI`。
+- [x] 只接 File Search/Read 和 Web Search。
+- [x] 输出简洁 node 流转，不做 TUI。
 
-验证：`uv run leon-graph` 能完成一次真实模型工具调用；自动测试仍 provider-free。
+组合层调用原 Leon 的 `create_file_tools` 和 `create_web_search_tool`，只筛选
+`file_search`、`read_file`、`web_search` 三个工具；没有复制 schema、handler 或搜索鉴权。
+原 Leon 的 `create_leon_tools` 也改为调用同一个 `create_web_search_tool`，两套 Runtime 的业务契约
+仍只有一个事实来源。
+
+真实入口（需要先完成一次 `leon-config init`）是：
+
+```powershell
+# 交互模式
+uv run leon-graph
+
+# 单轮模式，便于面试演示
+uv run leon-graph --once "搜索 LangGraph 当前稳定版本，并给出官方链接"
+```
+
+入口只读取 `%USERPROFILE%\.leon\config.toml`；其中没有配置 `LEON_FILE_ROOTS` 或 Tavily key 时，
+对应工具不会注册，仍可进行纯聊天。自动测试和 `--demo` 不访问真实模型、文件外部目录或 Tavily。
+当前 checkpoint 仍是进程内 `InMemorySaver`，`--thread-id` 只在本次进程有效，不代表跨进程 `/resume`。
 
 ### Milestone 2：Planning + Memory
 
-- [ ] 用 Graph State 增加 2～4 步简单计划。
-- [ ] 复用 `MemoryService` 与 memory tools，不新建存储。
-- [ ] 保留显式 consent 和敏感值拒绝策略。
+- [x] 用 Graph State 增加 2～4 步简单计划。
+- [x] 复用 `MemoryService` 与 memory tools，不新建存储。
+- [x] 保留显式 consent 和敏感值拒绝策略。
+
+Planning 是显式可选能力：
+
+```powershell
+uv run leon-graph --plan
+uv run leon-graph --plan --once "分析当前仓库的 Agent 架构"
+```
+
+开启后节点流变为 `START -> plan -> agent -> tools -> agent -> END`。结构化 planner 只返回
+2～4 个有序步骤，计划保存在 Graph State/checkpoint 中，并作为临时 system context 提供给 agent，
+不会复制成 Leon `PlanningService` 或第二套业务执行器。
+
+默认不开启 Planning，因为 `--plan` 每个用户 turn 会额外产生一次模型请求。`--demo` 使用 fake planner
+展示相同节点与 state 变化，不访问真实 provider。当前只保存计划，不做 DAG、并行步骤、自动重试或
+跨进程任务恢复。
+
+Memory 默认开启，使用 Leon 同一个 `LEON_SESSION_DB`、固定 local owner、`MemoryService` 和
+`memory_get / memory_upsert / memory_delete` 工具；可用 `--no-memory` 显式关闭：
+
+```powershell
+uv run leon-graph --no-memory
+```
+
+CLI 把当前用户原话绑定到原 Leon 的 `memory_turn`，所以模型不能伪造 consent 参数；没有明确保存/删除
+指令时写操作 fail closed，每轮最多一次写尝试，敏感 key/value 继续由原策略拒绝。`build_context()`
+返回的长期记忆只作为临时 system context 传给 model，不写入 `MessagesState`。
+
+当前 `InMemorySaver` 仍会在进程内保存正常对话和 ToolMessage；显式 `memory_get`、文件读取等原始工具
+结果也可能存在于这些消息中。因此 Milestone 3 换 SQLite checkpointer 前，必须先定义 checkpoint
+脱敏/裁剪策略，不能直接把当前 message state 落盘。
 
 ### Milestone 3：Checkpoint / Resume
 
-- [ ] 第一棒用 `InMemorySaver` 学 checkpoint 语义。
+- [x] 第一棒用 `InMemorySaver` 学 checkpoint 语义。
 - [ ] CLI 需要跨进程恢复时再换 SQLite checkpointer。
 - [ ] 用稳定 `thread_id` 实现 `/resume <id>`。
 - [ ] 在模拟高风险动作前验证 interrupt/resume，不真的执行系统操作。
+
+当前 provider-free 暂停/恢复演示：
+
+```powershell
+uv run leon-graph --interrupt-demo
+```
+
+Graph 使用静态 `interrupt_before=["tools"]`，第一次运行在 ToolNode 前停住，此时 handler 尚未执行；
+随后用同一 `thread_id` 和 `graph.stream(None, config)` 从 checkpoint 恢复，工具只执行一次，再回到
+agent 形成最终回答。测试同时断言暂停前调用数为 0、恢复后为 1。
+
+这只证明进程内 checkpoint/interrupt 语义，不宣称退出后可恢复。SQLite 版必须先解决上一节的原始
+ToolMessage 持久化边界，再实现 `/resume <id>`。
 
 ### Milestone 4：RAG / Image 与对照报告
 

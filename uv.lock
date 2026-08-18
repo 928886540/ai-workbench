@@ -984,6 +984,7 @@ version = "0.1.0"
 source = { editable = "projects/09-langgraph-leon" }
 dependencies = [
     { name = "langchain-core" },
+    { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "leon-agent" },
 ]
@@ -991,6 +992,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "langchain-core", specifier = ">=1,<2" },
+    { name = "langchain-openai", specifier = ">=1,<2" },
     { name = "langgraph", specifier = ">=1,<2" },
     { name = "leon-agent", editable = "projects/02-leon-agent" },
 ]
