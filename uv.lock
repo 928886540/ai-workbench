@@ -812,6 +812,20 @@ wheels = [
 ]
 
 [[package]]
+name = "langchain"
+version = "1.3.15"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "langchain-core" },
+    { name = "langgraph" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6a/1c/b84579174a8e82ed79f4c3e0cd5a7f2323facc5ccd4d1b8390e7d175b663/langchain-1.3.15.tar.gz", hash = "sha256:ab4b775b9703f7e37babe0b325dbbaef25573bda60ecf79f7850bc875f252795", size = 665047, upload-time = "2026-08-11T19:10:52.455Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/09/8d/ae721f4d68ff79a17110cabc9cb39b4568b0e3f1fe0a379b926c3f81d175/langchain-1.3.15-py3-none-any.whl", hash = "sha256:c0d2d0d51ed7da249e8ab7487173872059a9dd46fb071d905957485b7334f987", size = 147001, upload-time = "2026-08-11T19:10:50.846Z" },
+]
+
+[[package]]
 name = "langchain-core"
 version = "1.5.6"
 source = { registry = "https://pypi.org/simple" }
@@ -837,15 +851,19 @@ name = "langchain-lab"
 version = "0.1.0"
 source = { editable = "projects/08-langchain-lab" }
 dependencies = [
+    { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
+    { name = "rag-lab" },
     { name = "workbench-core" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "langchain", specifier = ">=1,<2" },
     { name = "langchain-core", specifier = ">=1,<2" },
     { name = "langchain-openai", specifier = ">=1,<2" },
+    { name = "rag-lab", editable = "projects/03-rag-lab" },
     { name = "workbench-core", editable = "packages/workbench_core" },
 ]
 

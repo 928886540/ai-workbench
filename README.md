@@ -127,7 +127,7 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 - [ ] `05-workflow`：工作流自动化
 - [ ] `06-multi-agent`：多 Agent 协作
 - [x] `07-coding-agent`：面试用 Vertical Agent Demo 基础闭环
-- [ ] `08-langchain-lab`：Model / Prompt / Structured Output 已完成；Tool / Retriever / Agent 待体验
+- [x] `08-langchain-lab`：Model / Prompt / Structured Output / Tool / Retriever / 高层 Agent 组件体验完成
 - [ ] `09-langgraph-leon`：共享 Tool、CLI、Planning、Memory、加密 SQLite、跨进程恢复与 RAG 双 Runtime observation 对照已完成；综合对照报告待收口
 
 ## 协作方式（和 AI 一起开发时）

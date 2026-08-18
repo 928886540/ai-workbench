@@ -14,8 +14,9 @@
 
 - **框架对照新主线已启动**：保留 `02-leon-agent` Self-built Runtime；新增小型
   `08-langchain-lab` 和独立 `09-langgraph-leon`（对外名 Leon Agent Framework Edition）。
-- `08-langchain-lab` 已完成 Model / Prompt / Pydantic Structured Output 的 provider-free demo；
-  Tool / Retriever / 高层 Agent 仍按一次一个组件推进。
+- `08-langchain-lab` 已完成 Model / Prompt / Pydantic Structured Output、`@tool`、RAG Retriever adapter
+  和一次高层 `create_agent()` 的 provider-free 体验。LangChain 1.x 的 `create_agent()` 内部基于
+  LangGraph，但 08 没有直接编写 State/Node/Checkpoint，也没有扩成第二个 Agent 产品。
 - `09-langgraph-leon` 已完成第一条共享契约：把原 `AgentTool + ToolRegistry` 薄适配给 LangChain Tool，
   通过 `ToolNode + tools_condition` 实际执行原 Leon `read_file`，节点流为
   `START -> agent -> tools -> agent -> END`；未复制 schema/handler，测试和 demo 均不访问真实 provider。
@@ -27,14 +28,16 @@
   调用方 metadata 被隔离，旧明文/mixed row、错 key、缺 key均 fail closed；provider-free 测试已证明
   File/Memory/User/AI 原文不出现在 DB/WAL，重开后仍能完整解密状态。live `leon-graph` 默认使用
   加密 SQLite，稳定 opaque `thread_id` 支持 `--resume <id>` 和交互 `/resume <id>`；跨进程 pending
-  恢复只允许 read-only tools，写类 Memory 工具 fail closed。下一步进入 RAG 共享 Tool / 对照报告，或
-  根据面试需要补一条受限高风险 interrupt 说明，不扩 Leon 产品功能。
+  恢复只允许 read-only tools，写类 Memory 工具 fail closed。RAG 共享 Tool 与双 Runtime raw
+  observation 对照也已完成；后续只收口综合对照报告，不扩 Leon 产品功能。
 - `03-rag-lab` 已定义唯一只读 `rag_search` 业务 Tool：复用 `VectorRetriever`，限制 query/top_k、
   安全 citation 和 5500 字符总 observation，并对 query/正文做 audit 脱敏。下一步用同一个 Tool 实例
   分别经过 Self-built `AgentRuntime` 与 LangGraph `ToolNode` 的结果一致性证明已经通过；两边 raw
   observation 相等且 handler 各执行一次。尚未注入原 Leon 或 09 live CLI，不能写成 live 已启用。
-  下一步收口 08 的 Tool / Retriever / 高层 Agent，再写综合对照报告；09 不扩 Web、TTS/ASR、Gallery、
-  SSE、MCP、Coding Agent 或 Multi-Agent。
+  08 的 Tool / Retriever / 高层 Agent 已收口；下一步写综合对照报告并转回面试表达，不扩 Web、
+  TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
+- 当前 provider-free Python 基线：全仓 `688 passed`；Ruff、compileall、`uv lock --check` 和
+  `git diff --check` 全绿，仅保留既有 Starlette/httpx 弃用警告，未请求真实模型或搜索服务。
 
 - 当前集成分支：`main`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
   页面恢复、图片任务补拉、全屏图片缩放平移，以及按 `assistant.delta` 分段合成和按 revision 重试的流式 TTS

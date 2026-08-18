@@ -25,14 +25,37 @@ Leon 已经证明了自研 Agent Runtime、Tool Calling、Planning、Memory、Ev
 - [x] Model：用 `ChatOpenAI` 接共享实验的 OpenAI-compatible provider
 - [x] Prompt：用 `ChatPromptTemplate` 组织 system/human 消息
 - [x] Structured Output：用 Pydantic 固定输出契约
-- [ ] Tool：理解 `@tool` / `StructuredTool` 和参数 schema
-- [ ] Retriever：把 `03-rag-lab` 的检索接口适配为 LangChain Retriever
-- [ ] Agent：只体验一次高层 Agent API，不扩成产品
+- [x] Tool：用 `@tool` 生成 `StructuredTool` 和 Pydantic 参数 schema
+- [x] Retriever：把 `03-rag-lab` 的 `RetrievalHit` 薄适配成 LangChain `Document`
+- [x] Agent：用当前 `create_agent()` 体验一次 tool call → observation → final answer
+
+## 完成后的最小数据流
+
+```text
+@tool + Pydantic input
+        -> StructuredTool
+
+03 VectorRetriever
+        -> RetrievalHit
+        -> VectorRetrieverAdapter
+        -> LangChain Document
+
+create_agent(fake model, lookup_runbook)
+        -> AIMessage(tool_call)
+        -> ToolMessage(observation)
+        -> AIMessage(final answer)
+```
+
+- `tool.py`：静态本地 runbook，只展示 schema 与 handler 的职责分离。
+- `retriever.py`：不做 chunk/embedding/search，只映射正文与 citation、score、rank、untrusted metadata。
+- `agent.py`：只调用一次高层 `create_agent()`，不增加会话、Memory、Planning 或恢复能力。
 
 ## 边界
 
 - 不依赖、不修改 Leon Agent。
-- 不引入 LangGraph；状态、节点、边、checkpoint 在 09 学。
+- 08 不直接编写 LangGraph State、Node、Edge 或 Checkpoint；状态编排仍在 09 学。
+- 当前 LangChain 1.x 的 `create_agent()` 内部会返回基于 LangGraph 的 compiled graph，这是框架实现事实，
+  但不作为 08 的学习与扩展边界。
 - 不做 Web、会话库、长期 Memory、Trace 平台或多 Agent。
 - 自动测试只用 fake model；真实模型必须显式运行。
 - 不复制 `03-rag-lab` 的 chunk / embedding / retrieval 实现，只写薄适配。
@@ -46,6 +69,12 @@ uv run langchain-lab --demo
 ```
 
 `--live` 只在显式选择时读取共享实验 provider；自动测试不会访问真实模型。
+这个 CLI 仍只演示 Model / Prompt / Structured Output；Tool、Retriever 和高层 Agent 使用各自的
+provider-free 测试，避免把组件实验重新包装成一个产品入口：
+
+```powershell
+uv run pytest -q projects/08-langchain-lab/tests
+```
 
 完成后需要能用自己的话解释：
 

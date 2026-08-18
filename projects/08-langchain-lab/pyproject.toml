@@ -5,6 +5,8 @@ description = "Small, interview-oriented LangChain component lab."
 requires-python = ">=3.10"
 dependencies = [
   "workbench-core",
+  "rag-lab",
+  "langchain>=1,<2",
   "langchain-core>=1,<2",
   "langchain-openai>=1,<2",
 ]
@@ -21,3 +23,4 @@ packages = ["src/langchain_lab"]
 
 [tool.uv.sources]
 workbench-core = { workspace = true }
+rag-lab = { workspace = true }

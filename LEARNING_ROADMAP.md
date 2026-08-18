@@ -257,8 +257,9 @@ latency、tokens、success/error 和 outcome。它服务于 Evaluation 的失败
 
 ### 当前进度
 
-Model / Prompt / Pydantic Structured Output 已有 provider-free demo 和测试；Tool、Retriever、Agent
-按顺序各体验一次。Retriever 只适配 `03-rag-lab`，不复制检索实现。
+Model / Prompt / Pydantic Structured Output、`@tool`、Retriever adapter 和一次高层 `create_agent()`
+均已完成 provider-free 测试。Retriever 只适配 `03-rag-lab`，不复制检索实现；08 不直接编写
+LangGraph State/Node/Checkpoint，但如实承认 LangChain 1.x 的 `create_agent()` 内部基于 LangGraph。
 
 ## Phase 8：`09-langgraph-leon`
 
@@ -270,17 +271,18 @@ Model / Prompt / Pydantic Structured Output 已有 provider-free demo 和测试�
 
 ### 当前进度
 
-已完成 `ToolRegistry -> LangChain BaseTool` 薄适配，以及
-`START -> agent -> ToolNode -> agent -> END` provider-free 闭环；测试实际调用原 Leon `read_file`，
-没有复制 schema 或 handler。
+已完成 `ToolRegistry -> LangChain BaseTool` 薄适配、
+`START -> agent -> ToolNode -> agent -> END` provider-free 闭环、Planning/Memory、加密 SQLite checkpoint、
+跨进程 resume，以及共享 `rag_search` 的双 Runtime 对照。RAG 测试使用同一个 `AgentTool + ToolRegistry`，
+两边 raw observation 完全一致且 handler 各执行一次。
 
 ### 完成边界
 
 只做 Chat、Tool Calling、Planning、Memory、RAG/Search 和 Checkpoint/Resume。允许复用一个现有
 Image Tool 做集成证明，不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
 
-`03-rag-lab` 当前尚未作为 Tool 接入 Self-built Leon；必须先建立两边共享的 RAG Tool，完成前不得
-声称已复用 Leon RAG。
+`03-rag-lab` 已提供两边共享的 canonical RAG Tool，但原 Leon 与 09 live CLI 都尚未注入预建索引，
+只能声称共享契约和 Runtime 对照已完成，不能声称 live Leon RAG 已启用。
 
 ## 每个阶段的固定节奏
 
