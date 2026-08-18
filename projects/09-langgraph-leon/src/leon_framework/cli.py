@@ -285,7 +285,10 @@ def _run_demo() -> int:
 
 
 def _interrupt_resume_hint(args: argparse.Namespace, thread_id: str) -> str:
-    command = f"uv run leon-graph --interrupt-demo --resume {thread_id}"
+    command = (
+        "uv run --package leon-agent-framework leon-graph "
+        f"--interrupt-demo --resume {thread_id}"
+    )
     if args.checkpoint_db is not None:
         command += f' --checkpoint-db "{args.checkpoint_db}"'
     return command

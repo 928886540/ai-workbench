@@ -171,7 +171,7 @@ uv run leon-config init
 uv run python -m llm_core.hello
 uv run leon
 uv run langchain-lab --demo
-uv run leon-graph --demo
+uv run --package leon-agent-framework leon-graph --demo
 ```
 
 ## 文档

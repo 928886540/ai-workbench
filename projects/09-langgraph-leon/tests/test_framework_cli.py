@@ -52,7 +52,10 @@ def test_interrupt_demo_pauses_and_resumes_without_provider(
 
     paused = capsys.readouterr().out
     assert "PAUSED before tools" in paused
-    assert "Resume    uv run leon-graph --interrupt-demo --resume demo-thread" in paused
+    assert (
+        "Resume    uv run --package leon-agent-framework leon-graph "
+        "--interrupt-demo --resume demo-thread"
+    ) in paused
     assert "  -> tools" not in paused
 
     assert (

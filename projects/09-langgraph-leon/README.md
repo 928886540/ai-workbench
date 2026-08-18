@@ -120,7 +120,7 @@ Framework Edition 只保留：
 当前 provider-free 演示：
 
 ```powershell
-uv run leon-graph --demo
+uv run --package leon-agent-framework leon-graph --demo
 ```
 
 输出节点流转 `START -> agent -> tools -> agent -> END`，实际执行原 Leon 的 `read_file` handler；
@@ -142,10 +142,10 @@ uv run leon-graph --demo
 
 ```powershell
 # 交互模式
-uv run leon-graph
+uv run --package leon-agent-framework leon-graph
 
 # 单轮模式，便于面试演示
-uv run leon-graph --once "搜索 LangGraph 当前稳定版本，并给出官方链接"
+uv run --package leon-agent-framework leon-graph --once "搜索 LangGraph 当前稳定版本，并给出官方链接"
 ```
 
 入口只读取 `%USERPROFILE%\.leon\config.toml`；其中没有配置 `LEON_FILE_ROOTS` 或 Tavily key 时，
@@ -162,8 +162,8 @@ live checkpoint 默认保存在 `%USERPROFILE%\.leon\langgraph-checkpoints.db`�
 Planning 是显式可选能力：
 
 ```powershell
-uv run leon-graph --plan
-uv run leon-graph --plan --once "分析当前仓库的 Agent 架构"
+uv run --package leon-agent-framework leon-graph --plan
+uv run --package leon-agent-framework leon-graph --plan --once "分析当前仓库的 Agent 架构"
 ```
 
 开启后节点流变为 `START -> plan -> agent -> tools -> agent -> END`。结构化 planner 只返回
@@ -181,7 +181,7 @@ Memory 默认开启，使用 Leon 同一个 `LEON_SESSION_DB`、固定 local own
 `memory_get / memory_upsert / memory_delete` 工具；可用 `--no-memory` 显式关闭：
 
 ```powershell
-uv run leon-graph --no-memory
+uv run --package leon-agent-framework leon-graph --no-memory
 ```
 
 CLI 把当前用户原话绑定到原 Leon 的 `memory_turn`，所以模型不能伪造 consent 参数；没有明确保存/删除
@@ -218,10 +218,10 @@ context sentinel 均不出现明文；随后关闭连接、重开 SQLite，并�
 
 ```powershell
 # 进程 A：在 ToolNode 前暂停并退出，输出一个可复制的 thread id
-uv run leon-graph --interrupt-demo --thread-id demo-thread
+uv run --package leon-agent-framework leon-graph --interrupt-demo --thread-id demo-thread
 
 # 进程 B：不重投 HumanMessage，直接从同一 checkpoint 恢复
-uv run leon-graph --interrupt-demo --resume demo-thread
+uv run --package leon-agent-framework leon-graph --interrupt-demo --resume demo-thread
 ```
 
 日常 live CLI 默认使用同一加密 SQLite。`--once` 结束后可用 `--resume <id> --once "下一问"`
@@ -236,7 +236,7 @@ uv run leon-graph --interrupt-demo --resume demo-thread
 当前 provider-free 暂停/恢复演示：
 
 ```powershell
-uv run leon-graph --interrupt-demo
+uv run --package leon-agent-framework leon-graph --interrupt-demo
 ```
 
 Graph 使用静态 `interrupt_before=["tools"]`，第一次运行在 ToolNode 前停住，此时 handler 尚未执行；

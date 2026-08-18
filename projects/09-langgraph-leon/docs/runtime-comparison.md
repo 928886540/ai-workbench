@@ -190,11 +190,12 @@ Leon 当前不迁移到 LangGraph。Self-built Leon 是完整产品和原理证�
 ## 验证命令
 
 ```powershell
-uv run leon-graph --demo
-uv run leon-graph --interrupt-demo
+uv run --package leon-agent-framework leon-graph --demo
+uv run --package leon-agent-framework leon-graph --interrupt-demo
 uv run pytest -q projects/09-langgraph-leon/tests
 uv run pytest -q projects/09-langgraph-leon/tests/test_rag_runtime_parity.py
 ```
 
-这些命令默认不请求真实模型、Tavily 或外部文件目录。live CLI 只有在显式执行 `uv run leon-graph` 时才读取
+这些命令默认不请求真实模型、Tavily 或外部文件目录。live CLI 只有在显式执行
+`uv run --package leon-agent-framework leon-graph` 时才读取
 `%USERPROFILE%\.leon\config.toml` 并访问所配置的 provider。
