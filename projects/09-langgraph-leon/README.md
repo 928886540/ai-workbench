@@ -179,15 +179,30 @@ CLI 把当前用户原话绑定到原 Leon 的 `memory_turn`，所以模型不�
 返回的长期记忆只作为临时 system context 传给 model，不写入 `MessagesState`。
 
 当前 `InMemorySaver` 仍会在进程内保存正常对话和 ToolMessage；显式 `memory_get`、文件读取等原始工具
-结果也可能存在于这些消息中。因此 Milestone 3 换 SQLite checkpointer 前，必须先定义 checkpoint
-脱敏/裁剪策略，不能直接把当前 message state 落盘。
+结果也可能存在于这些消息中。Milestone 3 没有用 audit projection 覆盖这些原始值，因为裁掉
+ToolMessage 会让恢复后的 Graph 缺少 observation，甚至被迫重复执行工具。这里选择完整 checkpoint 的
+authenticated encryption at rest，同时继续让自动 Memory context 根本不进入 State。
 
 ### Milestone 3：Checkpoint / Resume
 
 - [x] 第一棒用 `InMemorySaver` 学 checkpoint 语义。
-- [ ] CLI 需要跨进程恢复时再换 SQLite checkpointer。
+- [x] 建立 AES-EAX 加密的 SQLite checkpointer 安全边界。
+- [ ] 把 live CLI 切到加密 SQLite，并完成关闭进程后的恢复。
 - [ ] 用稳定 `thread_id` 实现 `/resume <id>`。
 - [ ] 在模拟高风险动作前验证 interrupt/resume，不真的执行系统操作。
+
+安全 SQLite 基座已经完成，但这一阶段尚未接管 live CLI：
+
+- LangGraph `checkpoint` 与 `pending writes` 经官方 `EncryptedSerializer` 完整加密，恢复语义不裁剪。
+- SQLite metadata 不经过 serializer，因此 wrapper 会丢弃调用方自带 metadata；后续 thread id 只能使用
+  随机 opaque ID，不能放用户名、标题、路径或 Prompt。
+- 启动时拒绝任何没有 `+aes` 类型的旧明文/mixed row，也会用 AES MAC 检查 key 是否匹配，不能静默
+  兼容旧库或生成新 key 覆盖现有库。
+- 32-byte key 使用独立 sidecar 文件，只保证 checkpoint payload 不以明文出现在 SQLite/WAL；这不是
+  Windows 系统级密钥托管。备份和恢复必须同时保留 DB 与 key，换 key 等于放弃旧 checkpoint。
+
+provider-free 测试会扫描 DB/WAL/SHM，确认 Human、AI、File Tool、调用方 metadata 和临时 Memory
+context sentinel 均不出现明文；随后关闭连接、重开 SQLite，并验证完整 ToolMessage 仍可认证解密。
 
 当前 provider-free 暂停/恢复演示：
 
@@ -199,8 +214,8 @@ Graph 使用静态 `interrupt_before=["tools"]`，第一次运行在 ToolNode �
 随后用同一 `thread_id` 和 `graph.stream(None, config)` 从 checkpoint 恢复，工具只执行一次，再回到
 agent 形成最终回答。测试同时断言暂停前调用数为 0、恢复后为 1。
 
-这只证明进程内 checkpoint/interrupt 语义，不宣称退出后可恢复。SQLite 版必须先解决上一节的原始
-ToolMessage 持久化边界，再实现 `/resume <id>`。
+这条命令目前仍只证明进程内 checkpoint/interrupt 语义。下一棒会用刚完成的加密 SQLite 基座做真实
+“进程 A 暂停并关闭 -> 进程 B 用同一 thread 恢复”，再接 CLI `/resume <id>`。
 
 ### Milestone 4：RAG / Image 与对照报告
 

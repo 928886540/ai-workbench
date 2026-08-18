@@ -23,9 +23,10 @@
   `%USERPROFILE%\\.leon\\config.toml` 构造 LangChain `ChatOpenAI`，注册 File/Web 与原 Leon 三个 Memory
   tools，并提供简洁交互/`--once` CLI；`--plan` 会增加 `plan` node 和 2～4 步 Graph State，默认关闭以免
   每轮多打一请求。Memory 默认开启，可用 `--no-memory` 关闭；原 consent、单轮写额度和敏感值拒绝仍生效。
-- `InMemorySaver` 仍只在进程内有效，尚不支持跨进程 `/resume`。自动 Memory context 不进入 MessagesState，
-  但显式 Memory/File tool result 会进入 ToolMessage；`--interrupt-demo` 已证明 ToolNode 前暂停、同 thread
-  恢复后工具只执行一次。下一步先设计 checkpoint 脱敏/裁剪，再做 SQLite 持久化与 `/resume <id>`。
+- Milestone 3 的安全 SQLite 基座已完成：使用 LangGraph `EncryptedSerializer` + AES-EAX 加密完整
+  checkpoint/pending writes，调用方 metadata 被隔离，旧明文/mixed row、错 key、缺 key均 fail closed；
+  provider-free 测试已证明 File/Memory/User/AI 原文不出现在 DB/WAL，重开后仍能完整解密状态。live CLI
+  暂时仍用 `InMemorySaver`；下一步接稳定 opaque `thread_id`，完成真实跨进程恢复与 `/resume <id>`。
 - RAG 仍是独立 `03-rag-lab`，尚不存在可供两套 Runtime 共享的 Leon RAG Tool；接入前先定义唯一共享 Tool，
   不把计划写成完成事实。09 不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
 

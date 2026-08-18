@@ -25,6 +25,23 @@ schema 和 `ToolRegistry.execute` 暴露给 LangChain `BaseTool/ToolNode`。
 Planning 属于编排能力，在两套 Runtime 中分别实现。Memory 属于跨会话业务事实，复用现有
 `MemoryService`。Graph checkpoint 只保存 thread 执行状态，不能冒充长期 Memory。
 
+## Checkpoint 安全边界
+
+Framework Edition 的 SQLite checkpoint 选择“完整状态的 authenticated encryption at rest + 明文
+metadata 最小化”，不使用 Tool audit projection 代替 Graph State。原因是 LangGraph 会在每个
+superstep 保存 checkpoint 和 pending writes；如果先保存 raw ToolMessage、再用 scrub node 清理，历史
+row 仍已泄漏。如果直接裁掉 observation，跨进程恢复又会失真或重复执行工具。
+
+具体边界：
+
+- `EncryptedSerializer` 使用 AES-EAX 加密 checkpoint/pending writes，保留完整恢复语义。
+- 自动 Memory context 只在调用 model 前临时注入，本来就不进入 `MessagesState`。
+- SQLite metadata、thread/node/channel 等结构仍是明文；只允许随机 opaque thread id，调用方 metadata
+  不进入 saver。
+- 旧明文或 mixed SQLite 一律拒绝，不做原地迁移；key 错误或缺失时 fail closed。
+- 相邻 key sidecar 解决的是“SQLite/WAL 不出现可读原文”，不是系统级密钥托管。若要求连密文都不能
+  保存原始内容，需要另做 `UntrackedValue`/受限恢复设计，并明确牺牲哪些恢复点。
+
 ## 已知缺口
 
 `03-rag-lab` 目前没有作为 Tool 接入 Leon，因此还不存在“同一 Leon RAG Tool”可复用。先建立一个
