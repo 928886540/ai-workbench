@@ -72,6 +72,10 @@ START -> agent -> tools -> agent -> END
 它通过薄适配器实际执行原 Leon 的 `read_file`，没有复制工具 schema 或 handler；Web、TTS、Gallery、
 SSE、MCP 和 Multi-Agent 均不进入该项目。
 
+共享 `rag_search` 也已完成双 Runtime 对照：同一个 `AgentTool + ToolRegistry` 分别经过 Self-built
+`AgentRuntime` 与 LangGraph `ToolNode`，两边给模型的 observation 完全一致。当前是 provider-free
+集成证明，不代表原 Leon 或 Framework CLI 已配置 live 知识索引。
+
 此前的 `07-coding-agent` 基础闭环已完成：
 
 在唯一 `AgentRuntime` 上验证一个面试可讲清的垂直场景：
@@ -124,7 +128,7 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 - [ ] `06-multi-agent`：多 Agent 协作
 - [x] `07-coding-agent`：面试用 Vertical Agent Demo 基础闭环
 - [ ] `08-langchain-lab`：Model / Prompt / Structured Output 已完成；Tool / Retriever / Agent 待体验
-- [ ] `09-langgraph-leon`：共享 Tool、CLI、Planning、Memory、加密 SQLite 与跨进程 `--resume`/`/resume` 已完成；RAG 对照报告待推进
+- [ ] `09-langgraph-leon`：共享 Tool、CLI、Planning、Memory、加密 SQLite、跨进程恢复与 RAG 双 Runtime observation 对照已完成；综合对照报告待收口
 
 ## 协作方式（和 AI 一起开发时）
 

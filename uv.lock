@@ -1012,6 +1012,7 @@ dependencies = [
     { name = "langgraph-checkpoint-sqlite" },
     { name = "leon-agent" },
     { name = "pycryptodome" },
+    { name = "rag-lab" },
 ]
 
 [package.metadata]
@@ -1022,6 +1023,7 @@ requires-dist = [
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.1,<4" },
     { name = "leon-agent", editable = "projects/02-leon-agent" },
     { name = "pycryptodome", specifier = ">=3,<4" },
+    { name = "rag-lab", editable = "projects/03-rag-lab" },
 ]
 
 [[package]]

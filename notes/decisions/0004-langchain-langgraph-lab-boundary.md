@@ -42,10 +42,14 @@ row 仍已泄漏。如果直接裁掉 observation，跨进程恢复又会失真�
 - 相邻 key sidecar 解决的是“SQLite/WAL 不出现可读原文”，不是系统级密钥托管。若要求连密文都不能
   保存原始内容，需要另做 `UntrackedValue`/受限恢复设计，并明确牺牲哪些恢复点。
 
-## 已知缺口
+## RAG 复用状态
 
-`03-rag-lab` 目前没有作为 Tool 接入 Leon，因此还不存在“同一 Leon RAG Tool”可复用。先建立一个
-共享只读 RAG Tool，再让两套 Runtime 同时注册；未完成前不在简历中声称已共享。
+`03-rag-lab` 的 `rag_search` 是唯一业务 Tool 事实来源。09 通过显式 workspace 依赖和可选
+`RAGSearchService` 注入复用它；provider-free 测试已证明同一个 `AgentTool + ToolRegistry` 经
+Self-built `AgentRuntime` 与 LangGraph `ToolNode` 得到相同 raw observation。
+
+这项证明不等于 live 接入：原 Leon CLI/Gateway 与 09 live CLI 都尚未获得预建索引来源，简历和面试
+只能表述为“双 Runtime 共享 Tool 契约已验证”，不能表述为“Leon 线上 RAG 已启用”。
 
 ## 范围
 

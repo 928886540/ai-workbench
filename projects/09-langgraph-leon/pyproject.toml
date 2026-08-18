@@ -5,6 +5,7 @@ description = "LangGraph framework edition of Leon's agent orchestration."
 requires-python = ">=3.10"
 dependencies = [
   "leon-agent",
+  "rag-lab",
   "langchain-core>=1,<2",
   "langchain-openai>=1,<2",
   "langgraph>=1,<2",
@@ -24,3 +25,4 @@ packages = ["src/leon_framework"]
 
 [tool.uv.sources]
 leon-agent = { workspace = true }
+rag-lab = { workspace = true }

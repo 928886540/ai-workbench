@@ -44,8 +44,8 @@ LangGraph Messages/State
     v                                      |
 agent node -- tools_condition --> ToolNode-+
     |                               |
-    |                         existing Leon tools
-    |                    File / Web / Memory / Image
+    |                         shared business tools
+    |                    File / Web / Memory / RAG
     v
    END
 
@@ -63,6 +63,7 @@ Leon MemoryService: cross-session user facts
 - `leon_agent.search.WebSearchService`：联网搜索业务实现。
 - `leon_agent.memory.MemoryService` + `create_memory_tools`：显式长期 Memory 和权限策略。
 - `leon_agent.service.LeonToolService`：已有图片任务业务实现。
+- `rag_lab.create_rag_search_tool`：预建本地知识索引的只读检索与有界 evidence 契约。
 
 09 只增加一层 `ToolRegistry -> LangChain BaseTool` 适配，不复制上述 schema 或 handler。
 
@@ -74,11 +75,15 @@ Leon MemoryService: cross-session user facts
 
 Planning 在 09 中用 Graph State/node 表达，不把自研 `PlanningService` 套进第二个 executor。
 
-### 当前还不能宣称复用
+### RAG 当前事实
 
-`03-rag-lab` 已有独立 pipeline，但尚未作为 Leon Tool 接入原 Runtime。后续应先定义一个共享、只读的
-`rag_search` 或 `knowledge_search` 业务 Tool，再同时注册到两套 Runtime；在此之前只写“计划接入”，
-不写“已复用 Leon RAG”。
+`03-rag-lab` 已提供唯一的只读 `rag_search` Tool。09 显式依赖 `rag-lab`，composition 只接受调用方
+注入的 `RAGSearchService`，不在 Framework Edition 内重写 Retriever、schema、handler 或索引配置。
+
+provider-free 对照测试把同一个 `AgentTool` 实例放进同一个 `ToolRegistry`，分别经过 Self-built
+`AgentRuntime` 和 LangGraph `ToolNode`；两边交还给模型的 raw observation 解析后完全相等，handler
+各执行一次。这证明“同一个 RAG 业务 Tool 支持两套 Runtime”，但它尚未注入原 Leon CLI/Gateway，
+09 live CLI 也没有预建索引来源，因此不能宣称任一 live 入口已经启用 RAG。
 
 ## 精简范围
 
@@ -243,9 +248,16 @@ agent 形成最终回答。测试同时断言暂停前调用数为 0、恢复后
 
 ### Milestone 4：RAG / Image 与对照报告
 
-- [ ] 先建立可同时注册到两套 Runtime 的共享 RAG Tool，再接 09。
+- [x] 建立可同时注册到两套 Runtime 的共享 RAG Tool，并让 09 显式依赖它。
+- [x] 用同一个 Tool/Registry 验证 Self-built Runtime 与 LangGraph observation 完全一致。
 - [ ] 选一个现有 Image Tool 做复用证明，不扩图片产品功能。
 - [ ] 用同一组 provider-free case 对照工具选择、状态、恢复与代码复杂度。
+
+RAG 对照验证：
+
+```powershell
+uv run pytest -q projects/09-langgraph-leon/tests/test_rag_runtime_parity.py
+```
 
 ## 面试主线
 

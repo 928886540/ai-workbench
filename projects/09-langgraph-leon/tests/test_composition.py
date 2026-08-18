@@ -9,6 +9,7 @@ from leon_agent.config import LeonSettings
 from leon_agent.config_file import apply_config_file
 from leon_agent.memory import MemoryService, MemoryStore, memory_turn
 from leon_framework import composition
+from rag_lab import RAGSearchService
 from workbench_core.config import Settings, reset_settings_cache
 
 
@@ -114,6 +115,33 @@ def test_build_tool_registry_reuses_memory_tools_and_consent_policy(tmp_path: Pa
     assert second["error_code"] == "write_limit_reached"
     loaded = registry.execute("memory_get", {"key": "profile.style"})
     assert loaded["memories"][0]["value"] == {"value": "concise"}
+
+
+def test_build_tool_registry_accepts_the_canonical_rag_service() -> None:
+    class EmptyRetriever:
+        def retrieve(self, query: str, *, top_k: int):  # noqa: ANN201
+            return []
+
+    settings = LeonSettings(
+        _env_file=None,
+        LEON_FILE_ROOTS={},
+        TAVILY_API_KEY="",
+        TAVILY_FALLBACK_API_KEY="",
+        TAVILY_FALLBACK_BASE_URL="",
+    )
+
+    registry = composition.build_tool_registry(
+        settings,
+        rag_search_service=RAGSearchService(EmptyRetriever()),
+    )
+
+    assert registry.names == ["rag_search"]
+    assert registry.execute("rag_search", {"query": "missing"}) == {
+        "ok": True,
+        "untrusted_content": True,
+        "count": 0,
+        "hits": [],
+    }
 
 
 def test_load_framework_settings_is_pinned_to_leon_toml(tmp_path: Path) -> None:

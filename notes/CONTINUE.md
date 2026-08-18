@@ -31,8 +31,10 @@
   根据面试需要补一条受限高风险 interrupt 说明，不扩 Leon 产品功能。
 - `03-rag-lab` 已定义唯一只读 `rag_search` 业务 Tool：复用 `VectorRetriever`，限制 query/top_k、
   安全 citation 和 5500 字符总 observation，并对 query/正文做 audit 脱敏。下一步用同一个 Tool 实例
-  分别经过 Self-built `AgentRuntime` 与 LangGraph `ToolNode` 做结果一致性证明；尚未注入原 Leon
-  CLI/Gateway，不能写成 live 已启用。09 不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
+  分别经过 Self-built `AgentRuntime` 与 LangGraph `ToolNode` 的结果一致性证明已经通过；两边 raw
+  observation 相等且 handler 各执行一次。尚未注入原 Leon 或 09 live CLI，不能写成 live 已启用。
+  下一步收口 08 的 Tool / Retriever / 高层 Agent，再写综合对照报告；09 不扩 Web、TTS/ASR、Gallery、
+  SSE、MCP、Coding Agent 或 Multi-Agent。
 
 - 当前集成分支：`main`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
   页面恢复、图片任务补拉、全屏图片缩放平移，以及按 `assistant.delta` 分段合成和按 revision 重试的流式 TTS

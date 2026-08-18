@@ -14,6 +14,7 @@ from leon_agent.memory import MemoryService, MemoryStore
 from leon_agent.memory.tools import create_memory_tools
 from leon_agent.search import create_search_service
 from leon_agent.tools import create_web_search_tool
+from rag_lab import RAGSearchService, create_rag_search_tool
 from workbench_core.agent import AgentTool, ToolRegistry
 from workbench_core.config import Settings, get_settings, reset_settings_cache
 
@@ -61,8 +62,9 @@ def build_tool_registry(
     settings: LeonSettings,
     *,
     memory_service: MemoryService | None = None,
+    rag_search_service: RAGSearchService | None = None,
 ) -> ToolRegistry:
-    """Expose only File Search/Read and Web Search through canonical factories."""
+    """Expose the small framework tool surface through canonical factories."""
 
     tools: list[AgentTool] = []
     file_service = create_file_search_service(settings.file_roots)
@@ -91,6 +93,8 @@ def build_tool_registry(
     )
     if search_service is not None:
         tools.append(create_web_search_tool(search_service))
+    if rag_search_service is not None:
+        tools.append(create_rag_search_tool(rag_search_service))
     if memory_service is not None:
         tools.extend(create_memory_tools(memory_service))
     return ToolRegistry(tools)
@@ -101,6 +105,7 @@ def build_framework_components(
     *,
     session_id: str | None = None,
     enable_memory: bool = False,
+    rag_search_service: RAGSearchService | None = None,
 ) -> FrameworkComponents:
     """Build the real Framework Edition without making a provider request."""
 
@@ -123,6 +128,7 @@ def build_framework_components(
         registry=build_tool_registry(
             leon_settings,
             memory_service=memory_service,
+            rag_search_service=rag_search_service,
         ),
         memory_service=memory_service,
     )
