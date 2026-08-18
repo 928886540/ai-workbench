@@ -119,7 +119,8 @@ uv run leon-graph --demo
 ```
 
 输出节点流转 `START -> agent -> tools -> agent -> END`，实际执行原 Leon 的 `read_file` handler；
-当前 checkpointer 是进程内 `InMemorySaver`，尚不宣称支持退出进程后恢复。
+这个一次性 `--demo` 刻意使用进程内 `InMemorySaver`，不创建用户文件；真实 live CLI 与
+`--interrupt-demo` 使用后文的加密 SQLite。
 
 ### Milestone 1：最小 `leon-graph` CLI
 
@@ -144,7 +145,8 @@ uv run leon-graph --once "搜索 LangGraph 当前稳定版本，并给出官方�
 
 入口只读取 `%USERPROFILE%\.leon\config.toml`；其中没有配置 `LEON_FILE_ROOTS` 或 Tavily key 时，
 对应工具不会注册，仍可进行纯聊天。自动测试和 `--demo` 不访问真实模型、文件外部目录或 Tavily。
-当前 checkpoint 仍是进程内 `InMemorySaver`，`--thread-id` 只在本次进程有效，不代表跨进程 `/resume`。
+live checkpoint 默认保存在 `%USERPROFILE%\.leon\langgraph-checkpoints.db`，key 使用相邻 sidecar；
+`--thread-id` 用于新 thread，`--resume` 和交互 `/resume` 用于已有 thread。
 
 ### Milestone 2：Planning + Memory
 
@@ -178,8 +180,8 @@ CLI 把当前用户原话绑定到原 Leon 的 `memory_turn`，所以模型不�
 指令时写操作 fail closed，每轮最多一次写尝试，敏感 key/value 继续由原策略拒绝。`build_context()`
 返回的长期记忆只作为临时 system context 传给 model，不写入 `MessagesState`。
 
-当前 `InMemorySaver` 仍会在进程内保存正常对话和 ToolMessage；显式 `memory_get`、文件读取等原始工具
-结果也可能存在于这些消息中。Milestone 3 没有用 audit projection 覆盖这些原始值，因为裁掉
+`MessagesState` 会保存正常对话和 ToolMessage；显式 `memory_get`、文件读取等原始工具结果也会进入
+这些消息。Milestone 3 没有用 audit projection 覆盖这些原始值，因为裁掉
 ToolMessage 会让恢复后的 Graph 缺少 observation，甚至被迫重复执行工具。这里选择完整 checkpoint 的
 authenticated encryption at rest，同时继续让自动 Memory context 根本不进入 State。
 
@@ -187,11 +189,11 @@ authenticated encryption at rest，同时继续让自动 Memory context 根本�
 
 - [x] 第一棒用 `InMemorySaver` 学 checkpoint 语义。
 - [x] 建立 AES-EAX 加密的 SQLite checkpointer 安全边界。
-- [ ] 把 live CLI 切到加密 SQLite，并完成关闭进程后的恢复。
-- [ ] 用稳定 `thread_id` 实现 `/resume <id>`。
+- [x] 把 live CLI 切到加密 SQLite，并完成关闭进程后的恢复。
+- [x] 用稳定 opaque `thread_id` 实现 `--resume <id>` 与交互 `/resume <id>`。
 - [ ] 在模拟高风险动作前验证 interrupt/resume，不真的执行系统操作。
 
-安全 SQLite 基座已经完成，但这一阶段尚未接管 live CLI：
+安全 SQLite 基座和最小 CLI 恢复闭环已经完成：
 
 - LangGraph `checkpoint` 与 `pending writes` 经官方 `EncryptedSerializer` 完整加密，恢复语义不裁剪。
 - SQLite metadata 不经过 serializer，因此 wrapper 会丢弃调用方自带 metadata；后续 thread id 只能使用
@@ -204,6 +206,21 @@ authenticated encryption at rest，同时继续让自动 Memory context 根本�
 provider-free 测试会扫描 DB/WAL/SHM，确认 Human、AI、File Tool、调用方 metadata 和临时 Memory
 context sentinel 均不出现明文；随后关闭连接、重开 SQLite，并验证完整 ToolMessage 仍可认证解密。
 
+跨进程演示：
+
+```powershell
+# 进程 A：在 ToolNode 前暂停并退出，输出一个可复制的 thread id
+uv run leon-graph --interrupt-demo --thread-id demo-thread
+
+# 进程 B：不重投 HumanMessage，直接从同一 checkpoint 恢复
+uv run leon-graph --interrupt-demo --resume demo-thread
+```
+
+日常 live CLI 默认使用同一加密 SQLite。`--once` 结束后可用 `--resume <id> --once "下一问"`
+继续已有对话；交互模式输入 `/resume <id>` 会切换到已有 thread。恢复 pending checkpoint 时只允许
+`file_search`、`read_file`、`web_search`、`memory_get` 等只读工具；`memory_upsert/delete` 不会在
+缺失原始 consent 的跨进程上下文中自动执行。`--thread-id` 只创建新 thread，已存在时 fail closed。
+
 当前 provider-free 暂停/恢复演示：
 
 ```powershell
@@ -214,8 +231,8 @@ Graph 使用静态 `interrupt_before=["tools"]`，第一次运行在 ToolNode �
 随后用同一 `thread_id` 和 `graph.stream(None, config)` 从 checkpoint 恢复，工具只执行一次，再回到
 agent 形成最终回答。测试同时断言暂停前调用数为 0、恢复后为 1。
 
-这条命令目前仍只证明进程内 checkpoint/interrupt 语义。下一棒会用刚完成的加密 SQLite 基座做真实
-“进程 A 暂停并关闭 -> 进程 B 用同一 thread 恢复”，再接 CLI `/resume <id>`。
+这条命令和 live CLI 都已经覆盖“进程 A 暂停并关闭 -> 进程 B 用同一 thread 恢复”；后续只补
+受限高风险动作的 interrupt 说明，不扩展成第二套 Session 产品。
 
 ### Milestone 4：RAG / Image 与对照报告
 

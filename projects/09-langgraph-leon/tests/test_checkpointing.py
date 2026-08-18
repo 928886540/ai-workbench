@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from leon_framework.checkpointing import (
     CheckpointSecurityError,
     checkpoint_key_path,
+    create_thread_id,
+    normalize_thread_id,
     open_encrypted_sqlite_checkpointer,
 )
 from leon_framework.graph import build_leon_graph
@@ -67,6 +70,17 @@ def _checkpoint_files(database_path: Path) -> list[Path]:
         for path in database_path.parent.glob(f"{database_path.name}*")
         if path.is_file()
     ]
+
+
+def test_thread_ids_are_opaque_and_strictly_validated() -> None:
+    generated = create_thread_id()
+
+    assert re.fullmatch(r"lg-[0-9a-f]{32}", generated)
+    assert normalize_thread_id(f"  {generated}  ") == generated
+    assert normalize_thread_id("interview_demo-1") == "interview_demo-1"
+    for invalid in ("", "contains space", "../escape", "a" * 65, "中文"):
+        with pytest.raises(ValueError, match="thread id"):
+            normalize_thread_id(invalid)
 
 
 def test_encrypted_sqlite_checkpoint_hides_raw_state_and_reopens(tmp_path) -> None:
@@ -198,3 +212,70 @@ def test_wrong_key_and_plaintext_database_fail_closed(tmp_path) -> None:
     with pytest.raises(CheckpointSecurityError, match="plaintext or unsupported"):
         with open_encrypted_sqlite_checkpointer(plaintext_path):
             pass
+
+
+def test_interrupted_graph_resumes_after_reopen_without_repeating_tool(tmp_path) -> None:
+    database_path = tmp_path / "resume.db"
+    config = {"configurable": {"thread_id": create_thread_id()}}
+    calls: list[dict[str, Any]] = []
+
+    def read_file(**arguments: Any) -> dict[str, Any]:
+        calls.append(arguments)
+        return {"ok": True, "content": "cross-process evidence"}
+
+    registry = ToolRegistry(
+        [
+            AgentTool(
+                name="read_file",
+                description="Read one fixture file.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "root_id": {"type": "string"},
+                        "relative_path": {"type": "string"},
+                    },
+                    "required": ["root_id", "relative_path"],
+                    "additionalProperties": False,
+                },
+                handler=read_file,
+            )
+        ]
+    )
+
+    with open_encrypted_sqlite_checkpointer(database_path) as checkpointer:
+        first_process_graph = build_leon_graph(
+            SecretToolModel(),
+            registry,
+            interrupt_before=["tools"],
+            checkpointer=checkpointer,
+        )
+        list(
+            first_process_graph.stream(
+                {"messages": [HumanMessage(content="read fixture")]},
+                config,
+                stream_mode="updates",
+            )
+        )
+        assert first_process_graph.get_state(config).next == ("tools",)
+        assert calls == []
+
+    with open_encrypted_sqlite_checkpointer(database_path) as checkpointer:
+        second_process_graph = build_leon_graph(
+            SecretToolModel(),
+            registry,
+            interrupt_before=["tools"],
+            checkpointer=checkpointer,
+        )
+        list(second_process_graph.stream(None, config, stream_mode="updates"))
+        assert second_process_graph.get_state(config).next == ()
+        assert len(calls) == 1
+
+    with open_encrypted_sqlite_checkpointer(database_path) as checkpointer:
+        completed_graph = build_leon_graph(
+            SecretToolModel(),
+            registry,
+            interrupt_before=["tools"],
+            checkpointer=checkpointer,
+        )
+        assert completed_graph.get_state(config).next == ()
+        assert len(calls) == 1

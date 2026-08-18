@@ -10,21 +10,47 @@ plain text and must therefore stay opaque and non-sensitive.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from langgraph.checkpoint.serde.encrypted import EncryptedSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 _CHECKPOINT_KEY_BYTES = 32
+_THREAD_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 class CheckpointSecurityError(ValueError):
     """Checkpoint storage cannot be opened without weakening its safety boundary."""
+
+
+def default_checkpoint_database_path() -> Path:
+    """Keep Framework Edition state beside Leon's private user configuration."""
+
+    return Path.home() / ".leon" / "langgraph-checkpoints.db"
+
+
+def create_thread_id() -> str:
+    """Create an opaque stable id whose plaintext metadata reveals no user label."""
+
+    return f"lg-{uuid4().hex}"
+
+
+def normalize_thread_id(value: str) -> str:
+    """Validate a log- and SQLite-safe thread id without silently rewriting it."""
+
+    normalized = value.strip()
+    if not _THREAD_ID_PATTERN.fullmatch(normalized):
+        raise ValueError(
+            "thread id must be 1-64 ASCII letters, digits, hyphens, or underscores"
+        )
+    return normalized
 
 
 class EncryptedSqliteSaver(SqliteSaver):
