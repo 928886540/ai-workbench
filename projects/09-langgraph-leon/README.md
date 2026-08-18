@@ -199,7 +199,7 @@ authenticated encryption at rest，同时继续让自动 Memory context 根本�
 - [x] 建立 AES-EAX 加密的 SQLite checkpointer 安全边界。
 - [x] 把 live CLI 切到加密 SQLite，并完成关闭进程后的恢复。
 - [x] 用稳定 opaque `thread_id` 实现 `--resume <id>` 与交互 `/resume <id>`。
-- [ ] 在模拟高风险动作前验证 interrupt/resume，不真的执行系统操作。
+- [x] 在 ToolNode 执行前验证 interrupt/resume；不注册高风险写工具。
 
 安全 SQLite 基座和最小 CLI 恢复闭环已经完成：
 
@@ -243,21 +243,27 @@ Graph 使用静态 `interrupt_before=["tools"]`，第一次运行在 ToolNode �
 随后用同一 `thread_id` 和 `graph.stream(None, config)` 从 checkpoint 恢复，工具只执行一次，再回到
 agent 形成最终回答。测试同时断言暂停前调用数为 0、恢复后为 1。
 
-这条命令和 live CLI 都已经覆盖“进程 A 暂停并关闭 -> 进程 B 用同一 thread 恢复”；后续只补
-受限高风险动作的 interrupt 说明，不扩展成第二套 Session 产品。
+这条命令和 live CLI 都已经覆盖“进程 A 暂停并关闭 -> 进程 B 用同一 thread 恢复”。真实高风险审批
+还需要审批身份、授权有效期、状态变更检测和幂等键，本实验不靠注册写工具伪装成完整审批系统。
 
-### Milestone 4：RAG / Image 与对照报告
+### Milestone 4：RAG 与综合对照报告
 
 - [x] 建立可同时注册到两套 Runtime 的共享 RAG Tool，并让 09 显式依赖它。
 - [x] 用同一个 Tool/Registry 验证 Self-built Runtime 与 LangGraph observation 完全一致。
-- [ ] 选一个现有 Image Tool 做复用证明，不扩图片产品功能。
-- [ ] 用同一组 provider-free case 对照工具选择、状态、恢复与代码复杂度。
+- [x] 用 provider-free 证据矩阵对照 Tool 契约、状态、恢复、安全与代码复杂度。
+- [x] 完成面试可复述的综合对照报告。
 
 RAG 对照验证：
 
 ```powershell
 uv run pytest -q projects/09-langgraph-leon/tests/test_rag_runtime_parity.py
 ```
+
+共享 RAG 已经证明同一个有界业务 Tool 可以无损经过两套 Runtime。这里不再为了增加数量接 Image Tool：
+Image 会引入异步任务、外部副作用和环境依赖，却不会增加对编排层的有效证明。
+
+完整结论、证据矩阵、复杂度边界和面试话术见
+[Self-built Leon 与 LangGraph Framework Edition 对照](docs/runtime-comparison.md)。
 
 ## 面试主线
 

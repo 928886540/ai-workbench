@@ -65,6 +65,8 @@
 | 生产编排 | `05-workflow` | 我能做可恢复、可重试的 AI 工作流 |
 | 协作智能 | `06-multi-agent` | 我理解多角色分工与仲裁 |
 | 高级作品 | `07-coding-agent` | 我能做更接近生产的编码代理 |
+| 框架组件 | `08-langchain-lab` | 我理解 Model、Prompt、Tool、Retriever 和高层 Agent 抽象 |
+| Runtime 对照 | `09-langgraph-leon` | 我能比较自研 Runtime 与 LangGraph State/Checkpoint/Resume 的取舍 |
 
 ---
 
@@ -74,10 +76,10 @@
 
 - [x] 仓库骨架与定位
 - [ ] `.env` 接通真实模型
-- [ ] `01-llm-core` hello + structured output
-- [ ] `02-code-agent` 最小 tool loop
-- [ ] 对 `ai-workbench` 自己跑出分析报告
-- [ ] 面试稿能讲：工具、循环、权限边界
+- [x] `01-llm-core` hello + structured output
+- [x] `02-code-agent` 最小 tool loop
+- [x] 对 `ai-workbench` 自己跑出分析报告
+- [x] 面试稿能讲：工具、循环、权限边界
 
 **退出标准**
 
@@ -85,10 +87,10 @@
 
 ### Days 31-60：RAG + 评测意识
 
-- [ ] 文档切分与检索
-- [ ] 答案带 citation
-- [ ] 最小评测集（10~30 问）
-- [ ] 把“幻觉/未命中”讲清楚
+- [x] 文档切分与检索
+- [x] 答案带 citation
+- [x] 最小评测集（已扩到 50 个 Agent case）
+- [x] 把“幻觉/未命中”讲清楚
 
 **退出标准**
 
@@ -96,10 +98,10 @@
 
 ### Days 61-90：MCP + 作品包装
 
-- [ ] 自建 MCP server（至少 2~3 个 tool）
+- [x] 自建 MCP server（Leon MCP 第一版 5 个 tool）
 - [ ] Agent 可经 MCP 调本地能力
 - [ ] README + 架构图 + 3 分钟演示脚本
-- [ ] 简历项目顺序切到 AI 主投版
+- [x] 简历项目顺序切到 AI 主投版
 
 **退出标准**
 
@@ -134,9 +136,9 @@
 
 ## 7. 当前下一步（立刻做）
 
-1. 配好 `.env`，跑通 `uv run python -m llm_core.hello`
-2. 完成 `02-code-agent` 的真实 tool-calling loop
-3. 用面试稿演练 1 分钟自我介绍（AI 主投版）
+1. 用 `projects/09-langgraph-leon/docs/runtime-comparison.md` 演练 30 秒和 2 分钟 Runtime 对照回答。
+2. 整理 Agent 核心理论和高频追问，确保每个回答能落到仓库证据。
+3. 做 AI 应用/Agent 岗模拟面试，并根据卡壳点反向补文档，不扩产品功能。
 
 ---
 

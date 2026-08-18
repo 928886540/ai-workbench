@@ -53,11 +53,16 @@ Self-built `AgentRuntime` 与 LangGraph `ToolNode` 得到相同 raw observation�
 
 ## 范围
 
-09 只做 Chat、Tool Calling、Planning、Memory、RAG/Search 和 Checkpoint/Resume。允许选一个现有
-Image Tool 证明复用，不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
+09 只做 Chat、Tool Calling、Planning、Memory、RAG/Search 和 Checkpoint/Resume。共享 `rag_search`
+的 raw observation parity 已经完成，不再追加 Image Tool；后者会引入异步任务、外部副作用和环境依赖，
+但不会增加对 Runtime 编排层的有效证明。不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或
+Multi-Agent。
 
 ## 后果
 
 - 会同时维护两套编排实现，但这是有意的对照实验，不抽象成“万能 Runtime”。
 - 业务 Tool 修复只发生在原 service/tool factory，两个 Runtime 同时受益。
 - Framework Edition 可以快速演示框架价值，同时不会抹掉自研 Runtime 的面试差异化。
+
+完整对照结论见
+[`projects/09-langgraph-leon/docs/runtime-comparison.md`](../../projects/09-langgraph-leon/docs/runtime-comparison.md)。

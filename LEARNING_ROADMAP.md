@@ -274,12 +274,15 @@ LangGraph State/Node/Checkpoint，但如实承认 LangChain 1.x 的 `create_agen
 已完成 `ToolRegistry -> LangChain BaseTool` 薄适配、
 `START -> agent -> ToolNode -> agent -> END` provider-free 闭环、Planning/Memory、加密 SQLite checkpoint、
 跨进程 resume，以及共享 `rag_search` 的双 Runtime 对照。RAG 测试使用同一个 `AgentTool + ToolRegistry`，
-两边 raw observation 完全一致且 handler 各执行一次。
+两边 raw observation 完全一致且 handler 各执行一次。综合对照报告已经收口，覆盖 State、Tool loop、
+Planning、Memory、Interrupt/Cancellation、Checkpoint 安全、恢复语义和代码复杂度，见
+[`runtime-comparison.md`](projects/09-langgraph-leon/docs/runtime-comparison.md)。
 
 ### 完成边界
 
-只做 Chat、Tool Calling、Planning、Memory、RAG/Search 和 Checkpoint/Resume。允许复用一个现有
-Image Tool 做集成证明，不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
+只做 Chat、Tool Calling、Planning、Memory、RAG/Search 和 Checkpoint/Resume。共享 RAG 已足够证明
+业务 Tool 可以复用，不再接 Image Tool；不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或
+Multi-Agent。
 
 `03-rag-lab` 已提供两边共享的 canonical RAG Tool，但原 Leon 与 09 live CLI 都尚未注入预建索引，
 只能声称共享契约和 Runtime 对照已完成，不能声称 live Leon RAG 已启用。

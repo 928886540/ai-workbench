@@ -12,7 +12,7 @@
 
 ## 当前主线（2026-08-18）
 
-- **框架对照新主线已启动**：保留 `02-leon-agent` Self-built Runtime；新增小型
+- **框架对照主线已收口**：保留 `02-leon-agent` Self-built Runtime；新增小型
   `08-langchain-lab` 和独立 `09-langgraph-leon`（对外名 Leon Agent Framework Edition）。
 - `08-langchain-lab` 已完成 Model / Prompt / Pydantic Structured Output、`@tool`、RAG Retriever adapter
   和一次高层 `create_agent()` 的 provider-free 体验。LangChain 1.x 的 `create_agent()` 内部基于
@@ -29,14 +29,15 @@
   File/Memory/User/AI 原文不出现在 DB/WAL，重开后仍能完整解密状态。live `leon-graph` 默认使用
   加密 SQLite，稳定 opaque `thread_id` 支持 `--resume <id>` 和交互 `/resume <id>`；跨进程 pending
   恢复只允许 read-only tools，写类 Memory 工具 fail closed。RAG 共享 Tool 与双 Runtime raw
-  observation 对照也已完成；后续只收口综合对照报告，不扩 Leon 产品功能。
+  observation 对照也已完成；综合对照报告已收口，不扩 Leon 产品功能。
 - `03-rag-lab` 已定义唯一只读 `rag_search` 业务 Tool：复用 `VectorRetriever`，限制 query/top_k、
-  安全 citation 和 5500 字符总 observation，并对 query/正文做 audit 脱敏。下一步用同一个 Tool 实例
-  分别经过 Self-built `AgentRuntime` 与 LangGraph `ToolNode` 的结果一致性证明已经通过；两边 raw
-  observation 相等且 handler 各执行一次。尚未注入原 Leon 或 09 live CLI，不能写成 live 已启用。
-  08 的 Tool / Retriever / 高层 Agent 已收口；下一步写综合对照报告并转回面试表达，不扩 Web、
-  TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
-- 当前 provider-free Python 基线：全仓 `688 passed`；Ruff、compileall、`uv lock --check` 和
+  安全 citation 和 5500 字符总 observation，并对 query/正文做 audit 脱敏。同一个 Tool 实例分别经过
+  Self-built `AgentRuntime` 与 LangGraph `ToolNode` 的结果一致性证明已经通过；两边 raw observation
+  相等且 handler 各执行一次。尚未注入原 Leon 或 09 live CLI，不能写成 live 已启用。
+  08 的 Tool / Retriever / 高层 Agent 和 09 的综合对照报告均已收口；下一步转入项目讲解、高频问答和
+  模拟面试，不扩 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。综合报告见
+  `projects/09-langgraph-leon/docs/runtime-comparison.md`。
+- 当前 provider-free Python 基线：全仓 `692 passed`；Ruff、compileall、`uv lock --check` 和
   `git diff --check` 全绿，仅保留既有 Starlette/httpx 弃用警告，未请求真实模型或搜索服务。
 
 - 当前集成分支：`main`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
@@ -60,7 +61,7 @@
   没有调大总超时、降低断言或改变业务语义，Vite/FastAPI 两种入口各 **93/93**，退出后无 Preview 端口或子进程残留。
 - CLI 启动和执行流统一为最大 66 列的 LEON 控制台：新会话显示双网格，恢复会话与窄屏自动降级；
   `YOU  ❯`、`Leon ❯`、`◈ THINK/TOOL`、`◆ DONE`、`◇ ERROR` 分离角色，回答分割线继续铺满终端可用宽度。
-- 最终收口验证：全仓 `pytest` **635 passed**，Coding Agent 三个 demo case **3 passed**；Ruff、compileall、
+- 历史收口验证：当时全仓 `pytest` **635 passed**，Coding Agent 三个 demo case **3 passed**；Ruff、compileall、
   `uv lock --check`、Vue typecheck/build、`git diff --check`、UTF-8/BOM 与 secret 扫描均通过。
 - 下方带日期 checkpoint 保留历史现场；其中旧“下一步”或“待提交”不覆盖本节当前主线。
 - `02-leon-agent` Web 五阶段已完成：FastAPI Gateway、SSE、PWA、token 登录、任务/图库/事件时间线

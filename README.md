@@ -76,6 +76,10 @@ SSE、MCP 和 Multi-Agent 均不进入该项目。
 `AgentRuntime` 与 LangGraph `ToolNode`，两边给模型的 observation 完全一致。当前是 provider-free
 集成证明，不代表原 Leon 或 Framework CLI 已配置 live 知识索引。
 
+框架对照工程主线已经收口，综合报告明确记录 State、Tool loop、Planning、Memory、Checkpoint、
+Interrupt/Cancellation、安全与恢复语义的差异。下一阶段转入面试讲解和模拟问答，不继续扩 Framework
+Edition 的产品功能。
+
 此前的 `07-coding-agent` 基础闭环已完成：
 
 在唯一 `AgentRuntime` 上验证一个面试可讲清的垂直场景：
@@ -128,7 +132,7 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 - [ ] `06-multi-agent`：多 Agent 协作
 - [x] `07-coding-agent`：面试用 Vertical Agent Demo 基础闭环
 - [x] `08-langchain-lab`：Model / Prompt / Structured Output / Tool / Retriever / 高层 Agent 组件体验完成
-- [ ] `09-langgraph-leon`：共享 Tool、CLI、Planning、Memory、加密 SQLite、跨进程恢复与 RAG 双 Runtime observation 对照已完成；综合对照报告待收口
+- [x] `09-langgraph-leon`：共享 Tool、CLI、Planning、Memory、加密 SQLite、跨进程恢复、RAG 双 Runtime observation 对照与综合报告已完成
 
 ## 协作方式（和 AI 一起开发时）
 
@@ -176,4 +180,5 @@ uv run leon-graph --demo
 - [设计决策](notes/decisions/0001-repo-bootstrap.md)
 - [Leon Agent 架构决策](notes/decisions/0002-leon-agent-boundary.md)
 - [LangChain / LangGraph 对照边界](notes/decisions/0004-langchain-langgraph-lab-boundary.md)
+- [Self-built Leon 与 LangGraph 综合对照](projects/09-langgraph-leon/docs/runtime-comparison.md)
 - [AI 协作约定](AGENTS.md)
