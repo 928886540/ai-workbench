@@ -168,8 +168,11 @@ expand it into global search/delete APIs. Normalize every `final_image_url` into
   mouse-wheel scrollback, drag selection, and Ctrl+Shift+C, so prompt_toolkit mouse reporting stays
   disabled. PageUp/PageDown also scroll the transcript. Image labels use terminal-native OSC 8 links
   with `/open` as the fallback, so clickability does not require application mouse capture. A one-row
-  gap separates transcript/status output from the composer. The composer uses a `YOU ❯` marker on its
-  first line, keeps continuation lines unindented, and explicitly toggles cursor visibility because
+  gap separates transcript/status output from the composer. The composer uses a `YOU  ❯` marker on
+  its first line and hangs continuation/wrapped lines under the content column. User text uses a
+  warm accent while the `Leon ❯` marker keeps the CLI cyan palette. Typing `/` opens the command
+  completion menu; Enter accepts the first candidate, and `/model` opens a bottom model picker with
+  Up/Down, Enter, and Escape controls. Cursor visibility is explicitly toggled because
   prompt_toolkit's Win32 output backend ignores blinking cursor shapes.
 - Completed exchanges are separated by horizontal rules. Only the latest completed turn may show a
   `Worked for <duration>` label; launching the next turn replaces that label with a plain rule, and

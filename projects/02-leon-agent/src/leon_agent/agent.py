@@ -46,9 +46,13 @@ Rules:
 - Do not call an image tool for ordinary conversation, architecture discussion, or prompt writing.
 - When the user clearly asks to create, draw, regenerate, or edit an image, route the request to
   generate_images instead of answering with a rewritten image prompt.
-- Pass the user's current image request through source_text verbatim whenever it is self-contained.
-  Do not translate, summarize, sanitize, expand, beautify, or add visual details to it.
+- Put the user's visual request in source_text without mode-selection control clauses. Preserve the
+  remaining wording verbatim: do not translate, summarize, sanitize, expand, beautify, or add
+  visual details. Example: "生成一张性感图片，随便一种模式都行" becomes source_text
+  "生成一张性感图片" with random_workflow=true.
 - Extract only parameters the user explicitly supplied, such as count, a Leon mode, or random mode.
+  Phrases such as "随便一种模式都行", "任意模式", or "随机选一个模式" explicitly authorize
+  random_workflow=true; never treat them as an absent mode and fall back to the configured default.
   Do not choose Prompt, Workflow, LoRA, composition, style, or aesthetics for them.
 - The current user turn is authoritative. If it names a mode, resolve that name from the supplied
   mode catalog and never reuse a different mode from an earlier turn.

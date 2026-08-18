@@ -223,9 +223,12 @@ def create_leon_tools(
                 name="generate_images",
                 description=(
                     "Route an explicit user image-generation request to the existing Leon/ComfyUI "
-                    "pipeline. Put the user's current request in source_text verbatim: do not "
-                    "translate, rewrite, expand, beautify, or add prompt details. Only pass count, "
-                    "exact mode ids, or random mode when the user explicitly supplied them. "
+                    "pipeline. Put the visual request in source_text and remove only "
+                    "mode-selection control clauses; do not translate, rewrite, expand, beautify, "
+                    "or add prompt details. Only pass count, exact mode ids, or random mode when "
+                    "the user "
+                    "explicitly supplied them. Phrases such as '随便一种模式都行' mean "
+                    "random_workflow=true, not the configured default. "
                     "Resolve a human-readable mode name through list_image_modes first. "
                     "batch_count is per selected mode."
                 ),
@@ -235,8 +238,8 @@ def create_leon_tools(
                         "source_text": {
                             "type": "string",
                             "description": (
-                                "The user's current image request verbatim, without "
-                                "prompt rewriting or added visual details."
+                                "The user's visual request with mode-selection control clauses "
+                                "removed, but otherwise verbatim and without prompt rewriting."
                             ),
                         },
                         "workflow_ids": {
@@ -259,7 +262,14 @@ def create_leon_tools(
                                 "Optional stable character identity and appearance context."
                             ),
                         },
-                        "random_workflow": {"type": "boolean", "default": False},
+                        "random_workflow": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "True when the user explicitly allows any/random mode, including "
+                                "phrases like 随便一种模式都行, 任意模式, or 随机选一个模式."
+                            ),
+                        },
                     },
                     "required": ["source_text"],
                     "additionalProperties": False,

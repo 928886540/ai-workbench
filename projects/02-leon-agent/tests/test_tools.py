@@ -205,9 +205,11 @@ def test_latest_images_tool_forwards_requested_count() -> None:
     assert "default" not in latest_schema["properties"]["limit"]
 
 
-def test_agent_prompt_forbids_image_prompt_rewriting() -> None:
-    assert "source_text verbatim" in SYSTEM_PROMPT
-    assert "Do not translate, summarize, sanitize, expand, beautify" in SYSTEM_PROMPT
+def test_agent_prompt_separates_mode_controls_from_image_request() -> None:
+    assert "visual request in source_text" in SYSTEM_PROMPT
+    assert "随便一种模式都行" in SYSTEM_PROMPT
+    assert "random_workflow=true" in SYSTEM_PROMPT
+    assert "do not translate, summarize, sanitize, expand, beautify" in SYSTEM_PROMPT
     assert "Do not choose Prompt, Workflow, LoRA" in SYSTEM_PROMPT
 
 

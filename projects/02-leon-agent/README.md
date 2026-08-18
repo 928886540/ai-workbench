@@ -5,10 +5,10 @@
 ## 当前能力
 
 - `leon` 日用 inline TUI：无可见滚动条的聊天记录、1～6 行动态输入框、运行中消息队列、后台生图通知、SQLite 输入历史和 Rich 非 TTY fallback
-- CLI 新会话使用最大 66 列的 LEON 双网格启动界面，恢复会话和窄屏自动降级；`YOU ❯`、`LEON ╱>` 与执行状态前缀明确区分用户、助手和工具流
+- CLI 新会话使用最大 66 列的 LEON 双网格启动界面，恢复会话和窄屏自动降级；`YOU  ❯`、`Leon ❯` 与执行状态前缀明确区分用户、助手和工具流
 - `leon-server`：FastAPI Gateway + SSE + 手机 PWA Web Client
 - 普通问题直接聊天，不调用工具
-- 明确生图请求优先路由工具，用户原话作为 `source_text` 透传，不由 Agent 扩写 Prompt
+- 明确生图请求优先路由工具，视觉描述作为 `source_text` 透传；模式选择控制语句会被单独提取，不由 Agent 扩写 Prompt
 - 7 个 Leon 生图工具：模式、环境、自助生成、任务、取消任务、会话图库、全局最近图片（数量可调）
 - SQLite 持久化会话、消息、tool call、`generationPlanId` 和 `jobId`
 - 复用 `leon-image` 的 `executor-core.js + executor-assets.js`
@@ -119,7 +119,7 @@ leon resume 6b34ef29606447d395f05899ba30abf7
 - `/exit`：退出
 
 全屏 TUI 中 Enter 发送，Shift+Enter 换行；终端不支持修饰键时可用 Ctrl+Enter 或 Esc+Enter。
-输入框首行使用 `YOU ❯` 提示符，续行、运行状态和底栏不做额外缩进；助手回答使用 `LEON ╱>`，避免用户与系统共用同一身份。光标使用显式显隐节拍保证 Windows Terminal 下闪烁。CLI 使用 inline 模式，
+输入框首行使用 `YOU  ❯` 提示符，续行和自动折行保持内容列对齐；助手回答使用 `Leon ❯`，避免用户与系统共用同一身份。用户正文使用暖色，Leon 保持青色标记和正文色。输入 `/` 即显示命令候选，`/m` 后按 Enter 接受第一个候选；执行 `/model` 后在底部打开模型选择面板，可用上下键选择、Enter 确认、Esc 返回。光标使用显式显隐节拍保证 Windows Terminal 下闪烁。CLI 使用 inline 模式，
 鼠标滚轮滚动外层会话记录，拖选归宿主终端处理，选中后可用 Ctrl+Shift+C 复制；
 聊天记录也可用 PageUp/PageDown 翻页。图片使用不依赖应用鼠标捕获的 OSC 8 原生超链接，`/open` 是后备；
 输出区与输入区保留一行呼吸空间。历史回答标记为绿色，最新回答保持正文色；

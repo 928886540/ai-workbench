@@ -59,7 +59,7 @@
 - Web smoke 的历史列表与最近图片等待竞态已收口：测试现在等待排序后的列表真正落 DOM，并要求两张图片均完成加载且布局尺寸非零；
   没有调大总超时、降低断言或改变业务语义，Vite/FastAPI 两种入口各 **93/93**，退出后无 Preview 端口或子进程残留。
 - CLI 启动和执行流统一为最大 66 列的 LEON 控制台：新会话显示双网格，恢复会话与窄屏自动降级；
-  `YOU ❯`、`LEON ╱>`、`◈ THINK/TOOL`、`◆ DONE`、`◇ ERROR` 分离角色，回答分割线继续铺满终端可用宽度。
+  `YOU  ❯`、`Leon ❯`、`◈ THINK/TOOL`、`◆ DONE`、`◇ ERROR` 分离角色，回答分割线继续铺满终端可用宽度。
 - 最终收口验证：全仓 `pytest` **635 passed**，Coding Agent 三个 demo case **3 passed**；Ruff、compileall、
   `uv lock --check`、Vue typecheck/build、`git diff --check`、UTF-8/BOM 与 secret 扫描均通过。
 - 下方带日期 checkpoint 保留历史现场；其中旧“下一步”或“待提交”不覆盖本节当前主线。
@@ -90,7 +90,7 @@
   `data/system-prompts/双人成行预设.txt`，CLI 与 Web Gateway 都已接入
 - Web 修复（2026-08-16）：旧 session 聊天记录恢复渲染、任务/图库按 `created_at` 最新优先；
   编辑改为独立弹窗，完成任务显示缩略图，退出登录二次确认；站点 favicon 已改为 CLI 同款金色 `✦`，Vue SW 当前为 v21
-- CLI 已升级为日用 inline TUI：上方可滚动聊天记录，底部 1～6 行动态输入框以 `YOU ❯` 标记首行、续行不缩进；助手回答使用 `LEON ╱>`；外层终端接管
+- CLI 已升级为日用 inline TUI：上方可滚动聊天记录，底部 1～6 行动态输入框以 `YOU  ❯` 标记首行、续行与折行保持内容列对齐；助手回答使用 `Leon ❯`；输入 `/` 自动显示候选，`/model` 使用底部上下键模型面板；外层终端接管
   鼠标滚轮回看和拖选复制，同时支持 PageUp/PageDown 翻页与显式闪烁竖线光标；resume 会按顺序重放最近 240 条消息；Enter 发送，
   Shift+Enter 换行，并为不兼容终端保留 Ctrl+Enter / Esc+Enter。非 TTY 继续使用 Rich fallback。
 - CLI 历史回答 `•` 为绿色、最新回答保持正文色，工具状态按青/绿/红/粉/黄区分；每轮结束显示唯一一条

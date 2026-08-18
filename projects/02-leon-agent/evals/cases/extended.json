@@ -28,18 +28,18 @@
     "fake_turns": [{"tool_calls": [{"name": "generate_images", "arguments": {"source_text": "用 k2_queen_marika 生成一张雪山女王。", "workflow_ids": ["k2_queen_marika"]}}]}]
   },
   {
-    "id": "image_random_workflow_argument",
+    "id": "image_any_mode_is_random_and_not_default",
     "category": "image-tools",
-    "user_message": "随机选一个模式生成一张森林小屋。",
+    "user_message": "生成一张性感图片，随便一种模式都行",
     "expectations": {
       "required_tools": ["generate_images"],
       "forbidden_tools": ["web_search", "plan_create"],
-      "tool_arguments": [{"name": "generate_images", "arguments": {"source_text": "随机选一个模式生成一张森林小屋。", "random_workflow": true}}],
+      "tool_arguments": [{"name": "generate_images", "arguments": {"source_text": "生成一张性感图片", "random_workflow": true}}],
       "max_tool_calls": 1,
       "plan": {"mode": "forbidden"},
       "answer_contains": ["已提交"]
     },
-    "fake_turns": [{"tool_calls": [{"name": "generate_images", "arguments": {"source_text": "随机选一个模式生成一张森林小屋。", "random_workflow": true}}]}]
+    "fake_turns": [{"tool_calls": [{"name": "generate_images", "arguments": {"source_text": "生成一张性感图片", "random_workflow": true}}]}]
   },
   {
     "id": "image_edit_request_routes_generation",

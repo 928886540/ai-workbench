@@ -88,12 +88,20 @@ try:
     from prompt_toolkit.filters import Condition, has_focus
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.layout import HSplit, Layout, Window
+    from prompt_toolkit.layout import (
+        ConditionalContainer,
+        Float,
+        FloatContainer,
+        HSplit,
+        Layout,
+        Window,
+    )
     from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.layout.dimension import Dimension
+    from prompt_toolkit.layout.menus import CompletionsMenu
     from prompt_toolkit.mouse_events import MouseButton, MouseEventType
     from prompt_toolkit.styles import Style
-    from prompt_toolkit.widgets import TextArea
+    from prompt_toolkit.widgets import Frame, TextArea
 except ModuleNotFoundError:  # pragma: no cover - legacy prompt fallback remains usable
     Application = None
     WordCompleter = None
@@ -102,15 +110,20 @@ except ModuleNotFoundError:  # pragma: no cover - legacy prompt fallback remains
     Condition = None
     has_focus = None
     KeyBindings = None
+    ConditionalContainer = None
+    Float = None
+    FloatContainer = None
     HSplit = None
     Layout = None
     Window = None
     FormattedTextControl = None
     Dimension = None
+    CompletionsMenu = None
     InMemoryHistory = None
     MouseButton = None
     MouseEventType = None
     Style = None
+    Frame = None
     TextArea = None
 
 
@@ -151,8 +164,8 @@ _NEWLINE_ENTER_DATA = {
 
 _WIN32_SHIFT_PRESSED = 0x0010
 
-_USER_PROMPT = "YOU ❯ "
-_ASSISTANT_PROMPT = "LEON ╱> "
+_USER_PROMPT = "YOU  ❯ "
+_ASSISTANT_PROMPT = "Leon ❯ "
 
 
 @dataclass(frozen=True)
@@ -168,6 +181,13 @@ class RuntimeStatus:
     image_enabled: bool
     search_enabled: bool
     request_policy: str
+
+
+@dataclass
+class ModelPickerState:
+    choices: tuple[str, ...]
+    selected_index: int
+    current: str
 _WIN32_CTRL_PRESSED = 0x000C
 _WIN32_ALT_PRESSED = 0x0003
 
@@ -227,8 +247,8 @@ def _launch_external_url(url: str) -> bool:
 def _legacy_prompt_markup(console: Console) -> str:
     """Use the styled arrow in Unicode consoles and an ASCII prompt otherwise."""
 
-    marker = "YOU ❯" if _console_supports(console, "❯") else "YOU >"
-    return f"\n[bold #00E5FF]{marker}[/bold #00E5FF]"
+    marker = "YOU  ❯" if _console_supports(console, "❯") else "YOU  >"
+    return f"\n[bold #F5C26B]{marker}[/bold #F5C26B]"
 
 
 def _console_supports(console: Console, text: str) -> bool:
@@ -446,7 +466,7 @@ class TerminalChatUI:
         self._status_animated = False
         self._status_animation_started_at: float | None = None
         self._latest_image_url: str | None = None
-        self._model_picker: tuple[str, ...] | None = None
+        self._model_picker: ModelPickerState | None = None
         self._follow_output = True
         self._generation = 0
         self._active_cancel_event: threading.Event | None = None
@@ -480,6 +500,7 @@ class TerminalChatUI:
             always_hide_cursor=True,
         )
         self.output_gap = Window(height=1)
+        model_picker_active = Condition(lambda: self._model_picker is not None)
         input_kwargs = {
             "height": Dimension(min=1, max=6),
             "dont_extend_height": True,
@@ -488,6 +509,7 @@ class TerminalChatUI:
             "accept_handler": self._accept,
             "style": "class:composer.input",
             "prompt": [("class:composer.prompt", _USER_PROMPT)],
+            "read_only": model_picker_active,
         }
         if InMemoryHistory is not None:
             input_kwargs["history"] = self._build_input_history()
@@ -525,12 +547,29 @@ class TerminalChatUI:
             height=1,
             style="class:bottom",
         )
+        self.model_picker_control = FormattedTextControl(
+            self._model_picker_fragments,
+            focusable=False,
+            show_cursor=False,
+            get_cursor_position=self._model_picker_cursor_position,
+        )
+        self.model_picker_panel = ConditionalContainer(
+            content=Frame(
+                Window(
+                    content=self.model_picker_control,
+                    height=Dimension(min=1, max=8),
+                    dont_extend_height=True,
+                    always_hide_cursor=True,
+                ),
+                title="选择模型",
+                style="class:model-picker.frame",
+                height=Dimension(min=3, max=10),
+            ),
+            filter=model_picker_active,
+        )
         key_bindings = KeyBindings()
         input_focused = has_focus(self.input)
         turn_busy = Condition(lambda: self.busy)
-        model_picker_active = Condition(
-            lambda: self._model_picker is not None and not self.busy
-        )
 
         @key_bindings.add("enter", filter=input_focused, eager=True)
         def _(event) -> None:  # noqa: ANN001
@@ -639,10 +678,11 @@ class TerminalChatUI:
         def _(event) -> None:  # noqa: ANN001, ARG001
             self._scroll_output_page(1)
 
-        root = HSplit(
+        body = HSplit(
             [
                 self.output,
                 self.output_gap,
+                self.model_picker_panel,
                 self.status,
                 self.composer_top,
                 self.input,
@@ -650,9 +690,26 @@ class TerminalChatUI:
                 self.bottom_bar,
             ]
         )
+        root = FloatContainer(
+            content=body,
+            floats=[
+                Float(
+                    xcursor=True,
+                    ycursor=True,
+                    content=CompletionsMenu(
+                        max_height=10,
+                        scroll_offset=1,
+                        display_arrows=True,
+                        extra_filter=Condition(
+                            lambda: self._model_picker is None
+                        ),
+                    ),
+                )
+            ],
+        )
         tui_style = Style.from_dict(
             {
-                "message.user": "#FFFFFF",
+                "message.user": "#FFE0A3",
                 "message.assistant": "#FFFFFF",
                 "message.marker": "bold #00E5FF",
                 "message.marker.old": "#666666",
@@ -672,9 +729,18 @@ class TerminalChatUI:
                 "status.pulse.dim": "#516579",
                 "status.cancel": "#FF8FB1",
                 "composer.line": "#006C78",
-                "composer.prompt": "bold #00E5FF",
-                "composer.input": "#DCEEFF",
+                "composer.prompt": "bold #F5C26B",
+                "composer.input": "#FFE0A3",
                 "composer.hint": "#71869A",
+                "completion-menu": "bg:#202D38 #DCEEFF",
+                "completion-menu.completion": "bg:#202D38 #DCEEFF",
+                "completion-menu.completion.current": "bold bg:#2B3C49 #59E1F7",
+                "completion-menu.meta.completion": "bg:#202D38 #71869A",
+                "completion-menu.meta.completion.current": "bg:#2B3C49 #AFC4D6",
+                "model-picker.frame": "bg:#202D38 #DCEEFF",
+                "model-picker.item": "bg:#202D38 #DCEEFF",
+                "model-picker.item.current": "bg:#202D38 #71869A",
+                "model-picker.item.selected": "bold bg:#2B3C49 #59E1F7",
                 "bottom": "#5F7488",
                 "bottom.model": "#AFC4D6",
                 "bottom.provider": "#71869A",
@@ -740,8 +806,40 @@ class TerminalChatUI:
         return input_adapter
 
     @staticmethod
-    def _composer_line_prefix(line_number: int, wrap_count: int):  # noqa: ARG004
-        return ""
+    def _composer_line_prefix(line_number: int, wrap_count: int):
+        if line_number == 0 and wrap_count == 0:
+            return ""
+        return " " * len(_USER_PROMPT)
+
+    def _model_picker_cursor_position(self):
+        with self.lock:
+            picker = self._model_picker
+            selected_index = picker.selected_index if picker is not None else 0
+        return Point(x=0, y=selected_index)
+
+    def _model_picker_fragments(self):
+        with self.lock:
+            picker = self._model_picker
+            if picker is None:
+                return []
+            choices = picker.choices
+            selected_index = picker.selected_index
+            current = picker.current
+        fragments = []
+        for index, model in enumerate(choices):
+            selected = index == selected_index
+            if selected:
+                style = "class:model-picker.item.selected"
+                marker = "❯ "
+            else:
+                style = "class:model-picker.item"
+                marker = "  "
+            label = "跟随 provider 默认模型" if model == "default" else model
+            suffix = "  (current)" if model == current else ""
+            fragments.append((style, f"{marker}{index + 1}. {label}{suffix}"))
+            if index < len(choices) - 1:
+                fragments.append((style, "\n"))
+        return fragments
 
     def _build_input_history(self):
         history = InMemoryHistory()
@@ -789,6 +887,13 @@ class TerminalChatUI:
 
     def _history_or_cursor(self, buffer, *, direction: int) -> None:  # noqa: ANN001
         with self.lock:
+            picker = self._model_picker
+            if picker is not None:
+                picker.selected_index = (picker.selected_index + direction) % len(
+                    picker.choices
+                )
+                self.app.invalidate()
+                return
             self._last_ctrl_c_at = None
             self._ctrl_c_count = 0
             if self.status_text.startswith("● "):
@@ -903,7 +1008,7 @@ class TerminalChatUI:
             model_picker = self._model_picker
         text = getattr(getattr(self, "input", None), "text", "")
         if model_picker is not None:
-            hint = "输入模型序号或完整 ID · Enter 确认 · esc 取消"
+            hint = "↑/↓ 选择 · Enter 确认 · Esc 返回"
         elif not text:
             return []
         elif busy:
@@ -918,7 +1023,6 @@ class TerminalChatUI:
         with self.lock:
             visible = (
                 self.busy
-                or self._model_picker is not None
                 or bool(self._background_image_jobs)
                 or self.status_text != self._IDLE_STATUS
             )
@@ -931,7 +1035,6 @@ class TerminalChatUI:
             started_at = self._started_at
             animation_started_at = self._status_animation_started_at
             busy = self.busy
-            model_picker = self._model_picker
             background_count = len(self._background_image_jobs)
         if busy and started_at is not None:
             now = monotonic()
@@ -971,8 +1074,6 @@ class TerminalChatUI:
                 fragments.append((style, character))
             fragments.append(("class:status", f" ({elapsed} • esc 取消)"))
             return fragments
-        if model_picker is not None:
-            return [("class:status", "◦ 选择模型：输入序号或完整 ID · esc 取消")]
         if background_count:
             return [
                 (
@@ -998,14 +1099,11 @@ class TerminalChatUI:
             status = self.status_text
             started_at = self._started_at
             busy = self.busy
-            model_picker = self._model_picker
             background_count = len(self._background_image_jobs)
         if busy and started_at is not None:
             elapsed = self._format_elapsed(monotonic() - started_at)
             suffix = "" if status.startswith("⏹") else " • esc 取消"
             return f"◈ THINK  {status} ({elapsed}{suffix})"
-        if model_picker is not None:
-            return "◦ 选择模型：输入序号或完整 ID · esc 取消"
         if background_count:
             return f"◦ 后台生图 {background_count} 项 · 输入区可继续使用"
         if status == self._IDLE_STATUS:
@@ -1256,6 +1354,21 @@ class TerminalChatUI:
             width = shutil.get_terminal_size(fallback=(100, 24)).columns
         return min(100, max(1, width - 2))
 
+    def _message_body_width(self, prompt: str) -> int:
+        return max(1, self._render_width() - len(prompt))
+
+    @staticmethod
+    def _render_plain_lines(text: str, width: int) -> list[str]:
+        buffer = io.StringIO()
+        render_console = Console(
+            file=buffer,
+            width=max(1, width),
+            color_system=None,
+            force_terminal=False,
+        )
+        render_console.print(Text(text), highlight=False, overflow="fold")
+        return buffer.getvalue().rstrip("\n").splitlines()
+
     def _separator_width(self) -> int:
         render_info = getattr(self.output, "render_info", None)
         width = getattr(render_info, "window_width", 0)
@@ -1264,7 +1377,10 @@ class TerminalChatUI:
         return max(1, int(width))
 
     def write_answer(self, answer: str) -> None:
-        lines, urls = _render_answer_lines(answer, self._render_width())
+        lines, urls = _render_answer_lines(
+            answer,
+            self._message_body_width(_ASSISTANT_PROMPT),
+        )
         lines = _normalise_answer_lines(lines)
         lines.extend(
             url + _image_link_suffix(index, len(urls))
@@ -1322,7 +1438,10 @@ class TerminalChatUI:
         self.app.invalidate()
 
     def write_user_message(self, message: str) -> None:
-        lines = message.splitlines() or [""]
+        lines = self._render_plain_lines(
+            message,
+            self._message_body_width(_USER_PROMPT),
+        ) or [""]
         body = "\n".join(
             (_USER_PROMPT if index == 0 else " " * len(_USER_PROMPT)) + line
             for index, line in enumerate(lines)
@@ -1337,32 +1456,43 @@ class TerminalChatUI:
         self._open_url(url)
 
     def begin_model_picker(self, models: Sequence[str], *, current: str) -> None:
-        choices = tuple(dict.fromkeys(model for model in models if model))
+        choices = tuple(dict.fromkeys([*(model for model in models if model), "default"]))
         if not choices:
             return
+        selected_index = choices.index(current) if current in choices else 0
+        self.input.buffer.text = ""
         with self.lock:
-            self._model_picker = choices
-        lines = ["• 选择模型"]
-        for index, model in enumerate(choices, start=1):
-            marker = "  current" if model == current else ""
-            lines.append(f"  {index:>2}. {model}{marker}")
-        lines.append("  default. 跟随当前 provider 默认模型")
-        self.write_plain("\n".join(lines))
+            self._model_picker = ModelPickerState(
+                choices=choices,
+                selected_index=selected_index,
+                current=current,
+            )
         self.app.invalidate()
 
-    def cancel_model_picker(self, *, silent: bool = False) -> None:
+    def cancel_model_picker(self, *, silent: bool = False) -> None:  # noqa: ARG002
         with self.lock:
-            was_active = self._model_picker is not None
             self._model_picker = None
-        if was_active and not silent:
-            self.write_plain("◦ 已取消模型选择")
         self._set_status(self._IDLE_STATUS)
 
-    def _accept_model_choice(self, buffer, candidate: str) -> bool:  # noqa: ANN001
-        buffer.text = ""
+    def _accept_model_choice(
+        self,
+        buffer,
+        candidate: str | None = None,
+    ) -> bool:  # noqa: ANN001
+        with self.lock:
+            picker = self._model_picker
+            selected = (
+                picker.choices[picker.selected_index]
+                if picker is not None
+                else None
+            )
+        resolved = candidate or selected
+        if not resolved:
+            return False
         with self.lock:
             self._model_picker = None
-        self.owner.switch_model(candidate)
+        buffer.text = ""
+        self.owner.switch_model(resolved)
         self._set_status(self._IDLE_STATUS)
         return False
 
@@ -1533,8 +1663,18 @@ class TerminalChatUI:
             busy = self.busy
             model_picker = self._model_picker
         if model_picker is not None:
-            self._accept(event.current_buffer)
+            self._accept_model_choice(event.current_buffer)
             return
+        completion_state = getattr(event.current_buffer, "complete_state", None)
+        if completion_state is not None and completion_state.completions:
+            completion = (
+                completion_state.current_completion
+                or completion_state.completions[0]
+            )
+            previous_text = event.current_buffer.text
+            event.current_buffer.apply_completion(completion)
+            if event.current_buffer.text != previous_text:
+                return
         if busy:
             # Avoid adding an unsent draft to prompt_toolkit history while the
             # current turn is still running.
@@ -1772,7 +1912,7 @@ class LeonConsole:
                 if ui is not None:
                     ui.write_user_message(content)
                 else:
-                    self.print(Text(f"{_USER_PROMPT}{content}", style="#FFFFFF"))
+                    self.print(Text(f"{_USER_PROMPT}{content}", style="#FFE0A3"))
             elif ui is not None:
                 ui.write_answer(content)
                 ui.write_turn_separator()
@@ -2360,10 +2500,17 @@ class LeonConsole:
         if ui is not None:
             ui.write_answer(answer)
             return
-        width = max(1, min(100, int(getattr(self.console, "width", 100)) - 2))
+        marker = (
+            _ASSISTANT_PROMPT
+            if _console_supports(self.console, "❯")
+            else "Leon > "
+        )
+        width = max(
+            1,
+            min(100, int(getattr(self.console, "width", 100)) - 2 - len(marker)),
+        )
         lines, urls = _render_answer_lines(answer, width)
         lines = _normalise_answer_lines(lines)
-        marker = _ASSISTANT_PROMPT if _console_supports(self.console, "╱") else "LEON > "
         link_label = "↗ 打开图片" if _console_supports(self.console, "↗") else "打开图片"
         output = Text()
         for index, line in enumerate(lines):

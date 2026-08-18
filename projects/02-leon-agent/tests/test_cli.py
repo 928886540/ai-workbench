@@ -15,7 +15,8 @@ from leon_agent.cli import (
 from leon_agent.file_write_policy import file_write_turn
 from leon_agent.session import SessionStore
 from prompt_toolkit.application import create_app_session
-from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.buffer import CompletionState
+from prompt_toolkit.completion import CompleteEvent, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.keys import Keys
@@ -1549,11 +1550,10 @@ def test_terminal_ui_model_picker_accepts_number_without_sending_chat(monkeypatc
     monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
     ui = TerminalChatUI(FakeOwner())
     ui.begin_model_picker(["grok-4.6", "gpt-5.6-sol"], current="grok-4.6")
-    ui.input.buffer.text = "2"
+    ui._history_or_cursor(ui.input.buffer, direction=1)
+    ui._handle_enter(SimpleNamespace(current_buffer=ui.input.buffer, key_sequence=[]))
 
-    ui._accept(ui.input.buffer)
-
-    assert selected == ["2"]
+    assert selected == ["gpt-5.6-sol"]
     assert ui._model_picker is None
     assert ui.input.buffer.text == ""
     assert all(block != "» 2" for block in ui.blocks)
@@ -1621,6 +1621,7 @@ def test_terminal_ui_enter_sends_and_shift_enter_inserts_newline(monkeypatch) ->
         def __init__(self) -> None:
             self.accepted = 0
             self.newlines = []
+            self.complete_state = None
 
         def validate_and_handle(self) -> None:
             self.accepted += 1
@@ -1690,6 +1691,76 @@ def test_terminal_ui_command_completion_includes_descriptions(monkeypatch) -> No
     ]
 
 
+def test_terminal_ui_command_completion_is_visible_and_enter_accepts_first_candidate(
+    monkeypatch,
+) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            self.layout = kwargs["layout"]
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+
+    assert ui.input.complete_while_typing is True
+
+    class FakeBuffer:
+        text = "/m"
+        complete_state = CompletionState(
+            Document("/m"),
+            [
+                Completion("/model", start_position=-2),
+                Completion("/models", start_position=-2),
+            ],
+        )
+
+        def apply_completion(self, completion) -> None:  # noqa: ANN001
+            self.text = completion.text
+            self.complete_state = None
+
+    buffer = FakeBuffer()
+    ui._handle_enter(
+        SimpleNamespace(current_buffer=buffer, key_sequence=[])
+    )
+
+    assert buffer.text == "/model"
+    assert ui.app.layout.container.__class__.__name__ == "FloatContainer"
+
+
+def test_terminal_ui_model_picker_is_bottom_panel_with_keyboard_selection(
+    monkeypatch,
+) -> None:
+    class FakeOwner:
+        llm_model = "gpt-5.6-sol"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+    ui.begin_model_picker(["gpt-5.6-sol", "gpt-5.6-terra"], current="gpt-5.6-sol")
+
+    rendered = "".join(text for _, text, *_ in ui._model_picker_fragments())
+    assert "❯ 1. gpt-5.6-sol  (current)" in rendered
+    assert "2. gpt-5.6-terra" in rendered
+    assert "跟随 provider 默认模型" in rendered
+
+    ui._history_or_cursor(ui.input.buffer, direction=1)
+    rendered = "".join(text for _, text, *_ in ui._model_picker_fragments())
+    assert "❯ 2. gpt-5.6-terra" in rendered
 def test_terminal_ui_history_follows_session_and_preserves_draft(
     monkeypatch,
     tmp_path,
@@ -1754,7 +1825,7 @@ def test_terminal_ui_uses_inline_scrollback_native_selection_and_blinking_cursor
     assert application_kwargs["cursor"] == cli_module.CursorShape.BLINKING_BEAM
     assert application_kwargs["refresh_interval"] is None
     prompt_processor = ui.input.control.input_processors[2]
-    assert prompt_processor.text == [("class:composer.prompt", "YOU ❯ ")]
+    assert prompt_processor.text == [("class:composer.prompt", "YOU  ❯ ")]
     assert ui.input.window.always_hide_cursor() is False
     ui._cursor_visible = False
     assert ui.input.window.always_hide_cursor() is True
@@ -1874,8 +1945,8 @@ def test_terminal_ui_input_editing_shortcuts(monkeypatch) -> None:
 
 def test_terminal_ui_multiline_composer_has_no_artificial_indent() -> None:
     assert TerminalChatUI._composer_line_prefix(0, 0) == ""
-    assert TerminalChatUI._composer_line_prefix(1, 0) == ""
-    assert TerminalChatUI._composer_line_prefix(0, 1) == ""
+    assert TerminalChatUI._composer_line_prefix(1, 0) == " " * len("YOU  ❯ ")
+    assert TerminalChatUI._composer_line_prefix(0, 1) == " " * len("YOU  ❯ ")
 
 
 def test_terminal_ui_history_has_an_empty_cursor_after_last_entry(monkeypatch) -> None:
@@ -2206,7 +2277,7 @@ def test_terminal_ui_uses_two_unframed_composer_lines_and_delays_user_render(
 
     ui.write_user_message("已经发送")
 
-    assert ui.blocks[-1] == "YOU ❯ 已经发送"
+    assert ui.blocks[-1] == "YOU  ❯ 已经发送"
 
 
 def test_terminal_ui_answer_uses_leon_prefix_and_indents_following_lines(
@@ -2230,9 +2301,42 @@ def test_terminal_ui_answer_uses_leon_prefix_and_indents_following_lines(
     ui.write_answer("第一行\n\n第二行")
 
     lines = ui.blocks[-1].splitlines()
-    assert lines[0].rstrip() == "LEON ╱> 第一行"
-    assert lines[-1] == "        第二行"
-    assert all(line.startswith("        ") for line in lines[1:])
+    assert lines[0].rstrip() == "Leon ❯ 第一行"
+    assert lines[-1] == "       第二行"
+    assert all(line.startswith("       ") for line in lines[1:])
+
+
+def test_terminal_ui_wraps_long_answer_and_user_lines_under_their_marker(
+    monkeypatch,
+) -> None:
+    class FakeOwner:
+        llm_model = "fake-model"
+        llm_provider_name = "fake-provider"
+        session_id = "session-test"
+
+    class FakeApplication:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+            return None
+
+        def invalidate(self) -> None:
+            return None
+
+    monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
+    ui = TerminalChatUI(FakeOwner())
+    monkeypatch.setattr(ui, "_render_width", lambda: 20)
+
+    ui.write_answer("生成点有意思的图片")
+    answer_lines = ui.blocks[-1].splitlines()
+    assert answer_lines[0].startswith("Leon ❯ ")
+    assert all(
+        line.startswith("       ") for line in answer_lines[1:]
+    )
+    assert all(len(line) <= 20 for line in answer_lines)
+
+    ui.write_user_message("生成点有意思的图片")
+    user_lines = ui.blocks[-1].splitlines()
+    assert user_lines[0].startswith("YOU  ❯ ")
+    assert all(line.startswith("       ") for line in user_lines[1:])
 
 
 def test_terminal_ui_turn_separator_retires_old_timing_and_colors_markers(
@@ -2269,7 +2373,7 @@ def test_terminal_ui_turn_separator_retires_old_timing_and_colors_markers(
     ui.write_plain("✗ tool 失败")
     fragments = ui._output_fragments()
 
-    marker_styles = [style for style, text, *_ in fragments if text == "LEON ╱> "]
+    marker_styles = [style for style, text, *_ in fragments if text == "Leon ❯ "]
     assert marker_styles == ["class:message.marker.old", "class:message.marker"]
     assert any(
         style == "class:status.success" and text == "✓ tool 完成"
@@ -2299,7 +2403,7 @@ def test_terminal_ui_answer_list_does_not_leave_a_lonely_outer_bullet(monkeypatc
     ui.write_answer("- 第一项\n- 第二项")
 
     lines = ui.blocks[-1].splitlines()
-    assert lines[0] == "LEON ╱> 第一项"
+    assert lines[0] == "Leon ❯ 第一项"
     assert lines[1].lstrip() == "• 第二项"
     assert all(not line.endswith(" ") for line in lines)
 
@@ -2319,7 +2423,7 @@ def test_terminal_ui_continuation_lines_keep_assistant_palette(monkeypatch) -> N
 
     monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
     ui = TerminalChatUI(FakeOwner())
-    ui.write_plain("LEON ╱> 第一行\n        第二行")
+    ui.write_plain("Leon ❯ 第一行\n       第二行")
 
     assert any(
         fragment[0] == "class:message.assistant" and "第二行" in fragment[1]
@@ -2412,7 +2516,7 @@ def test_legacy_answer_and_feedback_match_compact_tui_contract() -> None:
     assert "正在思考中" in rendered
     assert "…" not in rendered
     assert "◈ THINK" in rendered
-    assert "LEON ╱> 回答内容" in rendered
+    assert "Leon ❯ 回答内容" in rendered
 
 
 def test_terminal_ui_uses_leon_console_palette(monkeypatch) -> None:
@@ -2432,6 +2536,7 @@ def test_terminal_ui_uses_leon_console_palette(monkeypatch) -> None:
     ui = TerminalChatUI(FakeOwner())
     palette = dict(ui.app.style.style_rules)
 
+    assert palette["message.user"] == "#FFE0A3"
     assert palette["message.assistant"] == "#FFFFFF"
     assert palette["message.marker"] == "bold #00E5FF"
     assert palette["message.marker.old"] == "#666666"
@@ -2445,7 +2550,8 @@ def test_terminal_ui_uses_leon_console_palette(monkeypatch) -> None:
     assert palette["status.cancel"] == "#FF8FB1"
     assert palette["status.background"] == "#73B8FF"
     assert palette["composer.line"] == "#006C78"
-    assert palette["composer.prompt"] == "bold #00E5FF"
+    assert palette["composer.prompt"] == "bold #F5C26B"
+    assert palette["composer.input"] == "#FFE0A3"
 
 
 def test_terminal_ui_render_width_tracks_very_narrow_terminal(monkeypatch) -> None:
@@ -2752,10 +2858,10 @@ def test_legacy_open_last_image_does_not_report_false_success(monkeypatch) -> No
 
 def test_legacy_prompt_uses_ascii_marker_for_non_unicode_console() -> None:
     assert _legacy_prompt_markup(SimpleNamespace(encoding="gbk")) == (
-        "\n[bold #00E5FF]YOU >[/bold #00E5FF]"
+        "\n[bold #F5C26B]YOU  >[/bold #F5C26B]"
     )
     assert _legacy_prompt_markup(SimpleNamespace(encoding="utf-8")) == (
-        "\n[bold #00E5FF]YOU ❯[/bold #00E5FF]"
+        "\n[bold #F5C26B]YOU  ❯[/bold #F5C26B]"
     )
 
 

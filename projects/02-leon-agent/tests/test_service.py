@@ -63,6 +63,30 @@ def test_service_generation_uses_channel_independent_session_scope() -> None:
     assert client.generate_calls[0]["message_id"].startswith("leon-")
 
 
+def test_service_random_mode_uses_installed_catalog_and_strips_control_clause() -> None:
+    client = FakeImageClient()
+    client.list_modes = lambda: {  # type: ignore[method-assign]
+        "ok": True,
+        "modes": [
+            {"id": "k2_queen_marika"},
+            {"id": "k2_tifa_plus"},
+            {"id": "k2_red_craft"},
+        ],
+    }
+    service = create_service(client)
+
+    service.generate_images("生成一张性感图片，随便一种模式都行")
+
+    call = client.generate_calls[0]
+    assert call["source_text"] == "生成一张性感图片"
+    assert call["random_workflow"] is True
+    assert call["workflow_ids"] == [
+        "k2_queen_marika",
+        "k2_tifa_plus",
+        "k2_red_craft",
+    ]
+
+
 def test_service_query_and_cancel_methods_preserve_session_scope() -> None:
     client = FakeImageClient()
     service = create_service(client)

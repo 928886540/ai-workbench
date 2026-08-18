@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from threading import Event
@@ -15,6 +16,31 @@ from leon_agent.leon_client import LeonImageClient
 
 TERMINAL_IMAGE_STATUSES = {"completed", "failed", "cancelled", "canceled"}
 IMAGE_URL_KEYS = ("image_url", "final_image_url", "imageUrl", "finalImageUrl")
+_RANDOM_MODE_CONTROL_PATTERN = re.compile(
+    r"(?:[,，;；]\s*)?(?:"
+    r"(?:随便|任意)(?:选|选择|挑)?(?:一个|一种)?(?:生图)?模式(?:都)?(?:可以|行|好)?"
+    r"|随机(?:选|选择|挑)?(?:一个|一种)?(?:生图)?模式"
+    r"|(?:any|random)\s+(?:image\s+)?mode"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _normalise_random_mode_request(
+    source_text: str,
+    *,
+    random_workflow: bool,
+) -> tuple[str, bool]:
+    """Separate an explicit any-mode control clause from the visual request."""
+
+    original = source_text.strip()
+    if not original:
+        return original, random_workflow
+    if _RANDOM_MODE_CONTROL_PATTERN.search(original) is None:
+        return original, random_workflow
+    cleaned = _RANDOM_MODE_CONTROL_PATTERN.sub(" ", original)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" \t,，;；")
+    return cleaned or original, True
 
 
 def _job_id(item: dict[str, Any]) -> str:
@@ -238,7 +264,24 @@ class LeonToolService:
         random_workflow: bool = False,
     ) -> dict[str, Any]:
         _check_cancelled(None)
-        modes = workflow_ids or self.default_mode_ids
+        source_text, random_workflow = _normalise_random_mode_request(
+            source_text,
+            random_workflow=random_workflow,
+        )
+        if workflow_ids:
+            modes = list(workflow_ids)
+        elif random_workflow:
+            try:
+                catalog = self.list_image_modes()
+            except Exception:  # noqa: BLE001 - configured defaults remain a safe fallback
+                catalog = {}
+            modes = [
+                str(item.get("id") or "").strip()
+                for item in catalog.get("modes", [])
+                if isinstance(item, dict) and str(item.get("id") or "").strip()
+            ] or self.default_mode_ids
+        else:
+            modes = self.default_mode_ids
         submission = self.client.generate_images(
             source_text=source_text,
             workflow_ids=modes,
@@ -250,6 +293,7 @@ class LeonToolService:
         )
         submission.setdefault("source_text", source_text)
         submission.setdefault("workflow_ids", list(modes))
+        submission.setdefault("random_workflow", random_workflow)
         if self.on_generation_submitted is not None:
             self.on_generation_submitted(submission)
         _check_cancelled(None)
