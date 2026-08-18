@@ -100,7 +100,7 @@
 
 - [x] 自建 MCP server（Leon MCP 第一版 5 个 tool）
 - [ ] Agent 可经 MCP 调本地能力
-- [ ] README + 架构图 + 3 分钟演示脚本
+- [x] README + 架构图 + 3 分钟演示脚本
 - [x] 简历项目顺序切到 AI 主投版
 
 **退出标准**

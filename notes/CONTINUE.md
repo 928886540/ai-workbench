@@ -39,6 +39,10 @@
   `projects/09-langgraph-leon/docs/runtime-comparison.md`。
 - 当前 provider-free Python 基线：全仓 `692 passed`；Ruff、compileall、`uv lock --check` 和
   `git diff --check` 全绿，仅保留既有 Starlette/httpx 弃用警告，未请求真实模型或搜索服务。
+- Git ignored 的 BOSS 投递稿与 `D:\apiWorkSpace\面试准备\AI应用工程师面试准备.md` 已同步当前事实：
+  包含 Self-built Leon、LangChain/LangGraph Framework Edition、RAG 共享契约边界、`692 passed`、
+  3 分钟项目讲解、90 秒 provider-free 演示和高频追问。下一步直接做模拟面试，根据卡壳点补表达，
+  不回到产品功能扩张。
 
 - 当前集成分支：`main`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
   页面恢复、图片任务补拉、全屏图片缩放平移，以及按 `assistant.delta` 分段合成和按 revision 重试的流式 TTS
