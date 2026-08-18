@@ -15,6 +15,8 @@ State、Checkpoint、Interrupt 和跨进程 Resume 的抽象更成熟。框架�
 
 ## 对照边界
 
+![Leon Agent 双运行时共享业务层架构](assets/leon-dual-runtime-architecture.png)
+
 ```text
                          Canonical business layer
                  AgentTool + ToolRegistry + services

@@ -5,6 +5,8 @@ Agent 编排层，并尽量复用同一批业务 Tool、Memory 和检索能力�
 
 ## 两套 Runtime，不互相替换
 
+![Leon Agent 双运行时共享业务层架构](docs/assets/leon-dual-runtime-architecture.png)
+
 ```text
                          Leon business capabilities
                     AgentTool / ToolRegistry / services
