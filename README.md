@@ -40,7 +40,9 @@ ai-workbench/
 │   ├── 04-mcp-lab/            # 自建 MCP server / client
 │   ├── 05-workflow/           # 工作流编排与自动化
 │   ├── 06-multi-agent/        # 多 Agent 协作
-│   └── 07-coding-agent/       # 面试用 Coding Agent Vertical Demo
+│   ├── 07-coding-agent/       # 面试用 Coding Agent Vertical Demo
+│   ├── 08-langchain-lab/      # LangChain 基础组件小实验
+│   └── 09-langgraph-leon/     # Leon Agent Framework Edition
 ├── notes/                     # 设计决策与学习笔记
 ├── scripts/                   # 仓库级脚本
 └── data/samples/              # 示例数据（不含密钥）
@@ -55,7 +57,22 @@ ai-workbench/
 
 ## 当前阶段
 
-**当前阶段：`07-coding-agent` 基础闭环已完成。**
+**当前阶段：从自研 Runtime 进入框架对照。**
+
+`08-langchain-lab` 保持很小，只学习 Model、Prompt、Structured Output、Tool、Retriever 和高层 Agent
+抽象；`09-langgraph-leon` 保留 Self-built Leon，使用 LangGraph 替换编排层，并复用同一个
+`AgentTool + ToolRegistry` 业务契约。
+
+Framework Edition 的第一条 provider-free 闭环已经完成：
+
+```text
+START -> agent -> tools -> agent -> END
+```
+
+它通过薄适配器实际执行原 Leon 的 `read_file`，没有复制工具 schema 或 handler；Web、TTS、Gallery、
+SSE、MCP 和 Multi-Agent 均不进入该项目。
+
+此前的 `07-coding-agent` 基础闭环已完成：
 
 在唯一 `AgentRuntime` 上验证一个面试可讲清的垂直场景：
 
@@ -106,6 +123,8 @@ Agent 不复制它的 Prompt、Workflow 或 LoRA。详见
 - [ ] `05-workflow`：工作流自动化
 - [ ] `06-multi-agent`：多 Agent 协作
 - [x] `07-coding-agent`：面试用 Vertical Agent Demo 基础闭环
+- [ ] `08-langchain-lab`：Model / Prompt / Structured Output 已完成；Tool / Retriever / Agent 待体验
+- [ ] `09-langgraph-leon`：共享 Tool + `ToolNode` 最小闭环已完成；真实 Chat/Planning/Memory/Resume 待推进
 
 ## 协作方式（和 AI 一起开发时）
 
@@ -143,6 +162,8 @@ uv run leon-config init
 # 4. 验证模型底座或进入 Leon Agent
 uv run python -m llm_core.hello
 uv run leon
+uv run langchain-lab --demo
+uv run leon-graph --demo
 ```
 
 ## 文档
@@ -150,4 +171,5 @@ uv run leon
 - [学习路线](LEARNING_ROADMAP.md)
 - [设计决策](notes/decisions/0001-repo-bootstrap.md)
 - [Leon Agent 架构决策](notes/decisions/0002-leon-agent-boundary.md)
+- [LangChain / LangGraph 对照边界](notes/decisions/0004-langchain-langgraph-lab-boundary.md)
 - [AI 协作约定](AGENTS.md)

@@ -62,6 +62,16 @@ Trace / Observability
 07-coding-agent         <--- 当前收尾
    面试用 Vertical Agent Demo
    读/搜/计划/改文件/测试/二次修复/diff
+        |
+        v
+08-langchain-lab        <--- 当前框架学习
+   Model / Prompt / Structured Output
+   Tool / Retriever / 高层 Agent
+        |
+        v
+09-langgraph-leon       <--- 当前框架对照
+   Leon Agent Framework Edition
+   shared tools / state / checkpoint / resume
 ```
 
 ## Phase 0 / 1：`01-llm-core`
@@ -237,6 +247,40 @@ latency、tokens、success/error 和 outcome。它服务于 Evaluation 的失败
 ### 完成边界
 只保留 3 个稳定 case：明确 bug、小功能、failing test 后二次修复。完成后停止扩功能，不做 IDE 插件、
 复杂 patch engine、多仓库、自动 PR、后台任务、OS sandbox 或 Multi-Agent Coder/Reviewer/Tester。
+
+## Phase 7：`08-langchain-lab`
+
+### 目标
+
+用最小例子理解 LangChain 的 Model、Prompt、Runnable/LCEL、Structured Output、Tool、Retriever 和
+高层 Agent 抽象。它是组件实验，不是第二个产品。
+
+### 当前进度
+
+Model / Prompt / Pydantic Structured Output 已有 provider-free demo 和测试；Tool、Retriever、Agent
+按顺序各体验一次。Retriever 只适配 `03-rag-lab`，不复制检索实现。
+
+## Phase 8：`09-langgraph-leon`
+
+### 目标
+
+保留 `02-leon-agent` 的 Self-built Runtime，再做 Leon Agent Framework Edition。两套 Runtime 复用
+同一个 `AgentTool + ToolRegistry` 及业务 service，只对照 Agent 编排、State、Checkpoint、Interrupt
+和 Resume。
+
+### 当前进度
+
+已完成 `ToolRegistry -> LangChain BaseTool` 薄适配，以及
+`START -> agent -> ToolNode -> agent -> END` provider-free 闭环；测试实际调用原 Leon `read_file`，
+没有复制 schema 或 handler。
+
+### 完成边界
+
+只做 Chat、Tool Calling、Planning、Memory、RAG/Search 和 Checkpoint/Resume。允许复用一个现有
+Image Tool 做集成证明，不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
+
+`03-rag-lab` 当前尚未作为 Tool 接入 Self-built Leon；必须先建立两边共享的 RAG Tool，完成前不得
+声称已复用 Leon RAG。
 
 ## 每个阶段的固定节奏
 

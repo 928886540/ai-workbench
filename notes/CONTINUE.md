@@ -12,6 +12,18 @@
 
 ## 当前主线（2026-08-18）
 
+- **框架对照新主线已启动**：保留 `02-leon-agent` Self-built Runtime；新增小型
+  `08-langchain-lab` 和独立 `09-langgraph-leon`（对外名 Leon Agent Framework Edition）。
+- `08-langchain-lab` 已完成 Model / Prompt / Pydantic Structured Output 的 provider-free demo；
+  Tool / Retriever / 高层 Agent 仍按一次一个组件推进。
+- `09-langgraph-leon` 已完成第一条共享契约：把原 `AgentTool + ToolRegistry` 薄适配给 LangChain Tool，
+  通过 `ToolNode + tools_condition` 实际执行原 Leon `read_file`，节点流为
+  `START -> agent -> tools -> agent -> END`；未复制 schema/handler，测试和 demo 均不访问真实 provider。
+- Framework Edition 当前只用 `InMemorySaver` 证明 checkpoint 语义，尚不支持跨进程 `/resume`；下一步是
+  真实 ChatModel + File/Web Search 的最小 CLI，之后才做 Planning、Memory 和持久 checkpoint。
+- RAG 仍是独立 `03-rag-lab`，尚不存在可供两套 Runtime 共享的 Leon RAG Tool；接入前先定义唯一共享 Tool，
+  不把计划写成完成事实。09 不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
+
 - 当前集成分支：`feat/leon-ui-polish`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
   页面恢复、图片任务补拉、全屏图片缩放平移，以及按 `assistant.delta` 分段合成和按 revision 重试的流式 TTS
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成

@@ -12,6 +12,8 @@ dependencies = [
   "leon-mcp-server",
   "rag-lab",
   "coding-agent",
+  "langchain-lab",
+  "leon-agent-framework",
   "python-dotenv>=1.0.1",
   "pydantic>=2.7.0",
   "pydantic-settings>=2.3.0",
@@ -35,6 +37,8 @@ members = [
   "projects/03-rag-lab",
   "projects/04-mcp-lab/leon-mcp-server",
   "projects/07-coding-agent",
+  "projects/08-langchain-lab",
+  "projects/09-langgraph-leon",
 ]
 
 [tool.uv.sources]
@@ -45,6 +49,8 @@ leon-agent = { workspace = true }
 leon-mcp-server = { workspace = true }
 rag-lab = { workspace = true }
 coding-agent = { workspace = true }
+langchain-lab = { workspace = true }
+leon-agent-framework = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [
@@ -55,6 +61,8 @@ testpaths = [
   "projects/03-rag-lab/tests",
   "projects/04-mcp-lab/leon-mcp-server/tests",
   "projects/07-coding-agent/tests",
+  "projects/08-langchain-lab/tests",
+  "projects/09-langgraph-leon/tests",
 ]
 pythonpath = [
   "packages/workbench_core/src",
@@ -64,6 +72,8 @@ pythonpath = [
   "projects/03-rag-lab/src",
   "projects/04-mcp-lab/leon-mcp-server/src",
   "projects/07-coding-agent/src",
+  "projects/08-langchain-lab/src",
+  "projects/09-langgraph-leon/src",
 ]
 
 [tool.ruff]
