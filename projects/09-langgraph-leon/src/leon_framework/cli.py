@@ -154,12 +154,21 @@ def _pending_tool_names(snapshot: Any) -> list[str]:
     return []
 
 
-def _validate_pending_resume(snapshot: Any, registry: ToolRegistry) -> bool:
+def _validate_pending_resume(
+    snapshot: Any,
+    registry: ToolRegistry,
+    *,
+    planning_enabled: bool,
+) -> bool:
     if not _has_checkpoint(snapshot):
         raise ResumeError("checkpoint 不存在")
     if not snapshot.next:
         return False
     if snapshot.next == ("agent",):
+        return True
+    if snapshot.next == ("plan",):
+        if not planning_enabled:
+            raise ResumeError("checkpoint 停在 plan 节点；请带 --plan 恢复")
         return True
     if snapshot.next != ("tools",):
         raise ResumeError("checkpoint 暂停位置不受当前版本支持")
@@ -181,9 +190,14 @@ def _resume_pending_graph(
     registry: ToolRegistry,
     *,
     require_pending: bool,
+    planning_enabled: bool,
 ) -> str | None:
     snapshot = graph.get_state(config)
-    is_pending = _validate_pending_resume(snapshot, registry)
+    is_pending = _validate_pending_resume(
+        snapshot,
+        registry,
+        planning_enabled=planning_enabled,
+    )
     if not is_pending:
         if require_pending:
             raise ResumeError("checkpoint 已完成，没有待恢复节点")
@@ -294,6 +308,7 @@ def _run_interrupt_demo(args: argparse.Namespace) -> int:
                 config,
                 registry,
                 require_pending=True,
+                planning_enabled=True,
             )
             return 0
 
@@ -376,6 +391,7 @@ def _activate_live_thread(
             runtime.config,
             runtime.components.registry,
             require_pending=False,
+            planning_enabled=args.plan,
         )
         print(f"Resumed   {thread_id}")
     elif _has_checkpoint(snapshot):

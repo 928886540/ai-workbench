@@ -165,6 +165,9 @@ uv run leon-graph --plan --once "分析当前仓库的 Agent 架构"
 2～4 个有序步骤，计划保存在 Graph State/checkpoint 中，并作为临时 system context 提供给 agent，
 不会复制成 Leon `PlanningService` 或第二套业务执行器。
 
+计划只会在当前 Graph 明确启用 planner 时注入模型。恢复已有 thread 但不传 `--plan` 时，checkpoint
+中上一轮的计划不会污染新问题；CLI 显示的 Planning 状态与实际 Prompt 保持一致。
+
 默认不开启 Planning，因为 `--plan` 每个用户 turn 会额外产生一次模型请求。`--demo` 使用 fake planner
 展示相同节点与 state 变化，不访问真实 provider。当前只保存计划，不做 DAG、并行步骤、自动重试或
 跨进程任务恢复。
@@ -220,6 +223,10 @@ uv run leon-graph --interrupt-demo --resume demo-thread
 继续已有对话；交互模式输入 `/resume <id>` 会切换到已有 thread。恢复 pending checkpoint 时只允许
 `file_search`、`read_file`、`web_search`、`memory_get` 等只读工具；`memory_upsert/delete` 不会在
 缺失原始 consent 的跨进程上下文中自动执行。`--thread-id` 只创建新 thread，已存在时 fail closed。
+如果 planner 请求（包括上游 429）让 checkpoint 停在 `plan` 节点，使用同一 thread 并带 `--plan`
+即可安全重试这个无副作用节点；省略 `--plan` 会明确拒绝，避免用不同 Graph 拓扑误恢复。
+`web_search` 虽然不修改业务数据，但会消耗外部配额；若进程恰好在请求完成而 pending write 尚未落盘时
+崩溃，恢复遵循 at-least-once 语义，可能重复搜索一次。
 
 当前 provider-free 暂停/恢复演示：
 

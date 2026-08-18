@@ -311,4 +311,30 @@ def test_resume_rejects_pending_write_tool() -> None:
         ]
     )
     with pytest.raises(cli.ResumeError, match="写入型工具"):
-        cli._validate_pending_resume(snapshot, registry)
+        cli._validate_pending_resume(
+            snapshot,
+            registry,
+            planning_enabled=False,
+        )
+
+
+def test_resume_retries_plan_node_only_when_planning_is_enabled() -> None:
+    snapshot = SimpleNamespace(
+        values={"messages": [AIMessage(content="planner request pending")]},
+        next=("plan",),
+    )
+
+    assert (
+        cli._validate_pending_resume(
+            snapshot,
+            ToolRegistry(),
+            planning_enabled=True,
+        )
+        is True
+    )
+    with pytest.raises(cli.ResumeError, match="带 --plan"):
+        cli._validate_pending_resume(
+            snapshot,
+            ToolRegistry(),
+            planning_enabled=False,
+        )

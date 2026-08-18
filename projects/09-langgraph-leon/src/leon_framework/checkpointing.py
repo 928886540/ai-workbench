@@ -13,7 +13,7 @@ import os
 import re
 import secrets
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -24,6 +24,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 _CHECKPOINT_KEY_BYTES = 32
 _THREAD_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_CHECKPOINT_SOURCES = frozenset({"input", "loop", "update", "fork"})
 
 
 class CheckpointSecurityError(ValueError):
@@ -74,7 +75,25 @@ class EncryptedSqliteSaver(SqliteSaver):
                 or key.startswith("__")
             },
         }
-        return super().put(storage_config, checkpoint, metadata, new_versions)
+        return super().put(
+            storage_config,
+            checkpoint,
+            _safe_checkpoint_metadata(metadata),
+            new_versions,
+        )
+
+
+def _safe_checkpoint_metadata(metadata: Any) -> dict[str, Any]:
+    if not isinstance(metadata, Mapping):
+        return {}
+    safe: dict[str, Any] = {}
+    source = metadata.get("source")
+    if source in _CHECKPOINT_SOURCES:
+        safe["source"] = source
+    step = metadata.get("step")
+    if isinstance(step, int) and not isinstance(step, bool):
+        safe["step"] = step
+    return safe
 
 
 def checkpoint_key_path(database_path: str | Path) -> Path:

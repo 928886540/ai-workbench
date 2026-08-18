@@ -45,7 +45,7 @@ def build_leon_graph(
             system_context = system_context_provider()
             if system_context:
                 contexts.append(SystemMessage(content=system_context))
-        plan = state.get("plan") or []
+        plan = (state.get("plan") or []) if planner is not None else []
         if plan:
             contexts.append(SystemMessage(content=format_plan_context(plan)))
         insert_at = 0

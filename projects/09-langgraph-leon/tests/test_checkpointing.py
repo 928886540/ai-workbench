@@ -166,6 +166,51 @@ def test_checkpoint_key_is_created_once_and_never_stored_in_database(tmp_path) -
     assert first_key not in database_path.read_bytes()
 
 
+def test_direct_checkpoint_metadata_cannot_bypass_encryption(tmp_path) -> None:
+    database_path = tmp_path / "metadata.db"
+    metadata_secret = "DIRECT_METADATA_SECRET_P9K4"
+    parent_secret = "DIRECT_PARENT_SECRET_P4M8"
+    config = {
+        "configurable": {
+            "thread_id": "lg-metadata-proof",
+            "checkpoint_ns": "",
+        }
+    }
+    checkpoint = {
+        "v": 4,
+        "ts": "2026-08-18T00:00:00+00:00",
+        "id": "checkpoint-metadata-proof",
+        "channel_values": {},
+        "channel_versions": {},
+        "versions_seen": {},
+        "updated_channels": None,
+    }
+
+    with open_encrypted_sqlite_checkpointer(database_path) as checkpointer:
+        checkpointer.put(
+            config,
+            checkpoint,
+            {
+                "source": "input",
+                "step": 0,
+                "parents": {"safe_namespace": parent_secret},
+                "caller_label": metadata_secret,
+            },
+            {},
+        )
+
+    assert metadata_secret.encode() not in database_path.read_bytes()
+    assert parent_secret.encode() not in database_path.read_bytes()
+    connection = sqlite3.connect(database_path)
+    try:
+        stored_metadata = json.loads(
+            connection.execute("SELECT metadata FROM checkpoints").fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert stored_metadata == {"source": "input", "step": 0}
+
+
 def test_invalid_checkpoint_key_fails_closed_without_overwrite(tmp_path) -> None:
     database_path = tmp_path / "checkpoints.db"
     key_path = checkpoint_key_path(database_path)

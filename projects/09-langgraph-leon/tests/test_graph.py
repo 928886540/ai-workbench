@@ -160,6 +160,39 @@ def test_graph_stores_plan_and_injects_it_as_ephemeral_context() -> None:
     assert graph.get_state(config).values["plan"] == result["plan"]
 
 
+def test_graph_does_not_inject_stale_plan_when_resumed_without_planning() -> None:
+    checkpointer = InMemorySaver()
+    config = {"configurable": {"thread_id": "planning-mode-change"}}
+    planned_model = PlanningAwareModel()
+    planned_graph = build_leon_graph(
+        planned_model,
+        ToolRegistry(),
+        planner=lambda messages: ["FIRST_TURN_PLAN_A", "FIRST_TURN_PLAN_B"],
+        checkpointer=checkpointer,
+    )
+    planned_graph.invoke(
+        {"messages": [HumanMessage(content="first request")]},
+        config,
+    )
+
+    resumed_model = PlanningAwareModel()
+    resumed_graph = build_leon_graph(
+        resumed_model,
+        ToolRegistry(),
+        checkpointer=checkpointer,
+    )
+    resumed_graph.invoke(
+        {"messages": [HumanMessage(content="unrelated second request")]},
+        config,
+    )
+
+    assert all(
+        "FIRST_TURN_PLAN" not in str(message.content)
+        for message in resumed_model.messages
+        if isinstance(message, SystemMessage)
+    )
+
+
 def test_graph_injects_memory_context_without_checkpointing_raw_values(tmp_path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     store.upsert(
