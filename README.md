@@ -76,6 +76,10 @@ SSE、MCP 和 Multi-Agent 均不进入该项目。
 `AgentRuntime` 与 LangGraph `ToolNode`，两边给模型的 observation 完全一致。当前是 provider-free
 集成证明，不代表原 Leon 或 Framework CLI 已配置 live 知识索引。
 
+受控对照进一步固定了 10 个 direct/File/RAG/error/multi-step case；两套 Runtime 均为 `10/10` task
+success，raw observation parity 为 `10/10`，模型调用轮数逐 case 一致。报告只使用 fake model 与本地
+只读工具，不访问真实 provider；毫秒数据只表示本机编排开销，不作为真实模型性能结论。
+
 框架对照工程主线已经收口，综合报告明确记录 State、Tool loop、Planning、Memory、Checkpoint、
 Interrupt/Cancellation、安全与恢复语义的差异。下一阶段转入面试讲解和模拟问答，不继续扩 Framework
 Edition 的产品功能。

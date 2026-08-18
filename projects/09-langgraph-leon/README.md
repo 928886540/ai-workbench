@@ -265,6 +265,25 @@ Image 会引入异步任务、外部副作用和环境依赖，却不会增加�
 完整结论、证据矩阵、复杂度边界和面试话术见
 [Self-built Leon 与 LangGraph Framework Edition 对照](docs/runtime-comparison.md)。
 
+### Milestone 5：受控双 Runtime 对照
+
+- [x] 固定 10 个 provider-free case，覆盖直接回答、File、RAG、错误回注和 2～3 步工具链。
+- [x] 两边使用同一个 `ToolRegistry`、相同工具参数和相同 scripted model 决策。
+- [x] 对比任务成功、工具序列、模型调用轮数、raw observation 和本机编排耗时。
+- [x] 输出可重复生成的 Markdown / JSON 报告，不请求真实模型或搜索服务。
+
+运行命令：
+
+```powershell
+uv run leon-runtime-compare --repeats 7
+```
+
+当前快照中 Self-built 与 LangGraph 均为 `10/10` task success，raw observation parity 为 `10/10`，
+模型调用轮数逐 case 一致。报告里的毫秒数只衡量本机 fake model + 本地只读工具条件下的编排开销，
+不能代表 provider 延迟，也不能推出某个 Runtime 在真实业务中普遍更快。
+
+完整结果见 [Provider-free Runtime Comparison](docs/provider-free-comparison.md)。
+
 ## 面试主线
 
 > 我先实现过最小 Agent Runtime，理解 Tool Calling、Observation、多轮执行、Planning、Cancellation

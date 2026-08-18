@@ -34,13 +34,16 @@
   安全 citation 和 5500 字符总 observation，并对 query/正文做 audit 脱敏。同一个 Tool 实例分别经过
   Self-built `AgentRuntime` 与 LangGraph `ToolNode` 的结果一致性证明已经通过；两边 raw observation
   相等且 handler 各执行一次。尚未注入原 Leon 或 09 live CLI，不能写成 live 已启用。
+  新增 `leon-runtime-compare` 受控对照命令，固定 10 个 direct/File/RAG/error/multi-step case；两边
+  task success 均为 `10/10`，raw observation parity 为 `10/10`，模型调用轮数逐 case 一致。
   08 的 Tool / Retriever / 高层 Agent 和 09 的综合对照报告均已收口；下一步转入项目讲解、高频问答和
   模拟面试，不扩 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。综合报告见
   `projects/09-langgraph-leon/docs/runtime-comparison.md`。
-- 当前 provider-free Python 基线：全仓 `692 passed`；Ruff、compileall、`uv lock --check` 和
+- 当前 provider-free Python 基线：全仓 `694 passed`；Ruff、compileall、`uv lock --check` 和
   `git diff --check` 全绿，仅保留既有 Starlette/httpx 弃用警告，未请求真实模型或搜索服务。
 - Git ignored 的 BOSS 投递稿与 `D:\apiWorkSpace\面试准备\AI应用工程师面试准备.md` 已同步当前事实：
-  包含 Self-built Leon、LangChain/LangGraph Framework Edition、RAG 共享契约边界、`692 passed`、
+  包含 Self-built Leon、LangChain/LangGraph Framework Edition、RAG 共享契约边界、10-case Runtime
+  对照和 `694 passed`、
   3 分钟项目讲解、90 秒 provider-free 演示和高频追问。下一步直接做模拟面试，根据卡壳点补表达，
   不回到产品功能扩张。
 

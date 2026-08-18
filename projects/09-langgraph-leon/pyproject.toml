@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 leon-graph = "leon_framework.cli:main"
+leon-runtime-compare = "leon_framework.runtime_comparison:main"
 
 [build-system]
 requires = ["hatchling"]

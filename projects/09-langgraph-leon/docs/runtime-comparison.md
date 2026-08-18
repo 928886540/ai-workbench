@@ -60,6 +60,7 @@ Runtime，并证明 raw observation 完全一致；再接一个 Image Tool 只�
 |---|---|---|
 | 是否复用了同一个 Tool handler/schema | 适配前后 schema 一致，handler 没有复制 | `tests/test_tool_adapter.py` |
 | 两边是否给模型相同 RAG observation | 相同参数下 raw JSON 字符串和解析结果完全相等，handler 各执行一次 | `tests/test_rag_runtime_parity.py` |
+| 多 case 下是否保持相同行为 | 10 个 direct/File/RAG/error/multi-step case 均为 `10/10` success，observation parity `10/10` | `tests/test_runtime_comparison.py`、`docs/provider-free-comparison.md` |
 | Graph State 是否保存计划 | `plan` 进入 State，但只在启用 planner 时注入模型 | `tests/test_graph.py`、`tests/test_framework_planning.py` |
 | Memory 是否复用且避免自动上下文落 checkpoint | 使用 Leon `MemoryService`；自动上下文只临时注入 | `tests/test_composition.py`、`tests/test_graph.py` |
 | interrupt 是否真的停在工具执行前 | 暂停前 handler 调用数为 0，恢复后为 1 | `tests/test_graph.py` |
@@ -69,6 +70,23 @@ Runtime，并证明 raw observation 完全一致；再接一个 Image Tool 只�
 
 只有 Tool/RAG case 是严格的 A/B parity：输入、Tool 和 observation 都相同。State、取消与恢复并不是两套
 Runtime 的同名实现，因此用相同观察维度比较职责和语义，不伪造一个没有意义的统一分数。
+
+### 受控任务集
+
+`leon-runtime-compare` 把严格 A/B 范围扩展为 10 个确定性 case：直接回答、两种文件读取、缺失文件错误
+回注、三种 RAG 查询、两种双工具顺序和一条三步工具链。两边共享同一个 `ToolRegistry`，scripted model
+只负责发出相同工具调用，不访问 provider。每个 case 交替执行两套 Runtime 并取 7 次中位数，避免固定
+先后顺序造成单边热缓存偏差。
+
+当前快照：
+
+- Self-built task success：`10/10`
+- LangGraph task success：`10/10`
+- raw observation parity：`10/10`
+- 每个 case 的模型调用轮数相同
+
+本机耗时只用于观察纯编排开销，不能代表真实 LLM 延迟或框架的普遍性能结论。逐 case 数据与代码物理行数
+快照见 [Provider-free Runtime Comparison](provider-free-comparison.md)。
 
 ## State 与恢复
 
@@ -192,6 +210,7 @@ Leon 当前不迁移到 LangGraph。Self-built Leon 是完整产品和原理证�
 ```powershell
 uv run --package leon-agent-framework leon-graph --demo
 uv run --package leon-agent-framework leon-graph --interrupt-demo
+uv run leon-runtime-compare --repeats 7
 uv run pytest -q projects/09-langgraph-leon/tests
 uv run pytest -q projects/09-langgraph-leon/tests/test_rag_runtime_parity.py
 ```
