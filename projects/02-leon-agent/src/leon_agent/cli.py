@@ -98,10 +98,9 @@ try:
     )
     from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.layout.dimension import Dimension
-    from prompt_toolkit.layout.menus import CompletionsMenu
     from prompt_toolkit.mouse_events import MouseButton, MouseEventType
     from prompt_toolkit.styles import Style
-    from prompt_toolkit.widgets import Frame, TextArea
+    from prompt_toolkit.widgets import TextArea
 except ModuleNotFoundError:  # pragma: no cover - legacy prompt fallback remains usable
     Application = None
     WordCompleter = None
@@ -118,12 +117,10 @@ except ModuleNotFoundError:  # pragma: no cover - legacy prompt fallback remains
     Window = None
     FormattedTextControl = None
     Dimension = None
-    CompletionsMenu = None
     InMemoryHistory = None
     MouseButton = None
     MouseEventType = None
     Style = None
-    Frame = None
     TextArea = None
 
 
@@ -147,7 +144,6 @@ _CLI_COMMAND_META = {
     "/status": "查看模型与运行状态",
     "/info": "查看模型与运行状态",
     "/model": "查看或切换模型",
-    "/models": "打开模型选择器",
     "/clear": "清空终端滚动区",
     "/nsfw": "跳过 LLM 直达生图",
     "/exit": "退出 Leon",
@@ -454,6 +450,8 @@ class TerminalChatUI:
     _RESUME_MESSAGE_LIMIT = 240
     _WORKED_SEPARATOR_PREFIX = "─ Worked for "
     _IDLE_STATUS = "● 就绪"
+    _COMMAND_COMPLETION_MAX_ROWS = 8
+    _MODEL_PICKER_MAX_ROWS = 8
 
     def __init__(self, owner: LeonConsole) -> None:
         if Application is None:
@@ -542,6 +540,19 @@ class TerminalChatUI:
             char="─",
             style="class:composer.line",
         )
+        self.command_completion_control = FormattedTextControl(
+            self._command_completion_fragments,
+            focusable=False,
+            show_cursor=False,
+            get_cursor_position=self._command_completion_cursor_position,
+        )
+        self.command_completion_window = Window(
+            content=self.command_completion_control,
+            height=self._command_completion_visible_rows,
+            dont_extend_height=True,
+            always_hide_cursor=True,
+            style="class:command-completion.surface",
+        )
         self.bottom_bar = Window(
             content=FormattedTextControl(self._bottom_bar_fragments),
             height=1,
@@ -553,23 +564,43 @@ class TerminalChatUI:
             show_cursor=False,
             get_cursor_position=self._model_picker_cursor_position,
         )
+        self.model_picker_window = Window(
+            content=self.model_picker_control,
+            height=self._model_picker_visible_rows,
+            dont_extend_height=True,
+            always_hide_cursor=True,
+            style="class:model-picker.surface",
+        )
         self.model_picker_panel = ConditionalContainer(
-            content=Frame(
-                Window(
-                    content=self.model_picker_control,
-                    height=Dimension(min=1, max=8),
-                    dont_extend_height=True,
-                    always_hide_cursor=True,
-                ),
-                title="选择模型",
-                style="class:model-picker.frame",
-                height=Dimension(min=3, max=10),
+            content=HSplit(
+                [
+                    Window(
+                        content=FormattedTextControl(
+                            [("class:model-picker.title", " 选择模型")]
+                        ),
+                        height=1,
+                        dont_extend_height=True,
+                        always_hide_cursor=True,
+                        style="class:model-picker.surface",
+                    ),
+                    self.model_picker_window,
+                ],
+                style="class:model-picker.surface",
             ),
             filter=model_picker_active,
         )
+        self.model_picker_float = Float(
+            content=self.model_picker_panel,
+            left=0,
+            right=0,
+            bottom=0,
+            height=self._model_picker_surface_height,
+            allow_cover_cursor=True,
+            z_index=10,
+        )
         key_bindings = KeyBindings()
         input_focused = has_focus(self.input)
-        turn_busy = Condition(lambda: self.busy)
+        escape_actionable = Condition(self._escape_actionable)
 
         @key_bindings.add("enter", filter=input_focused, eager=True)
         def _(event) -> None:  # noqa: ANN001
@@ -641,13 +672,9 @@ class TerminalChatUI:
             else:
                 self._set_status("● 当前没有可复制的回答")
 
-        @key_bindings.add("escape", filter=turn_busy)
+        @key_bindings.add("escape", filter=escape_actionable, eager=True)
         def _(event) -> None:  # noqa: ANN001
-            self._handle_interrupt(event, exit_after=False)
-
-        @key_bindings.add("escape", filter=model_picker_active)
-        def _(event) -> None:  # noqa: ANN001, ARG001
-            self.cancel_model_picker()
+            self._handle_escape(event)
 
         @key_bindings.add("c-d", filter=input_focused, eager=True)
         def _(event) -> None:  # noqa: ANN001
@@ -682,30 +709,17 @@ class TerminalChatUI:
             [
                 self.output,
                 self.output_gap,
-                self.model_picker_panel,
                 self.status,
                 self.composer_top,
                 self.input,
                 self.composer_bottom,
+                self.command_completion_window,
                 self.bottom_bar,
             ]
         )
         root = FloatContainer(
             content=body,
-            floats=[
-                Float(
-                    xcursor=True,
-                    ycursor=True,
-                    content=CompletionsMenu(
-                        max_height=10,
-                        scroll_offset=1,
-                        display_arrows=True,
-                        extra_filter=Condition(
-                            lambda: self._model_picker is None
-                        ),
-                    ),
-                )
-            ],
+            floats=[self.model_picker_float],
         )
         tui_style = Style.from_dict(
             {
@@ -732,12 +746,13 @@ class TerminalChatUI:
                 "composer.prompt": "bold #F5C26B",
                 "composer.input": "#FFE0A3",
                 "composer.hint": "#71869A",
-                "completion-menu": "bg:#202D38 #DCEEFF",
-                "completion-menu.completion": "bg:#202D38 #DCEEFF",
-                "completion-menu.completion.current": "bold bg:#2B3C49 #59E1F7",
-                "completion-menu.meta.completion": "bg:#202D38 #71869A",
-                "completion-menu.meta.completion.current": "bg:#2B3C49 #AFC4D6",
-                "model-picker.frame": "bg:#202D38 #DCEEFF",
+                "command-completion.surface": "bg:#202D38 #DCEEFF",
+                "command-completion.item": "bg:#202D38 #DCEEFF",
+                "command-completion.item.selected": "bold bg:#2B3C49 #59E1F7",
+                "command-completion.meta": "bg:#202D38 #71869A",
+                "command-completion.meta.selected": "bg:#2B3C49 #AFC4D6",
+                "model-picker.surface": "bg:#202D38 #DCEEFF",
+                "model-picker.title": "bold bg:#202D38 #DCEEFF",
                 "model-picker.item": "bg:#202D38 #DCEEFF",
                 "model-picker.item.current": "bg:#202D38 #71869A",
                 "model-picker.item.selected": "bold bg:#2B3C49 #59E1F7",
@@ -816,6 +831,67 @@ class TerminalChatUI:
             picker = self._model_picker
             selected_index = picker.selected_index if picker is not None else 0
         return Point(x=0, y=selected_index)
+
+    def _command_completion_state(self):
+        if self._model_picker is not None:
+            return None
+        return getattr(self.input.buffer, "complete_state", None)
+
+    def _command_completion_cursor_position(self):
+        state = self._command_completion_state()
+        selected_index = (
+            state.complete_index
+            if state is not None and state.complete_index is not None
+            else 0
+        )
+        return Point(x=0, y=selected_index)
+
+    def _command_completion_visible_rows(self) -> int:
+        state = self._command_completion_state()
+        completion_count = len(state.completions) if state is not None else 0
+        return min(completion_count, self._COMMAND_COMPLETION_MAX_ROWS)
+
+    def _command_completion_fragments(self):
+        state = self._command_completion_state()
+        if state is None:
+            return []
+        selected_index = state.complete_index if state.complete_index is not None else 0
+        completions = state.completions
+        command_width = min(
+            max((len(item.display_text) for item in completions), default=0),
+            18,
+        )
+        fragments = []
+        for index, completion in enumerate(completions):
+            selected = index == selected_index
+            item_style = (
+                "class:command-completion.item.selected"
+                if selected
+                else "class:command-completion.item"
+            )
+            meta_style = (
+                "class:command-completion.meta.selected"
+                if selected
+                else "class:command-completion.meta"
+            )
+            marker = "❯ " if selected else "  "
+            fragments.append(
+                (item_style, f"{marker}{completion.display_text:<{command_width}}  ")
+            )
+            fragments.append((meta_style, completion.display_meta_text))
+            if index < len(completions) - 1:
+                fragments.append((item_style, "\n"))
+        return fragments
+
+    def _model_picker_visible_rows(self) -> int:
+        with self.lock:
+            picker = self._model_picker
+            choice_count = len(picker.choices) if picker is not None else 0
+        return min(choice_count, self._MODEL_PICKER_MAX_ROWS)
+
+    def _model_picker_surface_height(self) -> int:
+        rows = self._model_picker_visible_rows()
+        return rows + 1 if rows else 0
 
     def _model_picker_fragments(self):
         with self.lock:
@@ -1008,7 +1084,7 @@ class TerminalChatUI:
             model_picker = self._model_picker
         text = getattr(getattr(self, "input", None), "text", "")
         if model_picker is not None:
-            hint = "↑/↓ 选择 · Enter 确认 · Esc 返回"
+            return []
         elif not text:
             return []
         elif busy:
@@ -1503,6 +1579,27 @@ class TerminalChatUI:
                 and self._generation == generation
                 and self._active_cancel_event is cancel_event
             )
+
+    def _escape_actionable(self) -> bool:
+        with self.lock:
+            if self._model_picker is not None or self.busy:
+                return True
+        return self._command_completion_state() is not None
+
+    def _handle_escape(self, event) -> None:  # noqa: ANN001
+        with self.lock:
+            model_picker = self._model_picker
+            busy = self.busy
+        if model_picker is not None:
+            self.cancel_model_picker()
+            return
+        buffer = getattr(event, "current_buffer", None) or self.input.buffer
+        if getattr(buffer, "complete_state", None) is not None:
+            buffer.cancel_completion()
+            self.app.invalidate()
+            return
+        if busy:
+            self._handle_interrupt(event, exit_after=False)
 
     def _handle_ctrl_c(self, event) -> None:  # noqa: ANN001
         """Clear input first; an idle empty session exits with one Ctrl+C."""
@@ -3223,11 +3320,11 @@ class LeonConsole:
                 self.console.clear()
             self._check_active_turn()
             return True
-        if command_name in {"/model", "/models"} and not command_argument:
+        if command_name == "/model" and not command_argument:
             self.show_models()
             self._check_active_turn()
             return True
-        if command_name in {"/model", "/models"}:
+        if command_name == "/model":
             self.switch_model(command_argument)
             self._check_active_turn()
             return True
@@ -3244,7 +3341,7 @@ class LeonConsole:
                     "[bold]/tools[/bold] 查看当前 Agent 已注册工具\n"
                     "[bold]/trace[/bold] 查看当前会话最近一次本地 Trace\n"
                     "[bold]/status[/bold] 当前模型、provider、会话状态（/info）\n"
-                    "[bold]/model[/bold] 打开模型选择器（/models）\n"
+                    "[bold]/model[/bold] 打开模型选择器\n"
                     "[bold]/model <序号或模型ID>[/bold] 直接切换模型\n"
                     "[bold]/clear[/bold] 清空当前终端滚动区\n"
                     "[bold]/nsfw <描述>[/bold] 跳过 LLM，直接用 NSFW 模式生图\n"

@@ -1456,8 +1456,9 @@ def test_terminal_ui_second_ctrl_c_does_not_exit_if_turn_finishes_during_cancel(
         session_id = "session-test"
 
     class FakeApplication:
-        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
             self.exit_calls = 0
+            self.key_bindings = kwargs["key_bindings"]
 
         def exit(self) -> None:
             self.exit_calls += 1
@@ -1495,8 +1496,9 @@ def test_terminal_ui_repeated_escape_cancels_without_requesting_exit(monkeypatch
         session_id = "session-test"
 
     class FakeApplication:
-        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
             self.exit_calls = 0
+            self.key_bindings = kwargs["key_bindings"]
 
         def exit(self) -> None:
             self.exit_calls += 1
@@ -1508,10 +1510,16 @@ def test_terminal_ui_repeated_escape_cancels_without_requesting_exit(monkeypatch
     ui = TerminalChatUI(FakeOwner())
     ui.busy = True
     ui._active_cancel_event = threading.Event()
-    event = SimpleNamespace(app=ui.app)
+    event = SimpleNamespace(app=ui.app, current_buffer=ui.input.buffer)
+    escape_binding = next(
+        item
+        for item in ui.app.key_bindings.bindings
+        if item.keys == (Keys.Escape,) and item.filter()
+    )
 
-    ui._handle_interrupt(event, exit_after=False)
-    ui._handle_interrupt(event, exit_after=False)
+    assert escape_binding.eager()
+    escape_binding.handler(event)
+    escape_binding.handler(event)
 
     assert ui._active_cancel_event.is_set()
     assert ui._exit_requested is False
@@ -1700,8 +1708,9 @@ def test_terminal_ui_command_completion_is_visible_and_enter_accepts_first_candi
         session_id = "session-test"
 
     class FakeApplication:
-        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
             self.layout = kwargs["layout"]
+            self.key_bindings = kwargs["key_bindings"]
 
         def invalidate(self) -> None:
             return None
@@ -1710,15 +1719,49 @@ def test_terminal_ui_command_completion_is_visible_and_enter_accepts_first_candi
     ui = TerminalChatUI(FakeOwner())
 
     assert ui.input.complete_while_typing is True
+    assert "/models" not in cli_module._CLI_COMMANDS
+
+    ui.input.buffer.complete_state = CompletionState(
+        Document("/m"),
+        [
+            Completion(
+                "/model",
+                start_position=-2,
+                display_meta="查看或切换模型",
+            )
+        ],
+    )
+    rendered = "".join(
+        fragment[1] for fragment in ui._command_completion_fragments()
+    )
+    body = ui.app.layout.container.content
+
+    assert "❯ /model" in rendered
+    assert "查看或切换模型" in rendered
+    assert ui._command_completion_visible_rows() == 1
+    assert not ui.command_completion_window.right_margins
+    assert len(ui.app.layout.container.floats) == 1
+    assert body.children.index(ui.command_completion_window) > body.children.index(
+        ui.input.window
+    )
+
+    escape_binding = next(
+        item
+        for item in ui.app.key_bindings.bindings
+        if item.keys == (Keys.Escape,) and item.filter()
+    )
+    escape_binding.handler(
+        SimpleNamespace(app=ui.app, current_buffer=ui.input.buffer)
+    )
+
+    assert ui.input.buffer.complete_state is None
+    assert ui._command_completion_visible_rows() == 0
 
     class FakeBuffer:
         text = "/m"
         complete_state = CompletionState(
             Document("/m"),
-            [
-                Completion("/model", start_position=-2),
-                Completion("/models", start_position=-2),
-            ],
+            [Completion("/model", start_position=-2)],
         )
 
         def apply_completion(self, completion) -> None:  # noqa: ANN001
@@ -1743,24 +1786,46 @@ def test_terminal_ui_model_picker_is_bottom_panel_with_keyboard_selection(
         session_id = "session-test"
 
     class FakeApplication:
-        def __init__(self, **kwargs) -> None:  # noqa: ANN003, ARG002
-            return None
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            self.key_bindings = kwargs["key_bindings"]
 
         def invalidate(self) -> None:
             return None
 
     monkeypatch.setattr("leon_agent.cli.Application", FakeApplication)
     ui = TerminalChatUI(FakeOwner())
-    ui.begin_model_picker(["gpt-5.6-sol", "gpt-5.6-terra"], current="gpt-5.6-sol")
+    ui.begin_model_picker(
+        ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+        current="gpt-5.6-sol",
+    )
 
     rendered = "".join(text for _, text, *_ in ui._model_picker_fragments())
     assert "❯ 1. gpt-5.6-sol  (current)" in rendered
     assert "2. gpt-5.6-terra" in rendered
+    assert "3. gpt-5.6-luna" in rendered
     assert "跟随 provider 默认模型" in rendered
+    assert ui._model_picker_visible_rows() == 4
+    assert ui.model_picker_float.bottom == 0
+    assert ui.model_picker_float.height() == 5
+    assert ui.model_picker_float.allow_cover_cursor is True
+    assert not ui.model_picker_window.right_margins
+    assert ui._composer_hint_fragments() == []
 
     ui._history_or_cursor(ui.input.buffer, direction=1)
     rendered = "".join(text for _, text, *_ in ui._model_picker_fragments())
     assert "❯ 2. gpt-5.6-terra" in rendered
+
+    escape_binding = next(
+        item
+        for item in ui.app.key_bindings.bindings
+        if item.keys == (Keys.Escape,) and item.filter()
+    )
+    assert escape_binding.eager()
+    escape_binding.handler(SimpleNamespace())
+
+    assert ui._model_picker is None
+
+
 def test_terminal_ui_history_follows_session_and_preserves_draft(
     monkeypatch,
     tmp_path,
