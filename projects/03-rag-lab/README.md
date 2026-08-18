@@ -25,6 +25,8 @@
 - `answer_query` 将检索、受限上下文、答案生成和 citation precision 串成一个可测试回路。
 - `OpenAIAnswerGenerator` 要求每个事实使用 `[CITE:<exact-citation>]`，并继续把检索内容视为不可信数据。
 - faithfulness judge 将答案拆成 atomic claims，再逐条判断证据支持；不使用字符串命中率替代判断。
+- `rag_search` 将现有 `VectorRetriever` 暴露为唯一的只读 `AgentTool` 业务契约，供不同 Runtime
+  后续共同注册；它只查预建本地索引，不负责实时搜索、答案生成或 Judge。
 
 ```text
 TextDocument
@@ -40,6 +42,19 @@ TextDocument
    -> grounded answer with exact citations
    -> optional claim/evidence faithfulness judge
 ```
+
+## 共享 RAG Tool 边界
+
+`create_rag_search_tool(RAGSearchService(retriever))` 返回标准 `AgentTool`，不依赖 LangChain 或
+LangGraph。输入固定为 1～500 字符的 `query` 和 1～5 的 `top_k`；输出 evidence 一律标记为
+`untrusted_content`，citation 必须满足安全的 `root_id:path:start-end` 格式。
+
+单条正文最多 1000 字符，总 JSON observation 最多 5500 字符，低排名 evidence 会优先裁剪，避免
+Self-built `AgentRuntime` 的 6000 字符边界再次截断而与 LangGraph 产生不同 observation。审计视图只
+保留 `top_k / count / citations`，不记录 query 或证据正文。
+
+当前完成的是共享 Tool 契约和 provider-free 检索验证；它尚未注入 Self-built Leon 的 CLI/Gateway，
+因此不能宣称原 Leon live 已启用 RAG。
 
 ## 示例
 

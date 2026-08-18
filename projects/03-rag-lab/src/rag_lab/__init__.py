@@ -38,6 +38,7 @@ from rag_lab.pipeline import RAGAnswer, answer_query
 from rag_lab.reranking import Reranker, RerankingError, SiliconFlowReranker
 from rag_lab.retrieval import RetrievalHit, VectorRetriever
 from rag_lab.suite import RAGSuiteCaseResult, RAGSuiteResult, run_rag_suite
+from rag_lab.tools import RAGSearchService, Retriever, create_rag_search_tool
 
 __all__ = [
     "BenchmarkCaseResult",
@@ -60,18 +61,21 @@ __all__ = [
     "RAGAnswer",
     "RAGSuiteCaseResult",
     "RAGSuiteResult",
+    "RAGSearchService",
     "Reranker",
     "RerankingError",
     "RetrievalHit",
     "RetrievalCase",
     "RetrievalDataset",
     "RetrievalScore",
+    "Retriever",
     "TextDocument",
     "VectorRetriever",
     "build_citation_context",
     "answer_query",
     "chunk_document",
     "citation_precision",
+    "create_rag_search_tool",
     "embed_chunks",
     "embed_query",
     "evaluate_faithfulness",

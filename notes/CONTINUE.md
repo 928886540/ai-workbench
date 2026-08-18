@@ -29,10 +29,12 @@
   加密 SQLite，稳定 opaque `thread_id` 支持 `--resume <id>` 和交互 `/resume <id>`；跨进程 pending
   恢复只允许 read-only tools，写类 Memory 工具 fail closed。下一步进入 RAG 共享 Tool / 对照报告，或
   根据面试需要补一条受限高风险 interrupt 说明，不扩 Leon 产品功能。
-- RAG 仍是独立 `03-rag-lab`，尚不存在可供两套 Runtime 共享的 Leon RAG Tool；接入前先定义唯一共享 Tool，
-  不把计划写成完成事实。09 不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
+- `03-rag-lab` 已定义唯一只读 `rag_search` 业务 Tool：复用 `VectorRetriever`，限制 query/top_k、
+  安全 citation 和 5500 字符总 observation，并对 query/正文做 audit 脱敏。下一步用同一个 Tool 实例
+  分别经过 Self-built `AgentRuntime` 与 LangGraph `ToolNode` 做结果一致性证明；尚未注入原 Leon
+  CLI/Gateway，不能写成 live 已启用。09 不做 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。
 
-- 当前集成分支：`feat/leon-ui-polish`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
+- 当前集成分支：`main`；最新闭环包含 SQLite/CLI/Web Trace、语音与流式/中断持久化、
   页面恢复、图片任务补拉、全屏图片缩放平移，以及按 `assistant.delta` 分段合成和按 revision 重试的流式 TTS
 - `workbench_core.agent`：共享 Agent Runtime / ToolRegistry 已完成
 - `02-code-agent`：已迁移到共享 Runtime
