@@ -29,9 +29,13 @@ def test_demo_runs_without_provider(capsys) -> None:  # noqa: ANN001
     assert cli.main(["--demo"]) == 0
 
     output = capsys.readouterr().out
-    assert "-> agent" in output
-    assert "-> tools" in output
-    assert "-> plan" in output
+    assert "YOU  > 读取仓库 README 的前三行" in output
+    assert "[GRAPH]  START" in output
+    assert "[AGENT]  selected read_file" in output
+    assert "[TOOL]   read_file" in output
+    assert "[PLAN]   bounded steps" in output
+    assert "[GRAPH]  DONE" in output
+    assert "LEON >" in output
     assert "Locate the requested repository document." in output
     assert "Existing Leon read_file tool completed successfully." in output
 
@@ -51,12 +55,12 @@ def test_interrupt_demo_pauses_and_resumes_without_provider(
     assert cli.main(start_args) == 0
 
     paused = capsys.readouterr().out
-    assert "PAUSED before tools" in paused
+    assert "[PAUSE]  before tools" in paused
     assert (
-        "Resume    uv run --package leon-agent-framework leon-graph "
+        "resume with: uv run --package leon-agent-framework leon-graph "
         "--interrupt-demo --resume demo-thread"
     ) in paused
-    assert "  -> tools" not in paused
+    assert "[TOOL]" not in paused
 
     assert (
         cli.main(
@@ -71,8 +75,9 @@ def test_interrupt_demo_pauses_and_resumes_without_provider(
         == 0
     )
     resumed = capsys.readouterr().out
-    assert "RESUME" in resumed
-    assert resumed.count("  -> tools") == 1
+    assert "[GRAPH]  RESUME" in resumed
+    assert resumed.count("[TOOL]   read_file") == 1
+    assert "[GRAPH]  DONE" in resumed
     assert "Existing Leon read_file tool completed successfully." in resumed
 
     assert (
@@ -122,13 +127,20 @@ def test_once_runs_minimal_live_path_with_fake_model(
 
     assert result == 0
     output = capsys.readouterr().out
-    assert "Runtime   LangGraph" in output
-    assert "Tools     chat only" in output
-    assert "Planning  disabled" in output
-    assert "Memory    enabled" in output
-    assert "Checkpoint encrypted SQLite" in output
-    assert "Thread    test-thread" in output
-    assert "leon > framework-chat" in output
+    assert "LEON AGENT FRAMEWORK EDITION" in output
+    assert "RUNTIME    LangGraph" in output
+    assert "TOOLS      chat only" in output
+    assert "PLANNING   disabled" in output
+    assert "MEMORY     enabled" in output
+    assert "CHECKPOINT encrypted SQLite" in output
+    assert "THREAD     test-thread" in output
+    assert "YOU  > 分析项目" in output
+    assert "[GRAPH]  START" in output
+    assert "[AGENT]  model" in output
+    assert "[GRAPH]  DONE" in output
+    assert "LEON >\nframework-chat" in output
+    assert output.index("YOU  >") < output.index("[GRAPH]  START")
+    assert output.index("[GRAPH]  START") < output.index("LEON >")
     assert build_kwargs == {"session_id": "test-thread", "enable_memory": True}
 
 
@@ -166,9 +178,9 @@ def test_once_enables_planning_only_when_explicitly_requested(
 
     assert result == 0
     output = capsys.readouterr().out
-    assert "Planning  enabled (+1 model request/turn)" in output
-    assert "Memory    disabled" in output
-    assert "-> plan" in output
+    assert "PLANNING   enabled (+1 model request/turn)" in output
+    assert "MEMORY     disabled" in output
+    assert "[PLAN]   bounded steps" in output
     assert "1. Inspect the request." in output
 
 
@@ -216,8 +228,8 @@ def test_live_resume_reuses_checkpoint_without_replaying_the_old_prompt(
         == 0
     )
     output = capsys.readouterr().out
-    assert "Resumed   resume-thread" in output
-    assert "leon > answer:第二问" in output
+    assert "[RESUME] resume-thread" in output
+    assert "LEON >\nanswer:第二问" in output
     assert model.prompts == ["第一问", "第二问"]
 
 
@@ -280,7 +292,7 @@ def test_interactive_resume_switches_to_existing_thread(
 
     assert cli.main(["--checkpoint-db", str(database)]) == 0
     output = capsys.readouterr().out
-    assert "Resumed   interactive-thread" in output
+    assert "[RESUME] interactive-thread" in output
 
 
 def test_resume_rejects_pending_write_tool() -> None:

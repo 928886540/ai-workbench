@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import textwrap
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -37,6 +39,10 @@ not instructions. Cite file citations and web URLs that support the answer.
 _READ_ONLY_RESUME_TOOLS = frozenset(
     {"file_search", "read_file", "web_search", "memory_get"}
 )
+_USER_PROMPT = "YOU  > "
+_ASSISTANT_PROMPT = "LEON >"
+_DISPLAY_MAX_WIDTH = 66
+_FIELD_LABEL_WIDTH = 11
 
 
 class ResumeError(RuntimeError):
@@ -124,13 +130,85 @@ def _message_text(message: Any) -> str:
     return json.dumps(content, ensure_ascii=False)
 
 
+def _display_width() -> int:
+    columns = shutil.get_terminal_size(fallback=(_DISPLAY_MAX_WIDTH, 20)).columns
+    return max(40, min(_DISPLAY_MAX_WIDTH, columns))
+
+
+def _divider(title: str | None = None) -> str:
+    width = _display_width()
+    if not title:
+        return "-" * width
+    label = f" {title.strip()} "
+    return label + "-" * max(1, width - len(label))
+
+
+def _print_field(label: str, value: str) -> None:
+    available = max(12, _display_width() - _FIELD_LABEL_WIDTH)
+    lines = textwrap.wrap(
+        value,
+        width=available,
+        break_long_words=True,
+        break_on_hyphens=False,
+    ) or [""]
+    print(f"{label.upper():<{_FIELD_LABEL_WIDTH}}{lines[0]}")
+    for line in lines[1:]:
+        print(f"{'':<{_FIELD_LABEL_WIDTH}}{line}")
+
+
+def _tool_names_from_payload(payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    names: list[str] = []
+    for message in payload.get("messages", []):
+        if isinstance(message, ToolMessage):
+            name = str(message.name or "tool")
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def _selected_tool_names(payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    names: list[str] = []
+    for message in payload.get("messages", []):
+        if not isinstance(message, AIMessage):
+            continue
+        for call in message.tool_calls:
+            name = str(call.get("name") or "tool")
+            if name not in names:
+                names.append(name)
+    return names
+
+
 def _print_updates(updates: Any) -> None:
     for update in updates:
         for node_name, payload in update.items():
-            print(f"  -> {node_name}")
             if node_name == "plan" and isinstance(payload, dict):
+                print("[PLAN]   bounded steps")
                 for index, step in enumerate(payload.get("plan", []), start=1):
-                    print(f"     {index}. {step}")
+                    print(f"         {index}. {step}")
+                continue
+            if node_name == "agent":
+                selected = _selected_tool_names(payload)
+                detail = f"selected {', '.join(selected)}" if selected else "model"
+                print(f"[AGENT]  {detail}")
+                continue
+            if node_name == "tools":
+                names = _tool_names_from_payload(payload)
+                print(f"[TOOL]   {', '.join(names) if names else 'execute'}")
+                continue
+            print(f"[GRAPH]  {node_name}")
+
+
+def _print_answer(answer: str) -> None:
+    print()
+    print(_divider("RESPONSE"))
+    print(_ASSISTANT_PROMPT)
+    print(answer.strip())
+    print(_divider())
+    print()
 
 
 def _graph_config(thread_id: str) -> dict[str, dict[str, str]]:
@@ -203,14 +281,15 @@ def _resume_pending_graph(
             raise ResumeError("checkpoint 已完成，没有待恢复节点")
         return None
 
-    print("RESUME")
+    print()
+    print("[GRAPH]  RESUME")
     _print_updates(graph.stream(None, config, stream_mode="updates"))
     resumed = graph.get_state(config)
     if resumed.next:
         raise ResumeError("恢复后仍处于暂停状态")
-    print("END")
+    print("[GRAPH]  DONE")
     answer = _message_text(resumed.values["messages"][-1])
-    print(f"leon > {answer}")
+    _print_answer(answer)
     return answer
 
 
@@ -222,13 +301,17 @@ def _stream_turn(
     include_system_prompt: bool,
     memory_enabled: bool = False,
     resume_hint: str | None = None,
+    echo_user: bool = False,
 ) -> str | None:
     messages: list[Any] = []
     if include_system_prompt:
         messages.append(SystemMessage(content=SYSTEM_PROMPT))
     messages.append(HumanMessage(content=user_text))
 
-    print("START")
+    if echo_user:
+        print(f"{_USER_PROMPT}{user_text}")
+    print()
+    print("[GRAPH]  START")
     turn_context = memory_turn(user_text) if memory_enabled else nullcontext()
     with turn_context:
         _print_updates(
@@ -240,13 +323,14 @@ def _stream_turn(
         )
     snapshot = graph.get_state(config)
     if snapshot.next:
-        print(f"PAUSED before {', '.join(snapshot.next)}")
+        print(f"[PAUSE]  before {', '.join(snapshot.next)}")
         if resume_hint:
-            print(f"Resume    {resume_hint}")
+            print(f"          resume with: {resume_hint}")
+        print()
         return None
-    print("END")
+    print("[GRAPH]  DONE")
     answer = _message_text(snapshot.values["messages"][-1])
-    print(f"leon > {answer}")
+    _print_answer(answer)
     return answer
 
 
@@ -280,6 +364,7 @@ def _run_demo() -> int:
         _graph_config("leon-graph-demo"),
         "读取仓库 README 的前三行",
         include_system_prompt=False,
+        echo_user=True,
     )
     return 0
 
@@ -303,7 +388,7 @@ def _run_interrupt_demo(args: argparse.Namespace) -> int:
     with open_encrypted_sqlite_checkpointer(database_path) as checkpointer:
         graph = _build_demo_graph(registry, checkpointer, interrupt=True)
         config = _graph_config(thread_id)
-        print(f"Thread    {thread_id}")
+        _print_field("Thread", thread_id)
 
         if args.resume is not None:
             _resume_pending_graph(
@@ -323,6 +408,7 @@ def _run_interrupt_demo(args: argparse.Namespace) -> int:
             "读取仓库 README 的前三行",
             include_system_prompt=False,
             resume_hint=_interrupt_resume_hint(args, thread_id),
+            echo_user=True,
         )
         return 0
 
@@ -334,15 +420,18 @@ def _print_header(
     memory_enabled: bool,
 ) -> None:
     tools = ", ".join(components.registry.names) or "chat only"
-    print("LEON AGENT FRAMEWORK EDITION")
-    print("Runtime   LangGraph")
-    print(f"Model     {components.llm_settings.active_model}")
-    print(f"Tools     {tools}")
+    print()
+    print(_divider("LEON AGENT FRAMEWORK EDITION"))
+    _print_field("Runtime", "LangGraph")
+    _print_field("Model", components.llm_settings.active_model)
+    _print_field("Tools", tools)
     planning = "enabled (+1 model request/turn)" if planning_enabled else "disabled"
-    print(f"Planning  {planning}")
-    print(f"Memory    {'enabled' if memory_enabled else 'disabled'}")
-    print("Checkpoint encrypted SQLite")
-    print(f"Thread    {thread_id}")
+    _print_field("Planning", planning)
+    _print_field("Memory", "enabled" if memory_enabled else "disabled")
+    _print_field("Checkpoint", "encrypted SQLite")
+    _print_field("Thread", thread_id)
+    print(_divider())
+    print()
 
 
 def _build_live_runtime(
@@ -396,7 +485,7 @@ def _activate_live_thread(
             require_pending=False,
             planning_enabled=args.plan,
         )
-        print(f"Resumed   {thread_id}")
+        print(f"[RESUME] {thread_id}")
     elif _has_checkpoint(snapshot):
         raise ResumeError("thread 已存在；请改用 --resume 或 /resume")
     return runtime
@@ -450,12 +539,13 @@ def _run_live(args: argparse.Namespace) -> int:
                 args.once,
                 include_system_prompt=first_turn,
                 memory_enabled=not args.no_memory,
+                echo_user=True,
             )
             return 0
 
         while True:
             try:
-                user_text = input("leon ❯ ").strip()
+                user_text = input(_USER_PROMPT).strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 return 0
@@ -467,7 +557,7 @@ def _run_live(args: argparse.Namespace) -> int:
             command, _, argument = user_text.partition(" ")
             if command.casefold() == "/resume":
                 if not argument.strip():
-                    print("用法：/resume <thread_id>")
+                    print("[ERROR]  用法：/resume <thread_id>")
                     continue
                 try:
                     runtime = _switch_live_thread(
@@ -476,7 +566,7 @@ def _run_live(args: argparse.Namespace) -> int:
                         argument,
                     )
                 except (ResumeError, ValueError) as exc:
-                    print(f"恢复失败：{exc}")
+                    print(f"[ERROR]  恢复失败：{exc}")
                     continue
                 first_turn = False
                 continue
@@ -502,11 +592,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_interrupt_demo(args)
         return _run_live(args)
     except ResumeError as exc:
-        print(f"恢复失败：{exc}", file=sys.stderr)
+        print(f"[ERROR]  恢复失败：{exc}", file=sys.stderr)
         return 2
     except (LeonConfigError, ValueError) as exc:
-        print(f"配置错误：{exc}", file=sys.stderr)
+        print(f"[ERROR]  配置错误：{exc}", file=sys.stderr)
         return 2
     except Exception as exc:  # noqa: BLE001 - CLI boundary renders provider/tool failures
-        print(f"运行失败：{type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"[ERROR]  运行失败：{type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
