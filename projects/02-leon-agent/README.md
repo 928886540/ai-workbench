@@ -39,7 +39,7 @@
   共享、支持硬删除，并以有预算的 untrusted context 注入后续 turn
 - per-turn Planning 状态机已接入普通 Agent：复杂请求可创建 2～8 步计划并按服务端规则推进；简单聊天、
   `/nsfw` 直达生图和 Leon MCP 不注册 Planning，计划正文不进入 SSE/SQLite 审计
-- Agent Evaluation 第一版已接入：50 个可审查 case，默认 fake provider，显式 `--live` 才使用真实 provider；
+- Agent Evaluation 第一版已接入：53 个可审查 case，默认 fake provider，显式 `--live` 才使用真实 provider；
   指标覆盖 Task Success、Tool Selection、Plan Adherence、Safety、Latency、Tool Calls 和 Tokens/Cost
 - 本地 Trace / Observability MVP 已接入：CLI/Web 统一 `trace_id + turn_id`，SQLite 仅保存脱敏 metadata；
   root、iteration、LLM、Tool、Planning spans 共用唯一 `AgentRuntime`，CLI 可用 `/trace` 查看最近一次 span 树
@@ -284,7 +284,7 @@ Vue 客户端是唯一 Web 实现，源码位于 `web/src/`，构建产物位于
 Vue 3 + Vite 迁移基座位于 `web/`，当前已覆盖聊天、任务、图库、设置视图和 Agent Timeline。provider-free
 Playwright 回归脚本 `tests/manual_vue_web_check.py` 已在 Vite preview 和 FastAPI Vue 入口各跑通 **93/93**；
 它拦截所有 `/api/**`，不会触发真实 LLM、Volink 或图片 provider。本机与公网 Gateway/SSE 已完成只读验收；
-Cloudflare 控制台 Cache Bypass 规则和手机实机验收仍待做。旧单文件 Web 客户端及其浏览器脚本已删除，
+Cloudflare 控制台 Cache Bypass 规则和手机实机 SSE/生图/TTS/ASR 验收已完成。旧单文件 Web 客户端及其浏览器脚本已删除，
 Gateway 不再提供前端选择开关。
 
 ## 后续路线

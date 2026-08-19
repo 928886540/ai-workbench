@@ -2782,6 +2782,8 @@ def test_legacy_image_link_keeps_osc8_target_intact_at_narrow_width() -> None:
         width=12,
         force_terminal=True,
         legacy_windows=False,
+        color_system="truecolor",
+        no_color=False,
     )
     cli.ui = None
     cli._last_image_url = None

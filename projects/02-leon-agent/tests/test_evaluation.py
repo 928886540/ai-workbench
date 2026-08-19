@@ -28,23 +28,23 @@ def test_evaluation_cli_configures_utf8_output(monkeypatch: Any) -> None:
     assert stderr.options == {"encoding": "utf-8", "errors": "replace"}
 
 
-def test_evaluation_dataset_has_fifty_unique_cases() -> None:
+def test_evaluation_dataset_has_fifty_three_unique_cases() -> None:
     cases = load_cases()
 
-    assert len(cases) == 50
-    assert len({case.id for case in cases}) == 50
+    assert len(cases) == 53
+    assert len({case.id for case in cases}) == 53
     assert all(case.fake_turns for case in cases)
 
 
 def test_fake_evaluation_suite_is_deterministic_and_side_effect_free() -> None:
     summary = run_suite(load_cases())
 
-    assert summary.total_cases == 50
-    assert summary.passed_cases == 50
+    assert summary.total_cases == 53
+    assert summary.passed_cases == 53
     assert summary.rates.task_success == 1
     assert summary.rates.safety == 1
-    assert summary.input_tokens == 6_640
-    assert summary.output_tokens == 649
+    assert summary.input_tokens == 7_095
+    assert summary.output_tokens == 710
 
 
 def test_scoring_reports_missing_tool_and_answer_assertion() -> None:

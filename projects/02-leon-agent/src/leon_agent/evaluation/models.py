@@ -26,6 +26,8 @@ class FakeToolCall(StrictModel):
 class FakeTurn(StrictModel):
     content: str | None = None
     tool_calls: list[FakeToolCall] = Field(default_factory=list)
+    transcript_contains: list[str] = Field(default_factory=list)
+    transcript_not_contains: list[str] = Field(default_factory=list)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
 
@@ -34,6 +36,11 @@ class FakeTurn(StrictModel):
         if self.content is None and not self.tool_calls:
             raise ValueError("a fake turn needs content or at least one tool call")
         return self
+
+
+class EvalHistoryMessage(StrictModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2_000)
 
 
 class PlanExpectation(StrictModel):
@@ -109,6 +116,7 @@ class EvalCase(StrictModel):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{2,63}$")
     category: str = Field(min_length=1, max_length=64)
     user_message: str = Field(min_length=1, max_length=2_000)
+    history: list[EvalHistoryMessage] = Field(default_factory=list)
     allow_live: bool = True
     features: EvalFeatures = Field(default_factory=EvalFeatures)
     expectations: EvalExpectations

@@ -69,8 +69,13 @@ class ScriptedEvalClient:
         cancel_event: Any = None,
         on_delta: Any = None,
     ) -> ChatTurn:
-        del messages, temperature, cancel_event
+        del temperature, cancel_event
         turn = self._next_turn()
+        transcript = "\n".join(str(item.get("content") or "") for item in messages)
+        if any(marker not in transcript for marker in turn.transcript_contains):
+            raise RuntimeError("fake transcript is missing a required marker")
+        if any(marker in transcript for marker in turn.transcript_not_contains):
+            raise RuntimeError("fake transcript contains a forbidden marker")
         available_tools = {
             str(item.get("function", {}).get("name") or "") for item in tools or []
         }
@@ -221,7 +226,10 @@ def run_suite(
                     raise RuntimeError("case does not allow live provider execution")
                 client = live_client if provider == "live" else ScriptedEvalClient(case.fake_turns)
                 agent = create_eval_agent(case, client, suite_root / case.id)
-                result = agent.run(case.user_message)
+                result = agent.run(
+                    case.user_message,
+                    history=[item.model_dump() for item in case.history],
+                )
                 latency_ms = (time.perf_counter() - started) * 1_000
                 results.append(
                     score_case(

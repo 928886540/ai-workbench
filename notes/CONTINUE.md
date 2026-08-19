@@ -10,7 +10,7 @@
 2. **开场一句话** = 快速对齐
 3. **Codex session 续接** = 加分项，有就用，没有也能继续
 
-## 当前主线（2026-08-18）
+## 当前主线（2026-08-19）
 
 - **框架对照主线已收口**：保留 `02-leon-agent` Self-built Runtime；新增小型
   `08-langchain-lab` 和独立 `09-langgraph-leon`（对外名 Leon Agent Framework Edition）。
@@ -39,11 +39,11 @@
   08 的 Tool / Retriever / 高层 Agent 和 09 的综合对照报告均已收口；下一步转入项目讲解、高频问答和
   模拟面试，不扩 Web、TTS/ASR、Gallery、SSE、MCP、Coding Agent 或 Multi-Agent。综合报告见
   `projects/09-langgraph-leon/docs/runtime-comparison.md`。
-- 当前 provider-free Python 基线：全仓 `694 passed`；Ruff、compileall、`uv lock --check` 和
+- 当前 provider-free Python 基线：全仓 `698 passed`；Ruff、compileall、`uv lock --check` 和
   `git diff --check` 全绿，仅保留既有 Starlette/httpx 弃用警告，未请求真实模型或搜索服务。
 - Git ignored 的 BOSS 投递稿与 `D:\apiWorkSpace\面试准备\AI应用工程师面试准备.md` 已同步当前事实：
   包含 Self-built Leon、LangChain/LangGraph Framework Edition、RAG 共享契约边界、10-case Runtime
-  对照和 `694 passed`、
+  对照和 `698 passed`、
   3 分钟项目讲解、90 秒 provider-free 演示和高频追问。下一步直接做模拟面试，根据卡壳点补表达，
   不回到产品功能扩张。
 
@@ -55,7 +55,7 @@
 - `02-leon-agent`：可选 File Search + 显式 FileWrite MVP 已接入 CLI/Gateway；配置 roots 后五个工具完整可用，读取正文和写入内容均不会进入 SSE/SQLite audit，详见 `projects/02-leon-agent/docs/file-search.md`
 - `02-leon-agent`：普通 Agent 已接入 per-turn Planning 状态机；复杂任务可显式跟踪 2～8 步，计划正文
   只进入当前 LLM transcript，审计只保留状态元数据，详见 `projects/02-leon-agent/docs/planning.md`
-- **Evaluation → RAG → Trace/Observability** 三段质量主线均已形成最小闭环：Evaluation 已扩到 50 个
+- **Evaluation → RAG → Trace/Observability** 三段质量主线均已形成最小闭环：Evaluation 已扩到 53 个
   case；`03-rag-lab` 已完成真实 embedding、retrieval、citation、faithfulness 与 reranker 对照；Trace 已统一
   Core/SQLite/CLI/Web 的 trace/turn/span 与脱敏 metadata。Planning 暂停在 MVP，Multi-Agent、
   Telegram/Tavo 互通和更多 workflow 继续后置。
@@ -137,7 +137,7 @@
   `image_tasks/hide` / `hide_history`（清理列表）、`metrics/tasks/{job_id}`（任务指标）、
   `async_autogen/recover`（恢复）、`comic_compose` / `async_comic`（漫画模式）
 - 真实只读探测（2026-08-16）：本机与公网 health 均 `200`，SSE 均立即收到 `session.connected`，stale token 均返回
-  `204 no-store`；仍需在 Cloudflare 控制台确认 Cache Bypass Rule，再做手机实机 SSE、生图和 TTS 闭环验收
+  `204 no-store`；Cloudflare Cache Bypass 与手机实机 SSE、生图、TTS、ASR 闭环已由用户确认完成
 - Web session 已把 provider identity 与 base URL（不含 API key）持久化到 SQLite；Gateway 重启后只按
   当前 `.leon` identity 重解析密钥，不匹配或旧 `ccs:*` pin 返回 409，禁止静默切换或查询 CCS。
 - Vue 页面迁移主体已完成并成为唯一入口；旧单文件 Web、`LEON_WEB_CLIENT` 开关及旧浏览器脚本已删除。
@@ -148,14 +148,14 @@
 - 三段质量基线与 Coding Agent 基础闭环均已落地；当前停止新增模块，转入项目讲解、Agent 核心理论、
   高频问答、简历/BOSS 投递和模拟面试。Telegram Bot、Tavo MCP 互通和 Multi-Agent 仍不自动前移
 - Tavo 路线：先做 Leon Agent -> Tavo MCP；Tavo -> 外部 Leon MCP 等宿主支持
-- 运行态遗留：Cloudflare Cache Bypass 确认和手机实机 SSE、生图、TTS、ASR 验收；本轮已重启
+- 运行态：Cloudflare Cache Bypass 与手机实机 SSE、生图、TTS、ASR 验收已完成；本轮已重启
   `leon-server`，授权 health 为 200，并确认实际提供最新 Vue 静态资源
 
 ### 当前推进决策（2026-08-17）
 
 - **停止继续扩展 Planning**：现有 per-turn 顺序状态机已经足够展示 Agent runtime 设计；不做 DAG、并行、
   后台恢复、自动重试或第二套 executor。
-- **Evaluation 已完成第一版**：50 个 case 默认 fake provider，显式 `--live` 才访问真实 provider；指标覆盖
+- **Evaluation 已完成第一版**：53 个 case 默认 fake provider，显式 `--live` 才访问真实 provider；指标覆盖
   Task Success、Tool Selection、Plan Adherence、Safety、Latency、Tool Calls 和 Tokens/Cost。
 - **RAG 已完成最小闭环**：`03-rag-lab` 按 chunk → embedding → retrieval → citation 演进，已用 Recall@K、
   MRR、citation precision 和 faithfulness 做 fake/真实对照，未塞入 Leon MVP。
@@ -164,8 +164,8 @@
 - **面试表达**：`pytest` 证明代码契约，Evaluation 证明 Agent 行为质量，Trace 解释一次真实运行。
 - **Coding Agent 到此浅尝辄止**：只证明 Runtime 能落到垂直场景；不做 IDE 插件、复杂 patch、多仓库、
   自动 PR、后台任务、复杂 sandbox 或 Multi-Agent Coder/Reviewer/Tester。
-- **Evaluation 第一版已落地**：`projects/02-leon-agent/evals/cases/` 共 50 个 case；
-  `uv run leon-eval` 默认 fake provider，当前 baseline 为 **50/50 passed**。Runner 复用生产
+- **Evaluation 第一版已落地**：`projects/02-leon-agent/evals/cases/` 共 53 个 case；
+  `uv run leon-eval` 默认 fake provider，当前 baseline 为 **53/53 passed**。Runner 复用生产
   `LeonAgent`/tool schema，临时文件根、静态搜索和内存 SQLite 不触碰真实外部系统；显式 `--live` 才允许真实 provider。
 - Tool Selection 已增加参数级断言：只在当前内存 transcript 中检查 source_text、数量、mode、query、root/path、
   Memory key/scope 等关键参数，结果报告不回显原始值。

@@ -22,8 +22,9 @@ Task Success / Tool Selection / Plan Adherence / Answer Quality / Safety
 Latency / Tool Calls / Tokens / Cost
 ```
 
-当前包含 50 个 case：前 20 个建立核心基线，后 30 个补齐精确工具参数、搜索深度/主题、文件行窗、
-Memory consent、prompt injection、失败路径和更多 Planning 组合。新增 case 必须声明用户原话、能力开关、
+当前包含 53 个 case：前 20 个建立核心基线，后 33 个补齐精确工具参数、搜索深度/主题、文件行窗、
+Memory consent、prompt injection、失败路径、Planning 组合和多轮生图追问边界。case 可声明历史消息，
+fake provider 还能断言当前 transcript 必须包含或禁止包含指定上下文。新增 case 必须声明用户原话、能力开关、
 必须/禁止工具、关键参数、Planning 约束、答案断言和审计脱敏断言。
 
 ## 运行
