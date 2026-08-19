@@ -43,6 +43,43 @@ def _normalise_random_mode_request(
     return cleaned or original, True
 
 
+def _normalise_selected_mode_request(
+    source_text: str,
+    workflow_ids: list[str],
+) -> str:
+    """Remove a selected mode's conversational control prefix before the backend call."""
+    original = str(source_text or "").strip()
+    if not original or not workflow_ids:
+        return original
+    candidates: set[str] = set()
+    for item in mode_catalog_items([{"id": mode_id} for mode_id in workflow_ids]):
+        candidates.add(str(item.get("name") or ""))
+        candidates.update(
+            str(alias) for alias in item.get("aliases", []) if str(alias).strip()
+        )
+    for mode_id in workflow_ids:
+        cleaned_id = str(mode_id or "").strip()
+        if cleaned_id:
+            candidates.add(cleaned_id)
+            candidates.add(cleaned_id.replace("_", " "))
+            candidates.add(cleaned_id.replace("_", "-"))
+    candidates = {item.strip() for item in candidates if item.strip()}
+    if not candidates:
+        return original
+    mode_pattern = "|".join(
+        re.escape(item) for item in sorted(candidates, key=len, reverse=True)
+    )
+    pattern = re.compile(
+        rf"^\s*(?:(?:是|就|那就|我想|请|帮我)\s*)?"
+        rf"(?:(?:用|使用|换成|改用|切换到|切换成|选择)\s*"
+        rf"(?:{mode_pattern})\s*(?:模式|风格|画风|风)?|"
+        rf"(?:{mode_pattern})\s*(?:模式|风格|画风|风))\s*[,，:：]?\s*",
+        re.IGNORECASE,
+    )
+    cleaned = pattern.sub("", original, count=1).strip(" \t,，;；:：")
+    return cleaned or original
+
+
 def _job_id(item: dict[str, Any]) -> str:
     return str(item.get("job_id") or "")
 
@@ -282,6 +319,7 @@ class LeonToolService:
             ] or self.default_mode_ids
         else:
             modes = self.default_mode_ids
+        source_text = _normalise_selected_mode_request(source_text, modes)
         submission = self.client.generate_images(
             source_text=source_text,
             workflow_ids=modes,

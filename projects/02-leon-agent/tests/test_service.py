@@ -87,6 +87,28 @@ def test_service_random_mode_uses_installed_catalog_and_strips_control_clause() 
     ]
 
 
+def test_service_strips_selected_mode_control_prefix_before_backend_call() -> None:
+    client = FakeImageClient()
+    service = create_service(client)
+
+    service.generate_images(
+        "是用韩漫模式，生成一只猫。。",
+        workflow_ids=["k2_mature_manhwa"],
+    )
+
+    assert client.generate_calls[0]["source_text"] == "生成一只猫。。"
+    assert client.generate_calls[0]["workflow_ids"] == ["k2_mature_manhwa"]
+
+
+def test_service_preserves_mode_name_when_it_is_the_visual_subject() -> None:
+    client = FakeImageClient()
+    service = create_service(client)
+
+    service.generate_images("玛莉卡在海边")
+
+    assert client.generate_calls[0]["source_text"] == "玛莉卡在海边"
+
+
 def test_service_query_and_cancel_methods_preserve_session_scope() -> None:
     client = FakeImageClient()
     service = create_service(client)

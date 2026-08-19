@@ -1,7 +1,13 @@
 from typing import Any
 
-from leon_agent.agent import SYSTEM_PROMPT, LeonAgent, build_system_prompt
+from leon_agent.agent import (
+    SYSTEM_PROMPT,
+    LeonAgent,
+    _build_image_followup_context,
+    build_system_prompt,
+)
 from leon_agent.tools import _format_generation_answer, create_leon_tools
+from workbench_core.llm import ChatTurn
 
 
 class FakeImageClient:
@@ -33,6 +39,21 @@ class FakeImageClient:
     def cancel_image_task(self, *, job_id: str) -> dict[str, Any]:
         self.cancelled.append(job_id)
         return {"ok": True, "job_id": job_id, "status": "cancelled", "cancelled": True}
+
+
+class ContextCaptureLLM:
+    model = "test-model"
+
+    def __init__(self) -> None:
+        self.messages: list[dict[str, Any]] = []
+
+    def chat_turn(self, messages: list[dict[str, Any]], **kwargs: Any) -> ChatTurn:
+        del kwargs
+        self.messages = messages
+        return ChatTurn(
+            content="收到。",
+            raw_message={"role": "assistant", "content": "收到。"},
+        )
 
 
 def test_generate_tool_passes_source_text_verbatim() -> None:
@@ -211,6 +232,71 @@ def test_agent_prompt_separates_mode_controls_from_image_request() -> None:
     assert "random_workflow=true" in SYSTEM_PROMPT
     assert "do not translate, summarize, sanitize, expand, beautify" in SYSTEM_PROMPT
     assert "Do not choose Prompt, Workflow, LoRA" in SYSTEM_PROMPT
+    assert "inherit the latest" in SYSTEM_PROMPT
+    assert "routing metadata, not visual prompt text" in " ".join(SYSTEM_PROMPT.split())
+
+
+def test_image_followup_context_carries_forward_the_latest_subject() -> None:
+    context = _build_image_followup_context(
+        [{"role": "user", "content": "生成一张猫"}],
+        "用韩漫风再来一张看看",
+    )
+
+    assert context is not None
+    assert "Latest standalone image request: 生成一张猫" in context
+    assert "must not be a bare phrase" in context
+    assert (
+        _build_image_followup_context(
+            [{"role": "user", "content": "生成一张猫"}],
+            "那继续啊？用韩漫模式生成",
+        )
+        is not None
+    )
+    assert (
+        _build_image_followup_context(
+            [{"role": "user", "content": "生成一张猫"}],
+            "继续",
+        )
+        is not None
+    )
+    assert (
+        _build_image_followup_context(
+            [{"role": "user", "content": "生成一张猫"}],
+            "继续解释刚才的代码",
+        )
+        is None
+    )
+    assert (
+        _build_image_followup_context(
+            [{"role": "user", "content": "生成一张猫"}],
+            "今天天气怎么样",
+        )
+        is None
+    )
+
+
+def test_agent_wires_image_followup_context_into_the_runtime() -> None:
+    llm = ContextCaptureLLM()
+    agent = LeonAgent(
+        llm_client=llm,  # type: ignore[arg-type]
+        image_client=FakeImageClient(),  # type: ignore[arg-type]
+        session_id="follow-up-session",
+        default_mode_ids=["k2_tifa_plus"],
+    )
+
+    agent.run(
+        "用韩漫风再来一张看看",
+        history=[
+            {"role": "user", "content": "生成一张猫"},
+            {"role": "assistant", "content": "已提交图片任务。"},
+        ],
+    )
+
+    assert any(
+        message["role"] == "system"
+        and "Latest standalone image request: 生成一张猫" in message["content"]
+        for message in llm.messages
+    )
 
 
 def test_agent_prompt_hardens_live_tool_adherence() -> None:

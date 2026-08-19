@@ -140,6 +140,12 @@ a short natural completion note and emits that text through `assistant.notice`. 
 only running indicator: there is no image skeleton bubble. A completed image is appended as a new
 bottom bubble and auto-scrolled into view without waiting for the LLM note.
 
+Normal image follow-ups such as `再来一张`, `继续`, or `换成某种模式/风格` inherit the latest
+standalone image request's subject from conversation context and apply only the current change. The
+`generate_images` service removes a selected mode's control prefix before calling `/ios/async_autogen`,
+so routing text such as `是用韩漫模式` never becomes backend visual prompt text. A follow-up must not
+be sent as a bare `source_text`.
+
 Web refresh state is not reconstructed from SSE memory. The client loads
 `GET /api/agent/sessions/{session_id}/image-state`, which merges the current Leon task sync and
 gallery sync results. Completed task `image_url` values are used as a fallback when the gallery sync
