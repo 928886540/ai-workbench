@@ -232,7 +232,7 @@ def test_agent_prompt_separates_mode_controls_from_image_request() -> None:
     assert "random_workflow=true" in SYSTEM_PROMPT
     assert "do not translate, summarize, sanitize, expand, beautify" in SYSTEM_PROMPT
     assert "Do not choose Prompt, Workflow, LoRA" in SYSTEM_PROMPT
-    assert "inherit the latest" in SYSTEM_PROMPT
+    assert "inherit the" in SYSTEM_PROMPT
     assert "routing metadata, not visual prompt text" in " ".join(SYSTEM_PROMPT.split())
 
 
@@ -243,7 +243,7 @@ def test_image_followup_context_carries_forward_the_latest_subject() -> None:
     )
 
     assert context is not None
-    assert "Latest standalone image request: 生成一张猫" in context
+    assert "Immediately preceding standalone image request: 生成一张猫" in context
     assert "must not be a bare phrase" in context
     assert (
         _build_image_followup_context(
@@ -263,6 +263,25 @@ def test_image_followup_context_carries_forward_the_latest_subject() -> None:
         _build_image_followup_context(
             [{"role": "user", "content": "生成一张猫"}],
             "继续解释刚才的代码",
+        )
+        is None
+    )
+    assert (
+        _build_image_followup_context(
+            [
+                {"role": "user", "content": "生成一张猫"},
+                {"role": "assistant", "content": "已生成。"},
+                {"role": "user", "content": "解释这段代码"},
+                {"role": "assistant", "content": "这是一个循环。"},
+            ],
+            "继续",
+        )
+        is None
+    )
+    assert (
+        _build_image_followup_context(
+            [{"role": "user", "content": "生成一张猫"}],
+            "继续生成代码",
         )
         is None
     )
@@ -294,7 +313,7 @@ def test_agent_wires_image_followup_context_into_the_runtime() -> None:
 
     assert any(
         message["role"] == "system"
-        and "Latest standalone image request: 生成一张猫" in message["content"]
+        and "Immediately preceding standalone image request: 生成一张猫" in message["content"]
         for message in llm.messages
     )
 
