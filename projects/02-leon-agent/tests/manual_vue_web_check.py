@@ -1080,16 +1080,21 @@ def run_browser_check(base_url: str, args: argparse.Namespace) -> int:
             composer.fill("")
 
             composer = page.locator("textarea[placeholder='有什么想聊的？']")
+            composer.fill("/nsfw --mod")
+            page.wait_for_timeout(120)
+            check(
+                "未输入完整模式参数时不提前弹出候选",
+                page.locator(".mode-suggestions").count() == 0,
+            )
             composer.fill("/nsfw --model ")
             suggestions = page.locator(".mode-suggestions .mode-suggestion")
             suggestions.first.wait_for(state="visible")
             suggestion_count = suggestions.count()
             target_name = suggestions.nth(1).inner_text().splitlines()[0].strip()
-            composer.press("ArrowDown")
-            composer.press("Enter")
+            suggestions.nth(1).click()
             selected_value = composer.input_value()
             check(
-                "`/nsfw --model` 拉取目录并可用键盘选中",
+                "`/nsfw --model` 拉取目录并可用触摸点击回填",
                 suggestion_count >= 2 and target_name in selected_value,
                 f"候选={suggestion_count}，输入框={selected_value!r}",
             )

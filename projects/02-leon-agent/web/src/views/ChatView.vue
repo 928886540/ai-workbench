@@ -306,7 +306,9 @@ function normalizeModeQuery(value: string): string {
 
 function modeCompletionContext(value: string): ModeCompletionContext | null {
   if (!/^\/nsfw\b/i.test(value)) return null;
-  const match = value.match(/^(.*(?:--model|-m))(?:=|\s+)?([^\s]*)$/i);
+  // Wait for a complete option and its separator.  Without the boundary,
+  // `/nsfw --mod` was incorrectly treated as the short `-m` option.
+  const match = value.match(/^(.*(?:--model|-m))(?:=|\s+)([^\s]*)$/i);
   return match ? { prefix: match[1], partial: match[2] || "" } : null;
 }
 
@@ -2138,6 +2140,7 @@ onBeforeUnmount(() => {
                 type="button"
                 role="option"
                 :aria-selected="index === modeSuggestionIndex"
+                @pointerdown.prevent
                 @mousedown.prevent
                 @mouseenter="activateModeSuggestion(index)"
                 @click="selectModeSuggestion(item)"

@@ -1461,7 +1461,6 @@ h1 {
   border-bottom: 0;
 }
 
-.mode-suggestion:hover,
 .mode-suggestion:focus-visible,
 .mode-suggestion.active {
   outline: none;
@@ -1470,16 +1469,41 @@ h1 {
 }
 
 .mode-suggestion-name {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 700;
 }
 
 .mode-suggestion-id {
+  min-width: 0;
+  max-width: 48%;
+  flex: 0 1 auto;
   overflow-wrap: anywhere;
   color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 11px;
   text-align: right;
+}
+
+.mode-suggestion.active .mode-suggestion-id,
+.mode-suggestion:focus-visible .mode-suggestion-id {
+  color: inherit;
+}
+
+@media (hover: hover) {
+  .mode-suggestion:hover {
+    outline: none;
+    background: #f0f7ff;
+    color: var(--primary-strong);
+  }
+
+  .mode-suggestion:hover .mode-suggestion-id {
+    color: inherit;
+  }
 }
 
 .composer textarea {

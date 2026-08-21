@@ -47,6 +47,7 @@ def test_mode_completion_matches_name_id_and_alias_without_duplicate_fetches() -
         "function modeCompletionContext(value: string): ModeCompletionContext | null",
         "if (!/^\\/nsfw\\b/i.test(value)) return null;",
         "--model|-m",
+        "(?:=|\\s+)([^\\s]*)$",
         "if (imageModeCatalog) return imageModeCatalog;",
         "if (!imageModeCatalogRequest)",
         ".getImageModes()",
